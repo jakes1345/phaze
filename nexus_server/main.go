@@ -1851,7 +1851,7 @@ func main() {
 
 	fs := http.FileServer(http.Dir("public"))
 	http.Handle("/public/", http.StripPrefix("/public/", fs))
-	// /downloads alone is a common typo (e.g. old nav); binary paths use /downloads/<file>.
+	// GET /downloads (no trailing slash) is a common typo from older links; binary URLs use /downloads/<file>.
 	http.HandleFunc("/downloads", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
