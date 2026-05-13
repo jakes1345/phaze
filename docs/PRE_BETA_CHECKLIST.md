@@ -11,6 +11,7 @@ Use this before inviting **public** beta testers. Check boxes as you complete it
 - [ ] `master` (or release branch) has **green** `.github/workflows/ci.yml` on Linux.
 - [ ] `.github/workflows/release.yml` Linux image matches CI deps (VP8 / Fyne stack).
 - [ ] `apple-verify.yml` Go version **matches** `go.work` / production intent (avoid silent drift).
+- [ ] **iOS / IPA**: not produced in GitHub Actions (fyne-cross needs Docker); build on a Mac with Docker or your release pipeline. `verify-ios` in CI is an explicit documentation step only.
 - [ ] Goreleaser dry-run locally or on tag: **both** `phaze` and `phaze-nexus` artifacts expected.
 - [ ] **Version strings**: `Phaze_LATEST_VERSION` (or equivalent) documented for operators.
 - [ ] **Checksums** published with release; verify one download end-to-end.
