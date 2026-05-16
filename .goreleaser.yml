@@ -19,6 +19,25 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.version={{.Version}}
+    # Fyne + CGO: darwin needs a macOS builder (see .github/workflows/release.yml).
+    # Windows/arm64 needs a separate cross toolchain; ship amd64 from CI.
+    ignore:
+      - goos: darwin
+      - goos: windows
+        goarch: arm64
+    overrides:
+      - goos: windows
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-w64-mingw32-gcc
+          - CXX=x86_64-w64-mingw32-g++
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
 
   - id: phaze-nexus
     main: ./nexus_server
@@ -33,8 +52,10 @@ builds:
 
 archives:
   - id: default
+    # Stable names for linux/windows → https://github.com/OWNER/REPO/releases/latest/download/Phaze_linux_amd64.tar.gz
+    # Darwin archives here are Nexus-only (client built on macOS in CI).
     name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      {{ if eq .Os "darwin" }}phaze-nexus_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ else }}Phaze_{{ .Os }}_{{ .Arch }}{{ end }}
     files:
       - README.md
       - SECURITY.md
@@ -73,5 +94,6 @@ release:
     ## Phaze — {{ .Tag }}
 
     Phaze (Skype-style sovereign chat, voice, and video) and the Nexus relay.
+
     - **phaze**: Native Fyne desktop/mobile client (see `README.md` for platform notes).
-    - **phaze-nexus**: WebSocket relay and account services.
+    - **phaze-nexus**: WebSocket relay and account services, optional PSTN/SMS hooks (Twilio).
