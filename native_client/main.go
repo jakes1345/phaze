@@ -9,7 +9,6 @@ import (
 	"image"
 	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,6 +34,7 @@ import (
 	"phaze-native/internal/crypto"
 	"phaze-native/internal/sentinel"
 	"phaze-native/internal/ui"
+	"phaze-native/internal/updater"
 
 	"fyne.io/fyne/v2/driver/desktop"
 	"github.com/faiface/beep"
@@ -656,30 +656,108 @@ func (s *PhazeApp) connect(password, totpCode, sessionToken string) (authResult,
 }
 
 func (s *PhazeApp) CheckForUpdates() {
-	resp, err := http.Get(s.Infra.API + "/api/v1/version")
+	m, err := updater.Fetch(s.Infra.API)
 	if err != nil {
 		return // Silent fail for offline mesh
 	}
-	defer resp.Body.Close()
-
-	var verData struct {
-		Version string `json:"version"`
-		URL     string `json:"url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&verData); err != nil {
+	if m.Version == "" || !updater.IsNewer(m.Version, Version) {
 		return
 	}
 
-	if verData.Version != Version {
-		s.App.SendNotification(fyne.NewNotification("Sovereign Update", "Version "+verData.Version+" is available."))
-		dialog.ShowConfirm("Sovereign Update",
-			"A new version of Phaze ("+verData.Version+") is available. Would you like to visit the download portal?",
+	// SendNotification fires regardless of in-app install path — same
+	// behaviour as before.
+	s.App.SendNotification(fyne.NewNotification("Phaze update", "Version "+m.Version+" is available."))
+
+	asset := m.PlatformAssetFor(updater.CurrentPlatformKey())
+	openDownloadPage := func() {
+		releaseURL := m.ReleaseURL
+		if releaseURL == "" {
+			releaseURL = m.URL
+		}
+		if releaseURL == "" {
+			releaseURL = s.Infra.API + "/download"
+		}
+		if u, err := url.Parse(releaseURL); err == nil {
+			s.App.OpenURL(u)
+		}
+	}
+
+	// Fall back to the legacy "open browser" flow when the server didn't
+	// publish a verifiable asset for our platform.
+	if asset == nil || asset.SHA256 == "" {
+		dialog.ShowConfirm("Phaze update",
+			"Version "+m.Version+" is available. Open the download page?",
 			func(ok bool) {
 				if ok {
-					u, _ := url.Parse(s.Infra.API + "/download")
-					s.App.OpenURL(u)
+					openDownloadPage()
 				}
 			}, s.MainWindow)
+		return
+	}
+
+	notes := m.ReleaseNotes
+	if len(notes) > 600 {
+		notes = notes[:600] + "…"
+	}
+	prompt := "Version " + m.Version + " is available (" + humanBytes(asset.Size) + ").\n\n"
+	if notes != "" {
+		prompt += notes + "\n\n"
+	}
+	prompt += "Phaze will download and verify it (SHA-256), then replace the running binary on next launch."
+
+	dialog.ShowConfirm("Phaze update", prompt, func(ok bool) {
+		if !ok {
+			return
+		}
+		go s.performUpdate(*asset)
+	}, s.MainWindow)
+}
+
+func (s *PhazeApp) performUpdate(asset updater.PlatformAsset) {
+	progress := dialog.NewInformation("Phaze update", "Downloading "+asset.Name+"…", s.MainWindow)
+	progress.Show()
+	defer progress.Hide()
+
+	path, err := updater.DownloadAndVerify(asset, updater.StagingDir())
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("update download failed: %w", err), s.MainWindow)
+		return
+	}
+	err = updater.Apply(path)
+	if apkPath, needs := updater.AsNeedsUserAction(err); needs {
+		// Android: hand the verified APK to the OS package installer.
+		u, perr := url.Parse("file://" + apkPath)
+		if perr == nil {
+			s.App.OpenURL(u)
+		}
+		dialog.ShowInformation("Phaze update",
+			"Update downloaded. Approve the install prompt from Android to apply it.",
+			s.MainWindow)
+		return
+	}
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("update install failed: %w", err), s.MainWindow)
+		return
+	}
+	dialog.ShowInformation("Phaze update",
+		"Update staged. Quit Phaze when ready — the new version will start automatically.",
+		s.MainWindow)
+}
+
+func humanBytes(n int64) string {
+	if n <= 0 {
+		return "size unknown"
+	}
+	const k = 1024
+	switch {
+	case n < k:
+		return fmt.Sprintf("%d B", n)
+	case n < k*k:
+		return fmt.Sprintf("%.1f KiB", float64(n)/k)
+	case n < k*k*k:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(k*k))
+	default:
+		return fmt.Sprintf("%.2f GiB", float64(n)/(k*k*k))
 	}
 }
 
