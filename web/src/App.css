@@ -324,3 +324,20 @@
 .danger-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--phaze-blue);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0.25rem;
+  align-self: flex-start;
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.link-btn:hover {
+  color: var(--phaze-cyan);
+}

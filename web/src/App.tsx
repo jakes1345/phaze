@@ -172,6 +172,25 @@ export default function App() {
           if (msg.sender) appendLog('system', `${msg.sender} accepted your friend request`, false)
           break
 
+        case 'register_result':
+          if (msg.status === 'ok' || msg.status === 'verification_sent') {
+            setErr('Account created. Check your email for a 6-digit code, enter it below.')
+            setRegStep('verify')
+          } else {
+            setErr(msg.error || 'Registration failed')
+          }
+          break
+
+        case 'verify_result':
+          if (msg.status === 'ok') {
+            setErr('Email verified. You can sign in now.')
+            setRegStep('done')
+            setMode('login')
+          } else {
+            setErr(msg.error || 'Verification failed — double-check the code')
+          }
+          break
+
         case 'presence': {
           const pk = decodePublicKeyField(msg.public_key as string | number[] | undefined)
           if (msg.sender && pk && pk.length === 32) {
@@ -340,6 +359,51 @@ export default function App() {
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
 
+  // Registration flow. mode toggles login/register; regStep walks form
+  // → waiting-for-code → done so the verify panel can show automatically
+  // after a successful register without the user touching anything.
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [regStep, setRegStep] = useState<'form' | 'verify' | 'done'>('form')
+  const [regUser, setRegUser] = useState('')
+  const [regEmail, setRegEmail] = useState('')
+  const [regPass, setRegPass] = useState('')
+  const [regCode, setRegCode] = useState('')
+
+  const doRegister = () => {
+    setErr('')
+    if (regUser.length < 3 || regUser.length > 32) {
+      setErr('Username must be 3–32 characters')
+      return
+    }
+    if (regPass.length < 8) {
+      setErr('Password must be at least 8 characters')
+      return
+    }
+    if (!regEmail.includes('@')) {
+      setErr('Enter a valid email')
+      return
+    }
+    send({
+      type: 'register',
+      sender: regUser,
+      body: regPass,
+      email: regEmail,
+    })
+  }
+
+  const doVerify = () => {
+    setErr('')
+    if (!/^\d{6}$/.test(regCode.trim())) {
+      setErr('Enter the 6-digit code from your email')
+      return
+    }
+    send({
+      type: 'verify_email',
+      sender: regUser,
+      body: regCode.trim(),
+    })
+  }
+
   // Delete-account flow: two-step (open form -> type-to-confirm + password).
   // The full account erasure happens server-side under 'delete_account_result'.
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -381,29 +445,106 @@ export default function App() {
           <h2>Connect</h2>
           <p className="muted small">{wsUrl}</p>
           {!me ? (
-            <div className="form">
-              <input
-                placeholder="Username"
-                value={loginUser}
-                onChange={(e) => setLoginUser(e.target.value)}
-                autoComplete="username"
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={loginPass}
-                onChange={(e) => setLoginPass(e.target.value)}
-                autoComplete="current-password"
-              />
-              <input
-                placeholder="TOTP (if enabled)"
-                value={loginTotp}
-                onChange={(e) => setLoginTotp(e.target.value)}
-              />
-              <button type="button" onClick={() => doAuth(loginUser.trim(), loginPass, loginTotp.trim())}>
-                Sign in
-              </button>
-            </div>
+            mode === 'login' ? (
+              <div className="form">
+                <input
+                  placeholder="Username"
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                  autoComplete="username"
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <input
+                  placeholder="TOTP (if enabled)"
+                  value={loginTotp}
+                  onChange={(e) => setLoginTotp(e.target.value)}
+                />
+                <button type="button" onClick={() => doAuth(loginUser.trim(), loginPass, loginTotp.trim())}>
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setMode('register')
+                    setErr('')
+                    setRegStep('form')
+                  }}
+                >
+                  Create an account
+                </button>
+              </div>
+            ) : regStep === 'form' ? (
+              <div className="form">
+                <input
+                  placeholder="Choose a username (3–32 chars)"
+                  value={regUser}
+                  onChange={(e) => setRegUser(e.target.value)}
+                  autoComplete="username"
+                />
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  autoComplete="email"
+                />
+                <input
+                  type="password"
+                  placeholder="Password (8+ chars)"
+                  value={regPass}
+                  onChange={(e) => setRegPass(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <button type="button" onClick={doRegister}>
+                  Create account
+                </button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setMode('login')
+                    setErr('')
+                  }}
+                >
+                  Back to sign in
+                </button>
+              </div>
+            ) : (
+              <div className="form">
+                <p className="muted small">
+                  We sent a 6-digit verification code to <strong>{regEmail}</strong>. Paste it below.
+                </p>
+                <input
+                  inputMode="numeric"
+                  pattern="\d{6}"
+                  maxLength={6}
+                  placeholder="123456"
+                  value={regCode}
+                  onChange={(e) => setRegCode(e.target.value)}
+                />
+                <button type="button" onClick={doVerify}>
+                  Verify email
+                </button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setMode('login')
+                    setErr('')
+                    setRegStep('form')
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )
           ) : (
             <>
               <div className="form">
