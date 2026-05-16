@@ -1,0 +1,326 @@
+/* Phaze Web — classic *light* messenger layout (inspired by legacy desktop IM; brand: Phaze). */
+:root {
+  --phaze-cyan: #00aff0;
+  --phaze-blue: #0078d4;
+  --shell: #dce8f2;
+  --chrome: #f2f7fc;
+  --panel: #ffffff;
+  --panel-edge: #c8d6e6;
+  --text: #1a1a1a;
+  --muted: #5a6b7a;
+  --list-hover: #e8f4fc;
+  --list-sel: #d2ecfa;
+  --bubble-in: #ffffff;
+  --bubble-out: #d3effc;
+  --bubble-edge: #b8d4e8;
+  --banner-warn: #fff4e0;
+  --banner-warn-text: #5c3d00;
+  --banner-err: #fdecea;
+  --banner-err-text: #7a1f18;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.app {
+  min-height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--shell);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(180deg, #1eb8f0 0%, var(--phaze-cyan) 45%, var(--phaze-blue) 100%);
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.top .brand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.top h1 {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+}
+
+.top .tagline {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.92;
+}
+
+.pill {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pill.ok {
+  background: rgba(40, 120, 60, 0.35);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.me {
+  margin-left: auto;
+  font-size: 0.85rem;
+  opacity: 0.95;
+}
+
+.banner {
+  margin: 0.5rem 1rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 2px;
+  border: 1px solid #e0b0b0;
+  background: var(--banner-err);
+  color: var(--banner-err-text);
+  font-size: 0.85rem;
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 240px minmax(0, 1fr);
+  gap: 0;
+  margin: 0.5rem 1rem 1rem;
+  min-height: 0;
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(15, 60, 100, 0.08);
+  background: var(--panel);
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+    margin: 0.5rem;
+  }
+}
+
+.panel {
+  background: var(--chrome);
+  padding: 0.65rem 0.75rem;
+  border-right: 1px solid var(--panel-edge);
+  min-height: 0;
+}
+
+.panel:last-child {
+  border-right: none;
+}
+
+.panel.grow {
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+}
+
+.panel h2,
+.panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0b3d5c;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 0.75rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.form input {
+  padding: 0.4rem 0.5rem;
+  border-radius: 2px;
+  border: 1px solid #b0c4d4;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.form input:focus {
+  outline: 2px solid rgba(0, 175, 240, 0.45);
+  outline-offset: 0;
+}
+
+.form button,
+.row button,
+.list button {
+  padding: 0.4rem 0.65rem;
+  border-radius: 2px;
+  border: 1px solid #1a9fd6;
+  background: linear-gradient(180deg, #35c4ff 0%, var(--phaze-cyan) 40%, #0096d4 100%);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.form button:active,
+.row button:active,
+.list button:active {
+  transform: translateY(1px);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  margin-bottom: 2px;
+}
+
+.list button {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.list button:hover {
+  background: var(--list-hover);
+  border-color: #a8cce4;
+}
+
+.list button.sel {
+  background: var(--list-sel);
+  border-color: var(--phaze-cyan);
+  outline: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.row.send {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.row.send input {
+  flex: 1;
+  padding: 0.45rem 0.5rem;
+  border-radius: 2px;
+  border: 1px solid #b0c4d4;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  max-height: min(52vh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0.15rem;
+  background: linear-gradient(180deg, #fbfdff 0%, #eef5fb 100%);
+  border: 1px solid #d4e4f2;
+  border-radius: 2px;
+}
+
+.bubble {
+  align-self: flex-start;
+  max-width: 88%;
+  padding: 0.4rem 0.55rem;
+  border-radius: 3px;
+  background: var(--bubble-in);
+  border: 1px solid var(--bubble-edge);
+  font-size: 0.88rem;
+  box-shadow: 0 1px 1px rgba(0, 60, 100, 0.06);
+}
+
+.bubble.me {
+  align-self: flex-end;
+  background: var(--bubble-out);
+  border-color: #7ec8ea;
+}
+
+.bubble .who {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-bottom: 0.12rem;
+  font-weight: 600;
+}
+
+.foot {
+  margin-top: auto;
+  padding: 0.5rem 1rem 0.75rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border-top: 1px solid #c5d6e6;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.panel.danger {
+  background: #fff6f5;
+  border-top: 1px solid #f0c8c4;
+}
+
+.panel.danger h2 {
+  color: #8a1f17;
+}
+
+.danger-btn {
+  padding: 0.4rem 0.65rem;
+  border-radius: 2px;
+  border: 1px solid #9b2a1f;
+  background: linear-gradient(180deg, #d65647 0%, #b8392b 50%, #962819 100%);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.danger-btn:disabled {
+  filter: grayscale(0.6) brightness(1.1);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.danger-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}

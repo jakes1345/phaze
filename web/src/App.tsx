@@ -216,6 +216,31 @@ export default function App() {
           setMe(null)
           break
 
+        case 'delete_account_result':
+          if (msg.status === 'ok') {
+            // Server has erased the account and will close the socket.
+            // Wipe local state so a return visit doesn't try to session-resume
+            // against a now-deleted account.
+            localStorage.removeItem(SESSION_KEY)
+            localStorage.removeItem(KEYS_KEY)
+            peerKeysRef.current = {}
+            pinsRef.current = {}
+            try {
+              localStorage.removeItem('phaze_key_pins_v1')
+            } catch {
+              /* fine */
+            }
+            setMe(null)
+            setFriends({})
+            setPending([])
+            setSelected(null)
+            setLog([])
+            setErr('Account deleted. All your data has been erased.')
+          } else {
+            setErr(msg.error || 'Delete failed')
+          }
+          break
+
         default:
           break
       }
@@ -314,6 +339,29 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('')
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
+
+  // Delete-account flow: two-step (open form -> type-to-confirm + password).
+  // The full account erasure happens server-side under 'delete_account_result'.
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deletePassword, setDeletePassword] = useState('')
+
+  const requestAccountDelete = () => {
+    if (!me) return
+    if (deleteConfirmText !== 'delete my account') {
+      setErr('Type "delete my account" exactly to confirm.')
+      return
+    }
+    if (!deletePassword) {
+      setErr('Password required to delete account.')
+      return
+    }
+    setErr('')
+    send({ type: 'delete_account', sender: me, body: deletePassword })
+    setDeletePassword('')
+    setDeleteConfirmText('')
+    setDeleteOpen(false)
+  }
 
   return (
     <div className="app">
@@ -428,6 +476,54 @@ export default function App() {
                   <button type="button" onClick={sendChat}>
                     Send
                   </button>
+                </div>
+              )}
+            </section>
+
+            <section className="panel danger">
+              <h2>Account</h2>
+              {!deleteOpen ? (
+                <button type="button" className="danger-btn" onClick={() => setDeleteOpen(true)}>
+                  Delete account…
+                </button>
+              ) : (
+                <div className="form">
+                  <p className="muted small">
+                    This erases your account, friends, messages, sessions, and
+                    encryption keys on the server. <strong>This cannot be undone.</strong>
+                  </p>
+                  <input
+                    placeholder='Type "delete my account" to confirm'
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Your password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="danger-btn"
+                      onClick={requestAccountDelete}
+                      disabled={deleteConfirmText !== 'delete my account' || !deletePassword}
+                    >
+                      Erase my account
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteOpen(false)
+                        setDeletePassword('')
+                        setDeleteConfirmText('')
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </section>
