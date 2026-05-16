@@ -2,29 +2,33 @@ name: Sovereign Apple Verification
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, main ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main ]
 
 jobs:
   verify-macos:
-    name: Native macOS Metal Build
+    name: Native macOS build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
           cache: true
           cache-dependency-path: native_client/go.sum
-      - name: Install Fyne Dependencies
-        run: |
-          go install fyne.io/fyne/v2/cmd/fyne@latest
+
+      - name: Install Fyne CLI
+        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+
       - name: Install VP8 (libvpx) for mediadevices
         run: brew install libvpx pkg-config
+
       - name: Build Native macOS App
         run: |
+          go work sync
           cd native_client
           go build -v -o Phaze.app .
 
@@ -39,6 +43,5 @@ jobs:
       - name: Explain iOS CI scope
         run: |
           set -e
-          echo "::notice::iOS/IPA is not built in GitHub Actions (fyne-cross needs Docker)."
-          echo "macOS desktop is built in verify-macos. For iOS, use fyne-cross locally or release tooling."
-          echo "See README (Android / fyne-cross) and docs/PRE_BETA_CHECKLIST.md."
+          echo "::notice::iOS/IPA is not built in GitHub Actions (fyne-cross needs Docker, and Phaze does not currently target iOS — see docs/MOBILE_BUILDS.md)."
+          echo "macOS desktop is built in verify-macos. For iOS, use fyne-cross locally once an Apple Developer account is in place."
