@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -2007,21 +2008,232 @@ func (s *NexusServer) resetHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!doctype html><html><head><meta charset=utf-8><title>Reset Phaze password</title><style>body{font-family:system-ui;max-width:520px;margin:80px auto;padding:20px}input{width:100%%;padding:10px;margin:8px 0;font-size:1rem}button{background:#00AFF0;color:#fff;border:0;padding:12px 24px;border-radius:6px;font-size:1rem;cursor:pointer}</style></head><body><h1>Reset your Phaze password</h1><form method="POST"><input type="hidden" name="token" value="%s"><label>New password (min. 8 chars)<input type="password" name="password" minlength="8" required></label><button type="submit">Set new password</button></form></body></html>`, token)
 }
 
-func (s *NexusServer) versionHandler(w http.ResponseWriter, r *http.Request) {
-	v := os.Getenv("Phaze_LATEST_VERSION")
-	if v == "" {
-		v = "1.0.0-Phaze"
+// ---------- Update manifest (GitHub Releases) ----------
+
+// PlatformAsset is one downloadable artifact for the auto-update flow.
+// SHA256 is the canonical integrity check; the client MUST verify before
+// running the new binary. Empty SHA256 means checksums.txt was unavailable
+// at refresh time — clients should refuse to auto-install in that case.
+type PlatformAsset struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Name   string `json:"name"`
+}
+
+type UpdateManifest struct {
+	Version      string                   `json:"version"`
+	ReleaseURL   string                   `json:"release_url"`
+	ReleaseNotes string                   `json:"release_notes,omitempty"`
+	PublishedAt  string                   `json:"published_at,omitempty"`
+	Platforms    map[string]PlatformAsset `json:"platforms"`
+	RefreshedAt  int64                    `json:"refreshed_at"`
+	Source       string                   `json:"source"` // "github" or "env"
+}
+
+type updateCache struct {
+	mu       sync.RWMutex
+	manifest UpdateManifest
+	expires  time.Time
+}
+
+var updates = &updateCache{}
+
+const updateTTL = 5 * time.Minute
+
+// ghRelease is the subset of the GitHub Releases JSON we care about.
+type ghRelease struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Assets      []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+		Size               int64  `json:"size"`
+	} `json:"assets"`
+}
+
+// classifyAsset returns the platform key ("windows" / "linux" / "android")
+// for an asset name, or "" if it doesn't match any of our targets. Match is
+// intentionally broad so we accept either "Phaze.exe"/"Phaze.apk"/"Phaze.linux"
+// (current naming) or the goreleaser pattern "Phaze_<os>_<arch>.<ext>".
+func classifyAsset(name string) string {
+	low := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(low, ".exe"),
+		strings.Contains(low, "windows"):
+		return "windows"
+	case strings.HasSuffix(low, ".apk"):
+		return "android"
+	case strings.HasSuffix(low, ".linux"),
+		strings.Contains(low, "linux"):
+		return "linux"
 	}
-	u := os.Getenv("Phaze_UPDATE_URL")
-	if u == "" {
-		u = "https://phazechat.world/releases"
+	return ""
+}
+
+// fetchChecksums downloads checksums.txt (goreleaser format: "<sha256>  <name>")
+// and returns a map of filename -> sha256 hex. Returns nil on error so the
+// caller can decide whether to publish an unverified manifest.
+func fetchChecksums(url string, client *http.Client) map[string]string {
+	if url == "" {
+		return nil
+	}
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Accept", "text/plain")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		sum, name := fields[0], fields[1]
+		if len(sum) != 64 {
+			continue
+		}
+		// Strip a leading "*" goreleaser sometimes prefixes for binary mode.
+		name = strings.TrimPrefix(name, "*")
+		out[name] = strings.ToLower(sum)
+	}
+	return out
+}
+
+// refreshUpdateManifest fetches the latest release from GitHub and rebuilds
+// the cached manifest. Falls back to env-var-only manifest when the API
+// roundtrip fails (so the endpoint never disappears, just becomes thin).
+func refreshUpdateManifest(repo string) UpdateManifest {
+	envVersion := strings.TrimSpace(os.Getenv("Phaze_LATEST_VERSION"))
+	envURL := strings.TrimSpace(os.Getenv("Phaze_UPDATE_URL"))
+	if envURL == "" {
+		envURL = "https://github.com/" + repo + "/releases/latest"
 	}
 
+	manifest := UpdateManifest{
+		Version:     envVersion,
+		ReleaseURL:  envURL,
+		Platforms:   map[string]PlatformAsset{},
+		RefreshedAt: time.Now().Unix(),
+		Source:      "env",
+	}
+
+	if repo == "" {
+		return manifest
+	}
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+repo+"/releases/latest", nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[update] github fetch: %v", err)
+		return manifest
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[update] github status %d", resp.StatusCode)
+		return manifest
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+		log.Printf("[update] github decode: %v", err)
+		return manifest
+	}
+
+	// Find checksums.txt asset (goreleaser default name) before classifying
+	// per-platform so we can attach SHA-256 to each.
+	var checksumsURL string
+	for _, a := range rel.Assets {
+		if strings.EqualFold(a.Name, "checksums.txt") {
+			checksumsURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	sums := fetchChecksums(checksumsURL, client)
+
+	platforms := map[string]PlatformAsset{}
+	for _, a := range rel.Assets {
+		plat := classifyAsset(a.Name)
+		if plat == "" {
+			continue
+		}
+		if _, taken := platforms[plat]; taken {
+			continue // first match wins per platform
+		}
+		platforms[plat] = PlatformAsset{
+			URL:    a.BrowserDownloadURL,
+			SHA256: sums[a.Name],
+			Size:   a.Size,
+			Name:   a.Name,
+		}
+	}
+
+	version := strings.TrimPrefix(rel.TagName, "v")
+	if version == "" {
+		version = envVersion
+	}
+
+	return UpdateManifest{
+		Version:      version,
+		ReleaseURL:   rel.HTMLURL,
+		ReleaseNotes: rel.Body,
+		PublishedAt:  rel.PublishedAt,
+		Platforms:    platforms,
+		RefreshedAt:  time.Now().Unix(),
+		Source:       "github",
+	}
+}
+
+func (s *NexusServer) versionHandler(w http.ResponseWriter, r *http.Request) {
+	repo := strings.TrimSpace(os.Getenv("PHAZE_RELEASE_REPO"))
+	if repo == "" {
+		repo = "jakes1345/skype7-reborn"
+	}
+
+	updates.mu.RLock()
+	fresh := time.Now().Before(updates.expires) && updates.manifest.RefreshedAt > 0
+	manifest := updates.manifest
+	updates.mu.RUnlock()
+
+	if !fresh {
+		manifest = refreshUpdateManifest(repo)
+		updates.mu.Lock()
+		updates.manifest = manifest
+		updates.expires = time.Now().Add(updateTTL)
+		updates.mu.Unlock()
+	}
+
+	// Backwards-compat shim: older clients only look at `version` and `url`.
+	// New clients use `platforms` + `release_notes`.
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"version": v,
-		"url":     u,
-	})
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	out := struct {
+		UpdateManifest
+		// Legacy fields:
+		URL string `json:"url"`
+	}{UpdateManifest: manifest, URL: manifest.ReleaseURL}
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *NexusServer) statsHandler(w http.ResponseWriter, r *http.Request) {
