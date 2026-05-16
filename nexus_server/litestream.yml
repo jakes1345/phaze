@@ -1,0 +1,33 @@
+# Litestream config — streams SQLite WAL frames to S3-compatible storage
+# every second, so the on-disk DB on the Fly volume is not the only copy.
+#
+# Required env vars at runtime:
+#   LITESTREAM_BUCKET       e.g. phaze-nexus-backups
+#   LITESTREAM_ENDPOINT     e.g. https://s3.us-east-005.backblazeb2.com
+#                           (or omit for AWS S3 defaults)
+#   LITESTREAM_REGION       e.g. us-east-005
+#   LITESTREAM_ACCESS_KEY_ID
+#   LITESTREAM_SECRET_ACCESS_KEY
+#
+# Restore on a fresh volume:
+#   litestream restore -if-replica-exists -config /app/litestream.yml /data/nexus.db
+#
+# The entrypoint script (Dockerfile CMD) does this automatically when
+# LITESTREAM_BUCKET is set. If unset, the server runs without replication
+# (useful for local dev / self-hosters who don't want S3).
+
+dbs:
+  - path: /data/nexus.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: nexus.db
+        endpoint: ${LITESTREAM_ENDPOINT}
+        region: ${LITESTREAM_REGION}
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        # Keep 24h of WAL + a snapshot every 6h. Tunable.
+        retention: 168h
+        retention-check-interval: 1h
+        snapshot-interval: 6h
+        sync-interval: 1s

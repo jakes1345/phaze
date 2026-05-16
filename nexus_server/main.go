@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -18,9 +19,13 @@ import (
 	"net/smtp"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -51,34 +56,92 @@ func originAllowed(r *http.Request) bool {
 	return allowedOrigins[r.Header.Get("Origin")]
 }
 
+// pstnBridgeEnabled gates Twilio outbound PSTN. Default off so relays run
+// WebRTC-only (Phaze-to-Phaze) with no carrier or Twilio call charges.
+func pstnBridgeEnabled() bool {
+	return strings.EqualFold(os.Getenv("PHAZE_ENABLE_PSTN"), "true")
+}
+
+type limiterEntry struct {
+	lim  *rate.Limiter
+	last time.Time
+}
+
 type ipLimiter struct {
 	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
+	entries  map[string]*limiterEntry
 	r        rate.Limit
 	burst    int
+	idleTTL  time.Duration
+	maxSize  int
+	lastGC   time.Time
+	gcEvery  time.Duration
 }
 
 func newIPLimiter(r rate.Limit, burst int) *ipLimiter {
-	return &ipLimiter{limiters: map[string]*rate.Limiter{}, r: r, burst: burst}
+	return &ipLimiter{
+		entries: map[string]*limiterEntry{},
+		r:       r,
+		burst:   burst,
+		idleTTL: 10 * time.Minute,
+		maxSize: 50000,
+		gcEvery: 1 * time.Minute,
+	}
+}
+
+// gcLocked evicts idle limiters. Caller must hold l.mu.
+func (l *ipLimiter) gcLocked(now time.Time) {
+	if now.Sub(l.lastGC) < l.gcEvery && len(l.entries) < l.maxSize {
+		return
+	}
+	cutoff := now.Add(-l.idleTTL)
+	for ip, e := range l.entries {
+		if e.last.Before(cutoff) {
+			delete(l.entries, ip)
+		}
+	}
+	// If still over cap, drop oldest opportunistically.
+	if len(l.entries) > l.maxSize {
+		for ip := range l.entries {
+			delete(l.entries, ip)
+			if len(l.entries) <= l.maxSize*9/10 {
+				break
+			}
+		}
+	}
+	l.lastGC = now
 }
 
 func (l *ipLimiter) allow(ip string) bool {
+	now := time.Now()
 	l.mu.Lock()
-	lim, ok := l.limiters[ip]
+	defer l.mu.Unlock()
+	l.gcLocked(now)
+	e, ok := l.entries[ip]
 	if !ok {
-		lim = rate.NewLimiter(l.r, l.burst)
-		l.limiters[ip] = lim
+		e = &limiterEntry{lim: rate.NewLimiter(l.r, l.burst)}
+		l.entries[ip] = e
 	}
-	l.mu.Unlock()
-	return lim.Allow()
+	e.last = now
+	return e.lim.Allow()
 }
 
+// trustedProxyHeader is set when the server runs behind a known reverse proxy
+// (Fly.io edge, Cloudflare, nginx). Empty = ignore X-Forwarded-For entirely so
+// attackers cannot spoof a source IP to bypass per-IP rate limits.
+var trustedProxyHeader = strings.TrimSpace(os.Getenv("PHAZE_TRUST_PROXY_HEADER"))
+
 func clientIP(r *http.Request) string {
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		if i := strings.Index(xf, ","); i >= 0 {
-			return strings.TrimSpace(xf[:i])
+	if trustedProxyHeader != "" {
+		if v := strings.TrimSpace(r.Header.Get(trustedProxyHeader)); v != "" {
+			// Take leftmost entry (original client). Edge proxies append on the right.
+			if i := strings.Index(v, ","); i >= 0 {
+				v = strings.TrimSpace(v[:i])
+			}
+			if v != "" {
+				return v
+			}
 		}
-		return strings.TrimSpace(xf)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -305,10 +368,34 @@ func (s *NexusServer) initDB() {
 	migrations := []string{
 		`ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN ban_reason TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN banned_at DATETIME`,
+		`ALTER TABLE abuse_reports ADD COLUMN status TEXT DEFAULT 'pending'`,
+		`ALTER TABLE abuse_reports ADD COLUMN resolved_by TEXT DEFAULT ''`,
+		`ALTER TABLE abuse_reports ADD COLUMN resolved_at DATETIME`,
+		`CREATE INDEX IF NOT EXISTS idx_abuse_reports_status ON abuse_reports(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("DB migration skipped (%v)", err)
+		}
+	}
+
+	// Promote any usernames listed in PHAZE_ADMIN_USERS (comma-separated) to
+	// admin on every boot. Lets you bootstrap the first admin without a DB
+	// shell, and keeps admin status in sync if you rotate the env var.
+	if raw := strings.TrimSpace(os.Getenv("PHAZE_ADMIN_USERS")); raw != "" {
+		for _, u := range strings.Split(raw, ",") {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+			if _, err := s.DB.Exec(`UPDATE users SET is_admin = 1 WHERE username = ?`, u); err != nil {
+				log.Printf("[admin] promote %s: %v", u, err)
+			}
 		}
 	}
 }
@@ -406,6 +493,44 @@ func (s *NexusServer) sessionUsername(token string) string {
 
 func (s *NexusServer) revokeSession(token string) {
 	s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE token = ?", token)
+}
+
+// deleteAccount performs a GDPR Article 17 ("right to erasure") cascade for a
+// single user. Runs in a single transaction so partial failure leaves the
+// account intact. Reports MADE BY the user are removed; reports ABOUT the
+// user are retained (the subject column is just text, so the username string
+// remains in the safety log — this is the legitimate-interests carve-out).
+func (s *NexusServer) deleteAccount(username string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM friends WHERE user_a = ? OR user_b = ?`, []any{username, username}},
+		{`DELETE FROM offline_messages WHERE sender = ? OR recipient = ?`, []any{username, username}},
+		{`DELETE FROM conversation_members WHERE username = ?`, []any{username}},
+		{`DELETE FROM conversations WHERE created_by = ?`, []any{username}},
+		{`DELETE FROM blocks WHERE blocker = ? OR blocked = ?`, []any{username, username}},
+		{`DELETE FROM abuse_reports WHERE reporter = ?`, []any{username}},
+		{`DELETE FROM session_tokens WHERE username = ?`, []any{username}},
+		{`DELETE FROM password_resets WHERE username = ?`, []any{username}},
+		{`DELETE FROM qr_login_tokens WHERE username = ?`, []any{username}},
+		// Drop the user last — every other row referencing the username is
+		// already gone, so a foreign-key constraint (if added later) would still
+		// pass.
+		{`DELETE FROM users WHERE username = ?`, []any{username}},
+	}
+	for _, q := range statements {
+		if _, err := tx.Exec(q.sql, q.args...); err != nil {
+			return fmt.Errorf("deleteAccount %q: %w", q.sql, err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *NexusServer) totpStatus(username string) (secret string, enabled bool) {
@@ -601,6 +726,27 @@ func (s *NexusServer) authenticateUser(username, password string) bool {
 		return false
 	}
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
+// userBanInfo returns (banned, reason). Reason is empty for non-banned users.
+func (s *NexusServer) userBanInfo(username string) (bool, string) {
+	var banned int
+	var reason string
+	err := s.DB.QueryRow(`SELECT is_banned, COALESCE(ban_reason, '') FROM users WHERE username = ?`, username).Scan(&banned, &reason)
+	if err != nil {
+		return false, ""
+	}
+	return banned == 1, reason
+}
+
+// userIsAdmin reports whether the user has the admin flag set.
+func (s *NexusServer) userIsAdmin(username string) bool {
+	var n int
+	err := s.DB.QueryRow(`SELECT is_admin FROM users WHERE username = ?`, username).Scan(&n)
+	if err != nil {
+		return false
+	}
+	return n == 1
 }
 
 var errShortPassword = &strErr{"password must be at least 8 characters"}
@@ -910,8 +1056,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade error: %v", err)
+		metrics.wsConnectionsFail.Add(1)
 		return
 	}
+	metrics.wsConnections.Add(1)
 	defer ws.Close()
 
 	// client owns the write mutex for this connection. Pre-auth writes use
@@ -962,8 +1110,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
+		metrics.wsMessagesIn.Add(1)
+
 		switch msg.Type {
 		case "pstn_call":
+			metrics.pstnAttempts.Add(1)
+			if !pstnBridgeEnabled() {
+				metrics.pstnRejected.Add(1)
+				client.Send(NexusMessage{
+					Type:  "pstn_status",
+					Error: "PSTN bridge is disabled on this relay. Use in-app voice/video (WebRTC) with Phaze contacts — no phone network or Twilio required.",
+				})
+				continue
+			}
 			number := msg.Body
 			// SECURITY CHECK: Verify this number belongs to this sender
 			var verified int
@@ -1046,17 +1205,30 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "auth":
 			if msg.Body == "" {
+				metrics.authFailure.Add(1)
 				client.Send(NexusMessage{Type: "auth_result", Error: "Password required"})
 				continue
 			}
 			if !s.authenticateUser(msg.Sender, msg.Body) {
+				metrics.authFailure.Add(1)
 				client.Send(NexusMessage{Type: "auth_result", Error: "Invalid username or password"})
 				continue
 			}
+			if banned, reason := s.userBanInfo(msg.Sender); banned {
+				metrics.authFailure.Add(1)
+				body := "Account suspended"
+				if reason != "" {
+					body += ": " + reason
+				}
+				client.Send(NexusMessage{Type: "auth_result", Error: body, Status: "banned"})
+				continue
+			}
 			if !s.verifyTOTP(msg.Sender, msg.TOTPCode) {
+				metrics.authFailure.Add(1)
 				client.Send(NexusMessage{Type: "auth_result", Error: "2FA code required or invalid", Status: "totp_required"})
 				continue
 			}
+			metrics.authSuccess.Add(1)
 			username = msg.Sender
 			sessTok, _ := s.issueSessionToken(username, msg.DeviceInfo)
 			s.Mu.Lock()
@@ -1114,6 +1286,15 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "auth_result", Error: "Session expired, please log in"})
 				continue
 			}
+			if banned, reason := s.userBanInfo(u); banned {
+				body := "Account suspended"
+				if reason != "" {
+					body += ": " + reason
+				}
+				s.revokeSession(msg.QRToken)
+				client.Send(NexusMessage{Type: "auth_result", Error: body, Status: "banned"})
+				continue
+			}
 			username = u
 			s.Mu.Lock()
 			if existing, ok := s.Clients[username]; ok {
@@ -1141,6 +1322,36 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			s.revokeSession(msg.QRToken)
 			client.Send(NexusMessage{Type: "session_revoked", Status: "ok"})
+
+		case "delete_account":
+			// GDPR Article 17 — right to erasure. Requires the user to be
+			// authenticated AND to confirm their password in msg.Body so an
+			// attacker with a stolen session token can't nuke the account.
+			if username == "" {
+				client.Send(NexusMessage{Type: "delete_account_result", Error: "Not authenticated"})
+				continue
+			}
+			if msg.Body == "" || !s.authenticateUser(username, msg.Body) {
+				client.Send(NexusMessage{Type: "delete_account_result", Error: "Password confirmation required"})
+				continue
+			}
+			if err := s.deleteAccount(username); err != nil {
+				log.Printf("[delete_account] %s: %v", username, err)
+				client.Send(NexusMessage{Type: "delete_account_result", Error: "Internal error — try again"})
+				continue
+			}
+			log.Printf("[delete_account] erased account %s", username)
+			// Notify friends so their rosters update.
+			s.broadcastPresence(username, "Offline")
+			client.Send(NexusMessage{Type: "delete_account_result", Status: "ok"})
+			// Drop the connection and the in-memory client entry.
+			s.Mu.Lock()
+			if cur, ok := s.Clients[username]; ok && cur == client {
+				delete(s.Clients, username)
+			}
+			s.Mu.Unlock()
+			ws.Close()
+			return
 
 		case "resend_verification":
 			var email string
@@ -1368,6 +1579,18 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
+			// Directed key handoff (native_client replies to key_request with a
+			// presence carrying public_key + recipient = requester).
+			if msg.Recipient != "" && len(msg.PublicKey) == 32 && s.areFriends(username, msg.Recipient) {
+				msg.Sender = username
+				s.Mu.RLock()
+				if peer, ok := s.Clients[msg.Recipient]; ok {
+					if err := peer.Send(msg); err != nil {
+						log.Printf("[presence] key forward to %s: %v", msg.Recipient, err)
+					}
+				}
+				s.Mu.RUnlock()
+			}
 			log.Printf("User %s is now %s", username, msg.Status)
 			s.Mu.Lock()
 			if client, ok := s.Clients[username]; ok {
@@ -1492,6 +1715,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" || msg.ConvoID == "" {
 				continue
 			}
+			metrics.convoMessages.Add(1)
 			members := s.conversationMembers(msg.ConvoID)
 			s.Mu.RLock()
 			for _, m := range members {
@@ -1555,6 +1779,24 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				peer.Send(NexusMessage{
 					Type: "read_receipt", Sender: username, Body: msg.Body,
 				})
+			}
+			s.Mu.RUnlock()
+
+		// Pairwise public-key handoff for NaCl box E2EE. Desktop clients send
+		// this when they need a peer's key; the recipient answers with a
+		// "presence" message carrying public_key (see native_client).
+		case "key_request":
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			if !s.areFriends(username, msg.Recipient) {
+				continue
+			}
+			metrics.keyRequests.Add(1)
+			msg.Sender = username
+			s.Mu.RLock()
+			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
+				recipientClient.Send(msg)
 			}
 			s.Mu.RUnlock()
 
@@ -1627,6 +1869,89 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"turn_configured":   turnOK,
 		"connected_clients": clients,
 	})
+}
+
+// ---------- Metrics (Prometheus text format) ----------
+
+var metricsStart = time.Now()
+
+type nexusMetrics struct {
+	wsConnections     atomic.Uint64
+	wsConnectionsFail atomic.Uint64
+	wsMessagesIn      atomic.Uint64
+	authSuccess       atomic.Uint64
+	authFailure       atomic.Uint64
+	keyRequests       atomic.Uint64
+	convoMessages     atomic.Uint64
+	pstnAttempts      atomic.Uint64
+	pstnRejected      atomic.Uint64
+}
+
+var metrics = &nexusMetrics{}
+
+func (s *NexusServer) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if tok := strings.TrimSpace(os.Getenv("PHAZE_METRICS_TOKEN")); tok != "" {
+		got := r.Header.Get("Authorization")
+		if got != "Bearer "+tok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+	s.Mu.RLock()
+	activeClients := len(s.Clients)
+	s.Mu.RUnlock()
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	var pending int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM offline_messages`).Scan(&pending)
+
+	var users int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&users)
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "# HELP nexus_uptime_seconds Seconds since server start\n")
+	fmt.Fprintf(w, "# TYPE nexus_uptime_seconds counter\n")
+	fmt.Fprintf(w, "nexus_uptime_seconds %.0f\n", time.Since(metricsStart).Seconds())
+	fmt.Fprintf(w, "# HELP nexus_active_clients Connected authenticated WebSocket clients\n")
+	fmt.Fprintf(w, "# TYPE nexus_active_clients gauge\n")
+	fmt.Fprintf(w, "nexus_active_clients %d\n", activeClients)
+	fmt.Fprintf(w, "# HELP nexus_registered_users Total user accounts\n")
+	fmt.Fprintf(w, "# TYPE nexus_registered_users gauge\n")
+	fmt.Fprintf(w, "nexus_registered_users %d\n", users)
+	fmt.Fprintf(w, "# HELP nexus_offline_messages_pending Queued messages awaiting recipient login\n")
+	fmt.Fprintf(w, "# TYPE nexus_offline_messages_pending gauge\n")
+	fmt.Fprintf(w, "nexus_offline_messages_pending %d\n", pending)
+	fmt.Fprintf(w, "# HELP nexus_ws_connections_total WebSocket upgrade attempts\n")
+	fmt.Fprintf(w, "# TYPE nexus_ws_connections_total counter\n")
+	fmt.Fprintf(w, "nexus_ws_connections_total %d\n", metrics.wsConnections.Load())
+	fmt.Fprintf(w, "# HELP nexus_ws_connections_failed_total WebSocket upgrades that failed\n")
+	fmt.Fprintf(w, "# TYPE nexus_ws_connections_failed_total counter\n")
+	fmt.Fprintf(w, "nexus_ws_connections_failed_total %d\n", metrics.wsConnectionsFail.Load())
+	fmt.Fprintf(w, "# HELP nexus_ws_messages_in_total Inbound WebSocket messages\n")
+	fmt.Fprintf(w, "# TYPE nexus_ws_messages_in_total counter\n")
+	fmt.Fprintf(w, "nexus_ws_messages_in_total %d\n", metrics.wsMessagesIn.Load())
+	fmt.Fprintf(w, "# HELP nexus_auth_total Auth attempts by result\n")
+	fmt.Fprintf(w, "# TYPE nexus_auth_total counter\n")
+	fmt.Fprintf(w, "nexus_auth_total{result=\"ok\"} %d\n", metrics.authSuccess.Load())
+	fmt.Fprintf(w, "nexus_auth_total{result=\"fail\"} %d\n", metrics.authFailure.Load())
+	fmt.Fprintf(w, "# HELP nexus_key_requests_total Pairwise key_request relays\n")
+	fmt.Fprintf(w, "# TYPE nexus_key_requests_total counter\n")
+	fmt.Fprintf(w, "nexus_key_requests_total %d\n", metrics.keyRequests.Load())
+	fmt.Fprintf(w, "# HELP nexus_convo_messages_total Group envelope messages relayed\n")
+	fmt.Fprintf(w, "# TYPE nexus_convo_messages_total counter\n")
+	fmt.Fprintf(w, "nexus_convo_messages_total %d\n", metrics.convoMessages.Load())
+	fmt.Fprintf(w, "# HELP nexus_pstn_total PSTN attempts and rejections\n")
+	fmt.Fprintf(w, "# TYPE nexus_pstn_total counter\n")
+	fmt.Fprintf(w, "nexus_pstn_total{result=\"attempt\"} %d\n", metrics.pstnAttempts.Load())
+	fmt.Fprintf(w, "nexus_pstn_total{result=\"rejected_disabled\"} %d\n", metrics.pstnRejected.Load())
+	fmt.Fprintf(w, "# HELP go_memstats_alloc_bytes Currently allocated heap bytes\n")
+	fmt.Fprintf(w, "# TYPE go_memstats_alloc_bytes gauge\n")
+	fmt.Fprintf(w, "go_memstats_alloc_bytes %d\n", memStats.Alloc)
+	fmt.Fprintf(w, "# HELP go_goroutines Currently running goroutines\n")
+	fmt.Fprintf(w, "# TYPE go_goroutines gauge\n")
+	fmt.Fprintf(w, "go_goroutines %d\n", runtime.NumGoroutine())
 }
 
 const rootHTML = `<!doctype html>
@@ -1779,21 +2104,452 @@ func (s *NexusServer) resetHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!doctype html><html><head><meta charset=utf-8><title>Reset Phaze password</title><style>body{font-family:system-ui;max-width:520px;margin:80px auto;padding:20px}input{width:100%%;padding:10px;margin:8px 0;font-size:1rem}button{background:#00AFF0;color:#fff;border:0;padding:12px 24px;border-radius:6px;font-size:1rem;cursor:pointer}</style></head><body><h1>Reset your Phaze password</h1><form method="POST"><input type="hidden" name="token" value="%s"><label>New password (min. 8 chars)<input type="password" name="password" minlength="8" required></label><button type="submit">Set new password</button></form></body></html>`, token)
 }
 
-func (s *NexusServer) versionHandler(w http.ResponseWriter, r *http.Request) {
-	v := os.Getenv("Phaze_LATEST_VERSION")
-	if v == "" {
-		v = "1.0.0-Phaze"
+// ---------- Admin moderation API ----------
+
+// adminFromRequest authenticates an admin caller. Expects Authorization:
+// Bearer <session_token>. Returns "" + status code on failure (already
+// written by the helper). The session_token is the standard one issued
+// by /auth — there is no separate "admin token".
+func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		http.Error(w, "Authorization required", http.StatusUnauthorized)
+		return ""
 	}
-	u := os.Getenv("Phaze_UPDATE_URL")
+	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	u := s.sessionUsername(tok)
 	if u == "" {
-		u = "https://phazechat.world/releases"
+		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+		return ""
+	}
+	if !s.userIsAdmin(u) {
+		http.Error(w, "admin access required", http.StatusForbidden)
+		return ""
+	}
+	return u
+}
+
+// AdminReport is one row of the abuse_reports table for the listing endpoint.
+type AdminReport struct {
+	ID         int64  `json:"id"`
+	Reporter   string `json:"reporter"`
+	Subject    string `json:"subject"`
+	Reason     string `json:"reason"`
+	Body       string `json:"body"`
+	Status     string `json:"status"`
+	ResolvedBy string `json:"resolved_by,omitempty"`
+	ResolvedAt string `json:"resolved_at,omitempty"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (s *NexusServer) adminReportsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = "pending"
+	}
+	rows, err := s.DB.Query(
+		`SELECT id, reporter, subject, reason, COALESCE(body, ''), COALESCE(status, 'pending'),
+		         COALESCE(resolved_by, ''), COALESCE(CAST(resolved_at AS TEXT), ''), CAST(created_at AS TEXT)
+		   FROM abuse_reports
+		  WHERE COALESCE(status, 'pending') = ?
+		  ORDER BY id DESC LIMIT 500`, status)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := []AdminReport{}
+	for rows.Next() {
+		var rep AdminReport
+		if err := rows.Scan(&rep.ID, &rep.Reporter, &rep.Subject, &rep.Reason, &rep.Body,
+			&rep.Status, &rep.ResolvedBy, &rep.ResolvedAt, &rep.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, rep)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (s *NexusServer) adminResolveReportHandler(w http.ResponseWriter, r *http.Request) {
+	admin := s.adminFromRequest(w, r)
+	if admin == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Path: /api/v1/admin/reports/{id}/resolve
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/reports/"), "/")
+	if len(parts) < 2 || parts[1] != "resolve" {
+		http.Error(w, "expected /api/v1/admin/reports/{id}/resolve", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "bad report id", http.StatusBadRequest)
+		return
+	}
+	res, err := s.DB.Exec(
+		`UPDATE abuse_reports SET status = 'resolved', resolved_by = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		admin, id)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		http.Error(w, "report not found", http.StatusNotFound)
+		return
+	}
+	log.Printf("[admin] %s resolved report %d", admin, id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": id})
+}
+
+func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
+	admin := s.adminFromRequest(w, r)
+	if admin == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Path: /api/v1/admin/users/{username}/(ban|unban)
+	tail := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/users/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 {
+		http.Error(w, "expected /api/v1/admin/users/{username}/(ban|unban)", http.StatusBadRequest)
+		return
+	}
+	target := parts[0]
+	action := parts[1]
+	if target == "" || !validUsername(target) {
+		http.Error(w, "bad username", http.StatusBadRequest)
+		return
+	}
+	if target == admin {
+		http.Error(w, "cannot ban yourself", http.StatusBadRequest)
+		return
 	}
 
+	var reason string
+	if r.ContentLength > 0 && r.ContentLength < 4096 {
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+		reason = strings.TrimSpace(body.Reason)
+	}
+
+	switch action {
+	case "ban":
+		res, err := s.DB.Exec(
+			`UPDATE users SET is_banned = 1, ban_reason = ?, banned_at = CURRENT_TIMESTAMP WHERE username = ?`,
+			reason, target)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		// Revoke all live sessions so the user is logged out everywhere.
+		s.DB.Exec(`UPDATE session_tokens SET revoked = 1 WHERE username = ?`, target)
+		// Kick connected session, if any.
+		s.Mu.Lock()
+		if c, ok := s.Clients[target]; ok {
+			body := "Account suspended"
+			if reason != "" {
+				body += ": " + reason
+			}
+			c.Send(NexusMessage{Type: "kicked", Body: body})
+			c.Conn.Close()
+			delete(s.Clients, target)
+		}
+		s.Mu.Unlock()
+		log.Printf("[admin] %s banned %s (reason=%q)", admin, target, reason)
+	case "unban":
+		res, err := s.DB.Exec(
+			`UPDATE users SET is_banned = 0, ban_reason = '', banned_at = NULL WHERE username = ?`, target)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("[admin] %s unbanned %s", admin, target)
+	default:
+		http.Error(w, "expected /ban or /unban", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"version": v,
-		"url":     u,
-	})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": target, "action": action})
+}
+
+func (s *NexusServer) adminBannedUsersHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	rows, err := s.DB.Query(
+		`SELECT username, COALESCE(ban_reason, ''), COALESCE(CAST(banned_at AS TEXT), '')
+		   FROM users WHERE is_banned = 1 ORDER BY banned_at DESC LIMIT 500`)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type bannedUser struct {
+		Username string `json:"username"`
+		Reason   string `json:"reason"`
+		BannedAt string `json:"banned_at"`
+	}
+	out := []bannedUser{}
+	for rows.Next() {
+		var u bannedUser
+		if err := rows.Scan(&u.Username, &u.Reason, &u.BannedAt); err != nil {
+			continue
+		}
+		out = append(out, u)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// ---------- Update manifest (GitHub Releases) ----------
+
+// PlatformAsset is one downloadable artifact for the auto-update flow.
+// SHA256 is the canonical integrity check; the client MUST verify before
+// running the new binary. Empty SHA256 means checksums.txt was unavailable
+// at refresh time — clients should refuse to auto-install in that case.
+type PlatformAsset struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Name   string `json:"name"`
+}
+
+type UpdateManifest struct {
+	Version      string                   `json:"version"`
+	ReleaseURL   string                   `json:"release_url"`
+	ReleaseNotes string                   `json:"release_notes,omitempty"`
+	PublishedAt  string                   `json:"published_at,omitempty"`
+	Platforms    map[string]PlatformAsset `json:"platforms"`
+	RefreshedAt  int64                    `json:"refreshed_at"`
+	Source       string                   `json:"source"` // "github" or "env"
+}
+
+type updateCache struct {
+	mu       sync.RWMutex
+	manifest UpdateManifest
+	expires  time.Time
+}
+
+var updates = &updateCache{}
+
+const updateTTL = 5 * time.Minute
+
+// ghRelease is the subset of the GitHub Releases JSON we care about.
+type ghRelease struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Assets      []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+		Size               int64  `json:"size"`
+	} `json:"assets"`
+}
+
+// classifyAsset returns the platform key ("windows" / "linux" / "android")
+// for an asset name, or "" if it doesn't match any of our targets. Match is
+// intentionally broad so we accept either "Phaze.exe"/"Phaze.apk"/"Phaze.linux"
+// (current naming) or the goreleaser pattern "Phaze_<os>_<arch>.<ext>".
+func classifyAsset(name string) string {
+	low := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(low, ".exe"),
+		strings.Contains(low, "windows"):
+		return "windows"
+	case strings.HasSuffix(low, ".apk"):
+		return "android"
+	case strings.HasSuffix(low, ".linux"),
+		strings.Contains(low, "linux"):
+		return "linux"
+	}
+	return ""
+}
+
+// fetchChecksums downloads checksums.txt (goreleaser format: "<sha256>  <name>")
+// and returns a map of filename -> sha256 hex. Returns nil on error so the
+// caller can decide whether to publish an unverified manifest.
+func fetchChecksums(url string, client *http.Client) map[string]string {
+	if url == "" {
+		return nil
+	}
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Accept", "text/plain")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		sum, name := fields[0], fields[1]
+		if len(sum) != 64 {
+			continue
+		}
+		// Strip a leading "*" goreleaser sometimes prefixes for binary mode.
+		name = strings.TrimPrefix(name, "*")
+		out[name] = strings.ToLower(sum)
+	}
+	return out
+}
+
+// refreshUpdateManifest fetches the latest release from GitHub and rebuilds
+// the cached manifest. Falls back to env-var-only manifest when the API
+// roundtrip fails (so the endpoint never disappears, just becomes thin).
+func refreshUpdateManifest(repo string) UpdateManifest {
+	envVersion := strings.TrimSpace(os.Getenv("Phaze_LATEST_VERSION"))
+	envURL := strings.TrimSpace(os.Getenv("Phaze_UPDATE_URL"))
+	if envURL == "" {
+		envURL = "https://github.com/" + repo + "/releases/latest"
+	}
+
+	manifest := UpdateManifest{
+		Version:     envVersion,
+		ReleaseURL:  envURL,
+		Platforms:   map[string]PlatformAsset{},
+		RefreshedAt: time.Now().Unix(),
+		Source:      "env",
+	}
+
+	if repo == "" {
+		return manifest
+	}
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+repo+"/releases/latest", nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[update] github fetch: %v", err)
+		return manifest
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[update] github status %d", resp.StatusCode)
+		return manifest
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+		log.Printf("[update] github decode: %v", err)
+		return manifest
+	}
+
+	// Find checksums.txt asset (goreleaser default name) before classifying
+	// per-platform so we can attach SHA-256 to each.
+	var checksumsURL string
+	for _, a := range rel.Assets {
+		if strings.EqualFold(a.Name, "checksums.txt") {
+			checksumsURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	sums := fetchChecksums(checksumsURL, client)
+
+	platforms := map[string]PlatformAsset{}
+	for _, a := range rel.Assets {
+		plat := classifyAsset(a.Name)
+		if plat == "" {
+			continue
+		}
+		if _, taken := platforms[plat]; taken {
+			continue // first match wins per platform
+		}
+		platforms[plat] = PlatformAsset{
+			URL:    a.BrowserDownloadURL,
+			SHA256: sums[a.Name],
+			Size:   a.Size,
+			Name:   a.Name,
+		}
+	}
+
+	version := strings.TrimPrefix(rel.TagName, "v")
+	if version == "" {
+		version = envVersion
+	}
+
+	return UpdateManifest{
+		Version:      version,
+		ReleaseURL:   rel.HTMLURL,
+		ReleaseNotes: rel.Body,
+		PublishedAt:  rel.PublishedAt,
+		Platforms:    platforms,
+		RefreshedAt:  time.Now().Unix(),
+		Source:       "github",
+	}
+}
+
+func (s *NexusServer) versionHandler(w http.ResponseWriter, r *http.Request) {
+	repo := strings.TrimSpace(os.Getenv("PHAZE_RELEASE_REPO"))
+	if repo == "" {
+		repo = "jakes1345/skype7-reborn"
+	}
+
+	updates.mu.RLock()
+	fresh := time.Now().Before(updates.expires) && updates.manifest.RefreshedAt > 0
+	manifest := updates.manifest
+	updates.mu.RUnlock()
+
+	if !fresh {
+		manifest = refreshUpdateManifest(repo)
+		updates.mu.Lock()
+		updates.manifest = manifest
+		updates.expires = time.Now().Add(updateTTL)
+		updates.mu.Unlock()
+	}
+
+	// Backwards-compat shim: older clients only look at `version` and `url`.
+	// New clients use `platforms` + `release_notes`.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	out := struct {
+		UpdateManifest
+		// Legacy fields:
+		URL string `json:"url"`
+	}{UpdateManifest: manifest, URL: manifest.ReleaseURL}
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *NexusServer) statsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1818,7 +2574,63 @@ func (s *NexusServer) statsHandler(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Main ----------
 
+// resolveWorkingDir sets the process working directory so relative paths
+// templates/, public/, and the default SQLite file resolve correctly when
+// the binary is launched from outside nexus_server/ (for example ../bin/phaze-nexus).
+func resolveWorkingDir() {
+	if d := strings.TrimSpace(os.Getenv("PHAZE_ASSET_ROOT")); d != "" {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			log.Printf("[nexus] PHAZE_ASSET_ROOT: %v", err)
+			return
+		}
+		if err := os.Chdir(abs); err != nil {
+			log.Printf("[nexus] PHAZE_ASSET_ROOT chdir %q: %v", abs, err)
+		} else {
+			log.Printf("[nexus] working directory: %s (PHAZE_ASSET_ROOT)", abs)
+		}
+		return
+	}
+	if _, err := os.Stat("templates/landing.html"); err == nil {
+		if wd, err := os.Getwd(); err == nil {
+			log.Printf("[nexus] working directory: %s", wd)
+		}
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("[nexus] could not resolve executable: %v", err)
+		return
+	}
+	exeDir := filepath.Clean(filepath.Dir(exe))
+	candidates := []string{
+		exeDir,
+		filepath.Join(exeDir, "..", "nexus_server"),
+		filepath.Join(exeDir, "..", "..", "nexus_server"),
+	}
+	for _, c := range candidates {
+		abs, err := filepath.Abs(c)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(abs, "templates", "landing.html")); err != nil {
+			continue
+		}
+		if err := os.Chdir(abs); err != nil {
+			log.Printf("[nexus] chdir %q: %v", abs, err)
+			continue
+		}
+		log.Printf("[nexus] working directory: %s (auto-detected)", abs)
+		return
+	}
+	if wd, err := os.Getwd(); err == nil {
+		log.Printf("[nexus] working directory: %s (templates/ not found; some pages use built-in HTML fallback)", wd)
+	}
+}
+
 func main() {
+	resolveWorkingDir()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -1883,6 +2695,11 @@ func main() {
 	http.HandleFunc("/reset", server.resetHandler)
 	http.HandleFunc("/version", server.versionHandler)
 	http.HandleFunc("/health", server.healthHandler)
+	http.HandleFunc("/metrics", server.metricsHandler)
+	http.HandleFunc("/api/v1/admin/reports", server.adminReportsHandler)
+	http.HandleFunc("/api/v1/admin/reports/", server.adminResolveReportHandler) // /{id}/resolve
+	http.HandleFunc("/api/v1/admin/users/", server.adminBanHandler)             // /{username}/(ban|unban)
+	http.HandleFunc("/api/v1/admin/banned", server.adminBannedUsersHandler)
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 
@@ -1996,7 +2813,7 @@ func (s *NexusServer) handleBotMessage(client *Client, msg NexusMessage) {
 		Type:      "msg",
 		Sender:    "PhazeBot",
 		Recipient: msg.Sender,
-		Body:      "I am the Phaze Mesh Assistant. Try these commands: /mesh, /version, /pstn",
+		Body:      "I am the Phaze Mesh Assistant. Try: /mesh, /version, /pstn (PSTN status), /webrtc",
 	}
 
 	cmd := strings.ToLower(strings.TrimSpace(msg.Body))
@@ -2006,10 +2823,16 @@ func (s *NexusServer) handleBotMessage(client *Client, msg NexusMessage) {
 		count := len(s.Clients)
 		s.Mu.RUnlock()
 		reply.Body = fmt.Sprintf("The Phaze Mesh currently has %d active sovereign peers.", count)
+	case cmd == "/webrtc":
+		reply.Body = "Phaze voice/video uses WebRTC (Pion on desktop, browser APIs on web). Signaling goes over Nexus; media is peer-to-peer when possible, with TURN from your relay when NAT blocks direct paths."
 	case cmd == "/version":
 		reply.Body = "Nexus Server v1.0.0-Phaze | Build: Enterprise-Mesh"
 	case cmd == "/pstn":
-		reply.Body = "PSTN Bridge is ACTIVE. Link your phone in Settings to use Caller ID."
+		if pstnBridgeEnabled() {
+			reply.Body = "PSTN bridge is ON for this relay (Twilio). Link your phone in Settings for verified outbound. Otherwise use WebRTC calls in chat."
+		} else {
+			reply.Body = "PSTN bridge is OFF. Voice/video is WebRTC between Phaze users only — no carrier charges."
+		}
 	}
 	client.Send(reply)
 }

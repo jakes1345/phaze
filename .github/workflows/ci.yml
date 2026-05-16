@@ -21,6 +21,13 @@ jobs:
             native_client/go.sum
             nexus_server/go.sum
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -37,4 +44,13 @@ jobs:
       - name: Test suite
         run: |
           cd native_client && go test -v ./internal/...
-          cd ../nexus_server && go test -v ./...
+          cd ../nexus_server && go test -race -count=1 -v ./...
+
+      - name: Go vet
+        run: |
+          cd native_client && go vet ./...
+          cd ../nexus_server && go vet ./...
+
+      - name: Web client (install, build, test, lint)
+        run: |
+          cd web && npm ci && npm run build && npm run test && npm run lint
