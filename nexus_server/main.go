@@ -2665,6 +2665,42 @@ func main() {
 	http.Handle("/public/", http.StripPrefix("/public/", fs))
 	http.HandleFunc("/downloads/", server.fileDownloadHandler)
 
+	// Web client (React/Vite SPA). The Docker build stage compiles
+	// web/dist into /app/web; in dev a symlink (or PHAZE_WEB_DIR env)
+	// points elsewhere. SPA fallback to index.html so client-side routes
+	// keep working on hard refresh; static assets get long-lived caching
+	// via Vite's content-hashed filenames.
+	webDir := strings.TrimSpace(os.Getenv("PHAZE_WEB_DIR"))
+	if webDir == "" {
+		webDir = "web"
+	}
+	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err == nil {
+		webFS := http.FileServer(http.Dir(webDir))
+		http.HandleFunc("/web/", func(w http.ResponseWriter, r *http.Request) {
+			rel := strings.TrimPrefix(r.URL.Path, "/web/")
+			candidate := filepath.Join(webDir, filepath.FromSlash(rel))
+			if rel != "" {
+				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+					if strings.HasPrefix(rel, "assets/") {
+						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					}
+					http.StripPrefix("/web/", webFS).ServeHTTP(w, r)
+					return
+				}
+			}
+			// SPA fallback — anything unknown serves index.html.
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+		})
+		// Bare /web → redirect to /web/ so relative asset URLs resolve correctly.
+		http.HandleFunc("/web", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/web/", http.StatusFound)
+		})
+		log.Printf("[web] serving SPA from %s at /web/", webDir)
+	} else {
+		log.Printf("[web] no SPA at %s — /web/ will 404 until web client is built", webDir)
+	}
+
 	http.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
