@@ -66,3 +66,4 @@ native_client/vault_lock.go
 
 # Legacy reverse-engineering trees (Skype dumps, Ghidra exports) are intentionally
 # not part of this repo — add them only in a private fork if you still need them.
+__pycache__/

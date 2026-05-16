@@ -1,0 +1,50 @@
+# Dependabot — opens PRs for CVE patches + minor version bumps across
+# every package ecosystem in this repo. Free, runs on GitHub's
+# infrastructure, no secrets required.
+#
+# AI-maintenance.yml will pick up these PRs and auto-merge the ones that
+# pass CI + don't change any major version.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /nexus_server
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 5
+    labels: [dependencies, server]
+    commit-message:
+      prefix: chore(nexus-deps)
+
+  - package-ecosystem: gomod
+    directory: /native_client
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 5
+    labels: [dependencies, native]
+    commit-message:
+      prefix: chore(native-deps)
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 5
+    labels: [dependencies, web]
+    commit-message:
+      prefix: chore(web-deps)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci-deps)
+
+  - package-ecosystem: docker
+    directory: /nexus_server
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker-deps)
