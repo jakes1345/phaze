@@ -80,6 +80,11 @@ func main() {
 	// Migrate: add columns that may be absent in older DB schemas.
 	for _, col := range []string{
 		`ALTER TABLE users ADD COLUMN email TEXT`,
+		`ALTER TABLE users ADD COLUMN mood TEXT`,
+		`ALTER TABLE users ADD COLUMN display_name TEXT`,
+		`ALTER TABLE users ADD COLUMN verification_code TEXT`,
+		`ALTER TABLE users ADD COLUMN phone_number TEXT`,
+		`ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN ban_reason TEXT`,
