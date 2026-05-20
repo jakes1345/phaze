@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -445,6 +446,23 @@ func (s *NexusServer) initDB() {
 		`CREATE INDEX IF NOT EXISTS idx_channel_messages ON channel_messages(channel_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_servers_invite ON servers(invite_code)`,
+		`CREATE TABLE IF NOT EXISTS push_subscriptions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL,
+			endpoint TEXT NOT NULL UNIQUE,
+			p256dh TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_push_username ON push_subscriptions(username)`,
+		`CREATE TABLE IF NOT EXISTS invite_codes (
+			code TEXT PRIMARY KEY,
+			inviter TEXT NOT NULL,
+			email TEXT NOT NULL,
+			used INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			used_at DATETIME
+		)`,
 	}
 	for _, q := range tables {
 		if _, err := s.DB.Exec(q); err != nil {
@@ -1132,6 +1150,110 @@ func (s *NexusServer) storeOfflineMessage(sender, recipient, body, msgType strin
 		sender, recipient, body, msgType); err != nil {
 		log.Printf("[offline] store %s->%s (%s) failed: %v", sender, recipient, msgType, err)
 	}
+	go s.sendWebPush(recipient, sender, body)
+}
+
+func (s *NexusServer) sendWebPush(recipient, sender, preview string) {
+	privKey := os.Getenv("VAPID_PRIVATE_KEY")
+	pubKey := os.Getenv("VAPID_PUBLIC_KEY")
+	if privKey == "" || pubKey == "" {
+		return
+	}
+	rows, err := s.DB.Query("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE username = ?", recipient)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	msg := preview
+	if len(msg) > 80 {
+		msg = msg[:80] + "…"
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"title": sender,
+		"body":  msg,
+	})
+	for rows.Next() {
+		var endpoint, p256dh, auth string
+		if err := rows.Scan(&endpoint, &p256dh, &auth); err != nil {
+			continue
+		}
+		sub := &webpush.Subscription{
+			Endpoint: endpoint,
+			Keys: webpush.Keys{
+				P256dh: p256dh,
+				Auth:   auth,
+			},
+		}
+		resp, err := webpush.SendNotification(payload, sub, &webpush.Options{
+			VAPIDPublicKey:  pubKey,
+			VAPIDPrivateKey: privKey,
+			Subscriber:      "noreply@phazechat.world",
+			TTL:             86400,
+		})
+		if err != nil {
+			log.Printf("[push] send to %s: %v", recipient, err)
+		} else {
+			resp.Body.Close()
+		}
+	}
+}
+
+func (s *NexusServer) listSessions(username string) []map[string]string {
+	rows, err := s.DB.Query(`SELECT token, device_info, created_at FROM session_tokens
+		WHERE username = ? AND revoked = 0 AND expires_at > datetime('now') ORDER BY created_at DESC`, username)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []map[string]string
+	for rows.Next() {
+		var tok, dev, created string
+		rows.Scan(&tok, &dev, &created)
+		out = append(out, map[string]string{
+			"token":      tok[:8] + "…",
+			"full_token": tok,
+			"device":     dev,
+			"created_at": created,
+		})
+	}
+	return out
+}
+
+func (s *NexusServer) exportUserData(username string) map[string]interface{} {
+	out := map[string]interface{}{"username": username}
+	// Profile
+	var email, mood, displayName string
+	s.DB.QueryRow("SELECT email, mood, display_name FROM users WHERE username = ?", username).Scan(&email, &mood, &displayName)
+	out["email"] = email
+	out["mood"] = mood
+	out["display_name"] = displayName
+	// Friends
+	rows, _ := s.DB.Query("SELECT user_b, status FROM friends WHERE user_a = ? AND status = 'accepted'", username)
+	var friends []string
+	if rows != nil {
+		for rows.Next() {
+			var u, st string
+			rows.Scan(&u, &st)
+			friends = append(friends, u)
+		}
+		rows.Close()
+	}
+	out["friends"] = friends
+	// Messages (offline store only — live messages are E2EE so server never sees plaintext)
+	msgRows, _ := s.DB.Query("SELECT sender, recipient, body, created_at FROM offline_messages WHERE sender = ? OR recipient = ? ORDER BY created_at ASC", username, username)
+	var msgs []map[string]string
+	if msgRows != nil {
+		for msgRows.Next() {
+			var sender, recipient, body, createdAt string
+			msgRows.Scan(&sender, &recipient, &body, &createdAt)
+			msgs = append(msgs, map[string]string{"from": sender, "to": recipient, "body": body, "at": createdAt})
+		}
+		msgRows.Close()
+	}
+	out["messages"] = msgs
+	out["exported_at"] = time.Now().UTC().Format(time.RFC3339)
+	out["note"] = "Live E2EE messages are not stored server-side. This export contains only metadata and queued offline messages."
+	return out
 }
 
 func (s *NexusServer) deliverOfflineMessages(username string) {
@@ -1803,6 +1925,69 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			client.Send(NexusMessage{Type: "blocks", Results: s.listBlocks(username)})
+
+		case "subscribe_push":
+			if username == "" {
+				continue
+			}
+			// msg.Body = JSON {"endpoint":"…","p256dh":"…","auth":"…"}
+			var sub struct {
+				Endpoint string `json:"endpoint"`
+				P256DH   string `json:"p256dh"`
+				Auth     string `json:"auth"`
+			}
+			if err := json.Unmarshal([]byte(msg.Body), &sub); err != nil || sub.Endpoint == "" {
+				client.Send(NexusMessage{Type: "push_result", Error: "Invalid subscription"})
+				continue
+			}
+			s.DB.Exec(`INSERT INTO push_subscriptions (username, endpoint, p256dh, auth)
+				VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET username=excluded.username`,
+				username, sub.Endpoint, sub.P256DH, sub.Auth)
+			client.Send(NexusMessage{Type: "push_result", Status: "subscribed"})
+
+		case "unsubscribe_push":
+			if username == "" {
+				continue
+			}
+			s.DB.Exec("DELETE FROM push_subscriptions WHERE username = ? AND endpoint = ?", username, msg.Body)
+			client.Send(NexusMessage{Type: "push_result", Status: "unsubscribed"})
+
+		case "list_sessions":
+			if username == "" {
+				continue
+			}
+			sessions := s.listSessions(username)
+			data, _ := json.Marshal(sessions)
+			client.Send(NexusMessage{Type: "sessions_list", Body: string(data)})
+
+		case "revoke_session_by_token":
+			if username == "" {
+				continue
+			}
+			// Only revoke sessions belonging to this user
+			s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE token = ? AND username = ?", msg.Body, username)
+			client.Send(NexusMessage{Type: "session_revoked", Status: "ok"})
+
+		case "invite_email":
+			if username == "" {
+				continue
+			}
+			if !validEmail(msg.Email) {
+				client.Send(NexusMessage{Type: "invite_result", Error: "Invalid email"})
+				continue
+			}
+			code, err := randHex(16)
+			if err != nil {
+				client.Send(NexusMessage{Type: "invite_result", Error: "Internal error"})
+				continue
+			}
+			s.DB.Exec("INSERT INTO invite_codes (code, inviter, email) VALUES (?, ?, ?)", code, username, msg.Email)
+			link := "https://phazechat.world/web?invite=" + code
+			go s.sendEmailLogged(msg.Email, username+" invited you to Phaze",
+				"<h1>You've been invited to Phaze!</h1><p><b>"+username+"</b> wants to chat with you on Phaze — free encrypted messaging and calls.</p>"+
+					"<p><a href=\""+link+"\" style=\"background:#00aff0;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold;\">Join Phaze</a></p>"+
+					"<p style=\"font-size:12px;color:#666\">Or paste this link: "+link+"</p>")
+			client.Send(NexusMessage{Type: "invite_result", Status: "sent"})
 
 		case "report_abuse":
 			if username == "" {
@@ -3099,6 +3284,29 @@ func (s *NexusServer) statsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *NexusServer) vapidKeyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(map[string]string{"publicKey": os.Getenv("VAPID_PUBLIC_KEY")})
+}
+
+func (s *NexusServer) exportHandler(w http.ResponseWriter, r *http.Request) {
+	tok := r.URL.Query().Get("token")
+	if tok == "" {
+		http.Error(w, "token required", http.StatusUnauthorized)
+		return
+	}
+	username := s.sessionUsername(tok)
+	if username == "" {
+		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+		return
+	}
+	data := s.exportUserData(username)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="phaze-data-export.json"`)
+	json.NewEncoder(w).Encode(data)
+}
+
 // ---------- Main ----------
 
 // resolveWorkingDir sets the process working directory so relative paths
@@ -3265,6 +3473,8 @@ func main() {
 	http.HandleFunc("/api/v1/admin/banned", server.adminBannedUsersHandler)
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
+	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
+	http.HandleFunc("/api/v1/vapid-key", server.vapidKeyHandler)
 
 	bindAddr := os.Getenv("BIND_ADDR")
 	if bindAddr == "" {
