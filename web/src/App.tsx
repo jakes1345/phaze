@@ -17,6 +17,33 @@ import './App.css'
 const SESSION_KEY = 'phaze_session_token_v1'
 const KEYS_KEY = 'phaze_nacl_keys_v1'
 
+async function registerPush(send: (m: NexusMessage) => void) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+  try {
+    const reg = await navigator.serviceWorker.register('/web/sw.js', { scope: '/web/' })
+    const perm = await Notification.requestPermission()
+    if (perm !== 'granted') return
+    const resp = await fetch('/api/v1/vapid-key')
+    const { publicKey } = await resp.json() as { publicKey: string }
+    if (!publicKey) return
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: publicKey,
+    })
+    const json = sub.toJSON()
+    send({
+      type: 'subscribe_push',
+      body: JSON.stringify({
+        endpoint: json.endpoint,
+        p256dh: json.keys?.p256dh,
+        auth: json.keys?.auth,
+      }),
+    })
+  } catch (e) {
+    console.warn('[push] registration failed', e)
+  }
+}
+
 type ChatLine = { id: string; from: string; text: string; me: boolean }
 type CallState = {
   peer: string
@@ -84,17 +111,17 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('')
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
+  const [mode, setMode] = useState<'login' | 'register'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
   const [regStep, setRegStep] = useState<'form' | 'verify' | 'done'>('form')
   const [regUser, setRegUser] = useState('')
   const [regEmail, setRegEmail] = useState('')
   const [regPass, setRegPass] = useState('')
   const [regCode, setRegCode] = useState('')
-  const [deleteConfirmText, setDeleteConfirmText] = useState('')
-  const [deletePassword, setDeletePassword] = useState('')
 
   const [view, setView] = useState<'dms' | 'spaces'>('dms')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
 
   const subscribersRef = useRef(new Set<(m: NexusMessage) => void>())
   const subscribe = useCallback((handler: (m: NexusMessage) => void) => {
@@ -264,6 +291,7 @@ export default function App() {
         case 'auth_result':
           if (msg.status === 'ok' && msg.qr_token) {
             localStorage.setItem(SESSION_KEY, msg.qr_token)
+            setSessionToken(msg.qr_token)
             setMe(msg.sender ?? null)
             setErr('')
             if (msg.turn_config) setTurn(msg.turn_config)
@@ -274,6 +302,7 @@ export default function App() {
               status: 'Online',
               public_key: encodePublicKeyB64(keysRef.current.publicKey),
             })
+            registerPush(sendRef.current)
           } else {
             localStorage.removeItem(SESSION_KEY)
             if (msg.status === 'totp_required') setErr('2FA required: enter TOTP code.')
@@ -506,7 +535,7 @@ export default function App() {
     if (regUser.length < 3 || regUser.length > 32) { setErr('Username must be 3–32 characters'); return }
     if (regPass.length < 8) { setErr('Password must be at least 8 characters'); return }
     if (!regEmail.includes('@')) { setErr('Enter a valid email'); return }
-    send({ type: 'register', sender: regUser, body: regPass, email: regEmail })
+    send({ type: 'register', sender: regUser, body: regPass, email: regEmail, token: inviteCode ?? undefined })
   }
 
   const doVerify = () => {
@@ -538,7 +567,7 @@ export default function App() {
       {err && <div className="banner">{err}</div>}
 
       {settingsOpen && me && (
-        <Settings me={me} send={send} subscribe={subscribe} onClose={() => setSettingsOpen(false)} />
+        <Settings me={me} sessionToken={sessionToken} send={send} subscribe={subscribe} onClose={() => setSettingsOpen(false)} />
       )}
 
       {/* ── Call overlay ─────────────────────────────────────────── */}
