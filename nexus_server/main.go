@@ -778,10 +778,15 @@ func (s *NexusServer) sendEmail(to, subject, body string) error {
 		return nil
 	}
 
+	from := os.Getenv("SMTP_FROM")
+	if from == "" {
+		from = user
+	}
 	auth := smtp.PlainAuth("", user, pass, host)
-	msg := []byte("To: " + to + "\r\n" +
+	msg := []byte("From: Phaze <" + from + ">\r\n" +
+		"To: " + to + "\r\n" +
 		"Subject: " + subject + "\r\n" +
-		"MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n" +
+		"MIME-version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n" +
 		"\r\n" +
 		body + "\r\n")
 
