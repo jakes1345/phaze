@@ -29,10 +29,13 @@ import (
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/messaging"
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
+	"google.golang.org/api/option"
 	_ "modernc.org/sqlite"
 )
 
@@ -277,9 +280,10 @@ func (c *Client) Send(m NexusMessage) error {
 }
 
 type NexusServer struct {
-	DB      *sql.DB
-	Clients map[string]*Client
-	Mu      sync.RWMutex
+	DB         *sql.DB
+	Clients    map[string]*Client
+	Mu         sync.RWMutex
+	fcmClient  *messaging.Client
 }
 
 var upgrader = websocket.Upgrader{
@@ -482,6 +486,7 @@ func (s *NexusServer) initDB() {
 		`ALTER TABLE abuse_reports ADD COLUMN resolved_at DATETIME`,
 		`CREATE INDEX IF NOT EXISTS idx_abuse_reports_status ON abuse_reports(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)`,
+		`ALTER TABLE users ADD COLUMN fcm_token TEXT DEFAULT ''`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -1151,6 +1156,7 @@ func (s *NexusServer) storeOfflineMessage(sender, recipient, body, msgType strin
 		log.Printf("[offline] store %s->%s (%s) failed: %v", sender, recipient, msgType, err)
 	}
 	go s.sendWebPush(recipient, sender, body)
+	go s.sendFCMPush(recipient, sender, body)
 }
 
 func (s *NexusServer) sendWebPush(recipient, sender, preview string) {
@@ -1925,6 +1931,16 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			client.Send(NexusMessage{Type: "blocks", Results: s.listBlocks(username)})
+
+		case "register_fcm_token":
+			if username == "" {
+				continue
+			}
+			if msg.Body == "" {
+				continue
+			}
+			s.DB.Exec("UPDATE users SET fcm_token = ? WHERE username = ?", msg.Body, username)
+			log.Printf("[FCM] registered token for %s", username)
 
 		case "subscribe_push":
 			if username == "" {
@@ -3284,6 +3300,68 @@ func (s *NexusServer) statsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *NexusServer) initFCM() {
+	keyJSON := os.Getenv("FCM_SERVICE_ACCOUNT_JSON")
+	if keyJSON == "" {
+		log.Println("[FCM] FCM_SERVICE_ACCOUNT_JSON not set — FCM push disabled")
+		return
+	}
+	app, err := firebase.NewApp(context.Background(), nil, option.WithCredentialsJSON([]byte(keyJSON)))
+	if err != nil {
+		log.Printf("[FCM] init error: %v", err)
+		return
+	}
+	client, err := app.Messaging(context.Background())
+	if err != nil {
+		log.Printf("[FCM] messaging client error: %v", err)
+		return
+	}
+	s.fcmClient = client
+	log.Println("[FCM] Firebase Cloud Messaging initialized")
+}
+
+func (s *NexusServer) sendFCMPush(recipient, sender, preview string) {
+	if s.fcmClient == nil {
+		return
+	}
+	rows, err := s.DB.Query("SELECT fcm_token FROM users WHERE username = ? AND fcm_token != ''", recipient)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	body := preview
+	if len(body) > 100 {
+		body = body[:100] + "…"
+	}
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil || token == "" {
+			continue
+		}
+		_, err := s.fcmClient.Send(context.Background(), &messaging.Message{
+			Token: token,
+			Notification: &messaging.Notification{
+				Title: sender,
+				Body:  body,
+			},
+			Android: &messaging.AndroidConfig{
+				Priority: "high",
+				Notification: &messaging.AndroidNotification{
+					Sound:       "default",
+					ClickAction: "FLUTTER_NOTIFICATION_CLICK",
+				},
+			},
+		})
+		if err != nil {
+			log.Printf("[FCM] send to %s: %v", recipient, err)
+			// Token invalid — clear it
+			if messaging.IsRegistrationTokenNotRegistered(err) {
+				s.DB.Exec("UPDATE users SET fcm_token = '' WHERE username = ? AND fcm_token = ?", recipient, token)
+			}
+		}
+	}
+}
+
 func (s *NexusServer) vapidKeyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -3389,6 +3467,7 @@ func main() {
 		Clients: make(map[string]*Client),
 	}
 	server.initDB()
+	server.initFCM()
 
 	http.HandleFunc("/ws", rateLimit(server.handleConnections))
 	http.HandleFunc("/api/v1/version", rateLimit(server.versionHandler))
