@@ -646,6 +646,11 @@ func (s *PhazeApp) connect(password, totpCode, sessionToken string) (authResult,
 			return s.ConnectToServer(pass)
 		})
 
+		// Register FCM push token (Android only; no-op on desktop)
+		if tok := readFCMToken(); tok != "" {
+			go s.SendMessage(NexusMessage{Type: "register_fcm_token", Body: tok})
+		}
+
 		// Check for Sovereign Updates
 		go s.CheckForUpdates()
 
