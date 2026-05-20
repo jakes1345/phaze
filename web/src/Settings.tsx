@@ -2,16 +2,24 @@ import { useState, useEffect, useCallback } from 'react'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
-type Tab = 'profile' | 'security' | 'privacy' | 'danger'
+type Tab = 'profile' | 'security' | 'privacy' | 'sessions' | 'danger'
+
+interface Session {
+  token: string
+  full_token: string
+  device: string
+  created_at: string
+}
 
 interface Props {
   me: string
+  sessionToken: string | null
   send: (m: NexusMessage) => void
   subscribe: (handler: (m: NexusMessage) => void) => () => void
   onClose: () => void
 }
 
-export default function Settings({ me, send, subscribe, onClose }: Props) {
+export default function Settings({ me, sessionToken, send, subscribe, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('profile')
 
   // Profile
@@ -33,6 +41,12 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
   // Privacy
   const [blocks, setBlocks] = useState<string[]>([])
   const [blockMsg, setBlockMsg] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteMsg, setInviteMsg] = useState('')
+
+  // Sessions
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [sessionsMsg, setSessionsMsg] = useState('')
 
   // Danger
   const [delConfirm, setDelConfirm] = useState('')
@@ -40,9 +54,12 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
   const [delMsg, setDelMsg] = useState('')
 
   useEffect(() => {
-    // Load blocks on first open
     send({ type: 'list_blocks' })
   }, [send])
+
+  useEffect(() => {
+    if (tab === 'sessions') send({ type: 'list_sessions' })
+  }, [tab, send])
 
   const onMsg = useCallback((msg: NexusMessage) => {
     switch (msg.type) {
@@ -83,11 +100,22 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
           setBlockMsg(`Unblocked ${msg.recipient}.`)
         }
         break
+      case 'invite_result':
+        setInviteMsg(msg.status === 'sent' ? 'Invite sent!' : (msg.error || 'Error'))
+        if (msg.status === 'sent') setInviteEmail('')
+        break
+      case 'sessions_list':
+        try { setSessions(JSON.parse(msg.body || '[]') as Session[]) } catch { /* ignore */ }
+        break
+      case 'session_revoked':
+        setSessionsMsg('Session revoked.')
+        send({ type: 'list_sessions' })
+        break
       case 'delete_account_result':
         if (msg.status !== 'ok') setDelMsg(msg.error || 'Error')
         break
     }
-  }, [])
+  }, [send])
 
   useEffect(() => subscribe(onMsg), [subscribe, onMsg])
 
@@ -104,25 +132,34 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
     send({ type: 'change_password', body: `${oldPw}:${newPw}` })
   }
 
-  const enableTotp = () => {
-    setTotpMsg('')
-    send({ type: 'enable_totp' })
-  }
-
-  const confirmTotp = () => {
-    setTotpMsg('')
-    send({ type: 'confirm_totp', totp_code: totpCode })
-  }
-
+  const enableTotp = () => { setTotpMsg(''); send({ type: 'enable_totp' }) }
+  const confirmTotp = () => { setTotpMsg(''); send({ type: 'confirm_totp', totp_code: totpCode }) }
   const disableTotp = () => {
     setTotpMsg('')
     if (!oldPw) { setTotpMsg('Enter your current password to disable 2FA'); return }
     send({ type: 'disable_totp', body: oldPw })
   }
 
-  const unblock = (user: string) => {
-    setBlockMsg('')
-    send({ type: 'unblock', recipient: user })
+  const unblock = (user: string) => { setBlockMsg(''); send({ type: 'unblock', recipient: user }) }
+
+  const sendInvite = () => {
+    setInviteMsg('')
+    if (!inviteEmail.includes('@')) { setInviteMsg('Enter a valid email'); return }
+    send({ type: 'invite_email', email: inviteEmail })
+  }
+
+  const revokeSession = (fullToken: string) => {
+    setSessionsMsg('')
+    send({ type: 'revoke_session_by_token', body: fullToken })
+  }
+
+  const exportData = () => {
+    if (!sessionToken) return
+    const url = `/api/v1/export?token=${encodeURIComponent(sessionToken)}`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'phaze-data-export.json'
+    a.click()
   }
 
   const deleteAccount = () => {
@@ -131,6 +168,14 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
     if (!delPw) { setDelMsg('Password required'); return }
     send({ type: 'delete_account', sender: me, body: delPw })
   }
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'profile', label: '👤 Profile' },
+    { id: 'security', label: '🔒 Security' },
+    { id: 'privacy', label: '🛡 Privacy' },
+    { id: 'sessions', label: '📱 Sessions' },
+    { id: 'danger', label: '⚠ Danger' },
+  ]
 
   return (
     <div className="settings-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -145,13 +190,12 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
         </div>
 
         <nav className="settings-tabs">
-          {(['profile', 'security', 'privacy', 'danger'] as Tab[]).map((t) => (
-            <button key={t} className={`settings-tab ${tab === t ? 'active' : ''} ${t === 'danger' ? 'danger' : ''}`} onClick={() => setTab(t)}>
-              {t === 'profile' && '👤 Profile'}
-              {t === 'security' && '🔒 Security'}
-              {t === 'privacy' && '🛡 Privacy'}
-              {t === 'danger' && '⚠ Danger'}
-            </button>
+          {tabs.map(({ id, label }) => (
+            <button
+              key={id}
+              className={`settings-tab ${tab === id ? 'active' : ''} ${id === 'danger' ? 'danger' : ''}`}
+              onClick={() => setTab(id)}
+            >{label}</button>
           ))}
         </nav>
 
@@ -212,6 +256,16 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
           {/* ── Privacy ──────────────────────────────────────── */}
           {tab === 'privacy' && (
             <div className="settings-section">
+              <h3 className="settings-section-title">Invite a friend</h3>
+              <p className="settings-empty">Send a Phaze invite to someone who isn't on the platform yet.</p>
+              <div className="settings-row">
+                <input className="settings-input" type="email" placeholder="friend@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                <button className="settings-btn" onClick={sendInvite} style={{ whiteSpace: 'nowrap' }}>Send invite</button>
+              </div>
+              {inviteMsg && <p className={`settings-msg ${inviteMsg === 'Invite sent!' ? 'ok' : 'err'}`}>{inviteMsg}</p>}
+
+              <hr className="settings-divider" />
+
               <h3 className="settings-section-title">Blocked users</h3>
               {blockMsg && <p className="settings-msg ok">{blockMsg}</p>}
               {blocks.length === 0 ? (
@@ -229,9 +283,38 @@ export default function Settings({ me, send, subscribe, onClose }: Props) {
             </div>
           )}
 
+          {/* ── Sessions ─────────────────────────────────────── */}
+          {tab === 'sessions' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Active sessions</h3>
+              {sessionsMsg && <p className="settings-msg ok">{sessionsMsg}</p>}
+              {sessions.length === 0 ? (
+                <p className="settings-empty">No active sessions found.</p>
+              ) : (
+                <ul className="settings-block-list">
+                  {sessions.map((s) => (
+                    <li key={s.full_token} className="settings-block-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>{s.device || 'Unknown device'}</span>
+                        <button className="settings-btn-secondary small" onClick={() => revokeSession(s.full_token)}>Revoke</button>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Token: {s.token} · {s.created_at}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {/* ── Danger ───────────────────────────────────────── */}
           {tab === 'danger' && (
             <div className="settings-section">
+              <h3 className="settings-section-title">Export your data</h3>
+              <p className="settings-label" style={{ marginBottom: '0.5rem' }}>Download a copy of your profile, friends, and queued messages (GDPR Article 20).</p>
+              <button className="settings-btn" onClick={exportData}>Download my data</button>
+
+              <hr className="settings-divider" />
+
               <h3 className="settings-section-title danger-title">Delete account</h3>
               <p className="settings-label">This permanently erases your account, all messages, friends, and encryption keys. <strong>Cannot be undone.</strong></p>
               <input className="settings-input" placeholder='Type "delete my account" to confirm' value={delConfirm} onChange={(e) => setDelConfirm(e.target.value)} />
