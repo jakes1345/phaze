@@ -1,5 +1,5 @@
-//go:build !android
-// +build !android
+//go:build !android && !windows
+// +build !android,!windows
 
 package chat
 
