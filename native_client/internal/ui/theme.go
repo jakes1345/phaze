@@ -7,49 +7,159 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
+// Phaze7Theme is the shared design system across the desktop + Android Fyne
+// builds. The palette and spacing scale mirror the web client tokens so the
+// product feels like one app on every surface:
+//
+//	Web (CSS)                        Fyne (Go)
+//	--brand              #863bff     PhazeBrand
+//	--text               #0a0a0a     PhazeText (light)
+//	--panel              #ffffff     PhazePanel (light)
+//	--panel-edge         #ececef     PhazeSeparator
+//	--list-hover         #f4f4f7     PhazeHover
+//	--shell              #fafafa     PhazeShell
+//	(dark mode mirrors  #fafafa/#0b0b0d swapped)
+//
+// Brand color names PhazeBlue/PhazeLightBlue/etc. are kept as aliases for
+// existing call sites elsewhere in the package, but every alias now points
+// at the modernized palette so the look upgrades uniformly without grep-ing
+// the rest of the codebase.
 type Phaze7Theme struct{}
 
+// --- Light palette ----------------------------------------------------------
 var (
-	// PhazeBlue — primary chrome (Skype-inspired cyan; product name is Phaze).
-	PhazeBlue      = color.NRGBA{R: 0, G: 175, B: 240, A: 255}
-	PhazeLightBlue = color.NRGBA{R: 225, G: 245, B: 255, A: 255}
-	PhazeLightGray = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
-	PhazeShell     = color.NRGBA{R: 237, G: 244, B: 252, A: 255} // window / list well
-	PhazeDarkText  = color.NRGBA{R: 38, G: 38, B: 38, A: 255}
-	PhazePanel     = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-	PhazeSeparator = color.NRGBA{R: 200, G: 214, B: 230, A: 255}
+	PhazeBrand      = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0xFF} // indigo, web --brand
+	PhazeBrandHover = color.NRGBA{R: 0x6F, G: 0x1E, B: 0xE0, A: 0xFF}
+	PhazeBrandSoft  = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0x22} // 0.13 alpha tint
+
+	PhazeShell     = color.NRGBA{R: 0xFA, G: 0xFA, B: 0xFA, A: 0xFF}
+	PhazePanel     = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+	PhazeText      = color.NRGBA{R: 0x0A, G: 0x0A, B: 0x0A, A: 0xFF}
+	PhazeMuted     = color.NRGBA{R: 0x6B, G: 0x6B, B: 0x75, A: 0xFF}
+	PhazeSeparator = color.NRGBA{R: 0xEC, G: 0xEC, B: 0xEF, A: 0xFF}
+	PhazeHover     = color.NRGBA{R: 0xF4, G: 0xF4, B: 0xF7, A: 0xFF}
+	PhazeBubbleIn  = color.NRGBA{R: 0xF4, G: 0xF4, B: 0xF7, A: 0xFF}
+
+	// Legacy aliases mapped to the modern palette so existing code keeps working.
+	PhazeBlue      = PhazeBrand
+	PhazeLightBlue = PhazeBrandSoft
+	PhazeLightGray = PhazeHover
+	PhazeDarkText  = PhazeText
+)
+
+// --- Dark palette -----------------------------------------------------------
+var (
+	PhazeBrandDark      = color.NRGBA{R: 0xA6, G: 0x77, B: 0xFF, A: 0xFF}
+	PhazeBrandHoverDark = color.NRGBA{R: 0x9A, G: 0x5C, B: 0xFF, A: 0xFF}
+	PhazeBrandSoftDark  = color.NRGBA{R: 0xA6, G: 0x77, B: 0xFF, A: 0x33}
+
+	PhazeShellDark     = color.NRGBA{R: 0x0B, G: 0x0B, B: 0x0D, A: 0xFF}
+	PhazePanelDark     = color.NRGBA{R: 0x16, G: 0x16, B: 0x1A, A: 0xFF}
+	PhazeTextDark      = color.NRGBA{R: 0xFA, G: 0xFA, B: 0xFA, A: 0xFF}
+	PhazeMutedDark     = color.NRGBA{R: 0xA1, G: 0xA1, B: 0xAA, A: 0xFF}
+	PhazeSeparatorDark = color.NRGBA{R: 0x23, G: 0x23, B: 0x28, A: 0xFF}
+	PhazeHoverDark     = color.NRGBA{R: 0x1E, G: 0x1E, B: 0x23, A: 0xFF}
+	PhazeBubbleInDark  = color.NRGBA{R: 0x1E, G: 0x1E, B: 0x23, A: 0xFF}
 )
 
 func (m Phaze7Theme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	dark := variant == theme.VariantDark
 	switch name {
 	case theme.ColorNameBackground:
+		if dark {
+			return PhazeShellDark
+		}
 		return PhazeShell
-	case theme.ColorNameInputBackground:
+	case theme.ColorNameOverlayBackground:
+		if dark {
+			return PhazePanelDark
+		}
 		return PhazePanel
-	case theme.ColorNamePrimary:
-		return PhazeBlue
-	case theme.ColorNameButton:
-		return PhazeLightGray
-	case theme.ColorNameForeground:
-		return PhazeDarkText
-	case theme.ColorNamePlaceHolder:
-		return color.NRGBA{R: 120, G: 130, B: 140, A: 255}
-	case theme.ColorNameHover:
-		return PhazeLightBlue
-	case theme.ColorNameSelection:
-		return PhazeLightBlue
-	case theme.ColorNameFocus:
-		return PhazeBlue
-	case theme.ColorNameScrollBar:
-		return color.NRGBA{R: 0, G: 0, B: 0, A: 55}
-	case theme.ColorNameSeparator:
+	case theme.ColorNameMenuBackground:
+		if dark {
+			return PhazePanelDark
+		}
+		return PhazePanel
+	case theme.ColorNameInputBackground:
+		if dark {
+			return PhazePanelDark
+		}
+		return PhazePanel
+	case theme.ColorNameInputBorder:
+		if dark {
+			return PhazeSeparatorDark
+		}
 		return PhazeSeparator
+	case theme.ColorNamePrimary:
+		if dark {
+			return PhazeBrandDark
+		}
+		return PhazeBrand
+	case theme.ColorNameButton:
+		if dark {
+			return PhazeHoverDark
+		}
+		return PhazeHover
+	case theme.ColorNameForeground:
+		if dark {
+			return PhazeTextDark
+		}
+		return PhazeText
+	case theme.ColorNameForegroundOnPrimary:
+		return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+	case theme.ColorNameDisabled:
+		if dark {
+			return color.NRGBA{R: 0x52, G: 0x52, B: 0x58, A: 0xFF}
+		}
+		return color.NRGBA{R: 0xB5, G: 0xB5, B: 0xBC, A: 0xFF}
+	case theme.ColorNameDisabledButton:
+		if dark {
+			return color.NRGBA{R: 0x18, G: 0x18, B: 0x1C, A: 0xFF}
+		}
+		return color.NRGBA{R: 0xF0, G: 0xF0, B: 0xF3, A: 0xFF}
+	case theme.ColorNamePlaceHolder:
+		if dark {
+			return PhazeMutedDark
+		}
+		return PhazeMuted
+	case theme.ColorNameHover:
+		if dark {
+			return PhazeHoverDark
+		}
+		return PhazeHover
+	case theme.ColorNameSelection:
+		if dark {
+			return PhazeBrandSoftDark
+		}
+		return PhazeBrandSoft
+	case theme.ColorNameFocus:
+		if dark {
+			return PhazeBrandDark
+		}
+		return PhazeBrand
+	case theme.ColorNamePressed:
+		if dark {
+			return PhazeBrandHoverDark
+		}
+		return PhazeBrandHover
+	case theme.ColorNameScrollBar:
+		if dark {
+			return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x33}
+		}
+		return color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0x33}
+	case theme.ColorNameSeparator:
+		if dark {
+			return PhazeSeparatorDark
+		}
+		return PhazeSeparator
+	case theme.ColorNameShadow:
+		return color.NRGBA{R: 0x0F, G: 0x12, B: 0x18, A: 0x14}
 	case theme.ColorNameSuccess:
-		return color.NRGBA{R: 125, G: 190, B: 0, A: 255}
+		return color.NRGBA{R: 0x10, G: 0xB9, B: 0x81, A: 0xFF}
 	case theme.ColorNameWarning:
-		return color.NRGBA{R: 255, G: 185, B: 0, A: 255}
+		return color.NRGBA{R: 0xF5, G: 0x9E, B: 0x0B, A: 0xFF}
 	case theme.ColorNameError:
-		return color.NRGBA{R: 200, G: 40, B: 40, A: 255}
+		return color.NRGBA{R: 0xDC, G: 0x26, B: 0x26, A: 0xFF}
 	}
 	return theme.DefaultTheme().Color(name, variant)
 }
@@ -58,10 +168,17 @@ func (m Phaze7Theme) Icon(name fyne.ThemeIconName) fyne.Resource {
 	return theme.DefaultTheme().Icon(name)
 }
 
+// Font preserves the bundled Tahoma asset path so existing builds still load
+// it from the vault. If Inter.ttf ever ships in the vault, swap the path
+// here. We keep one font for all styles — Fyne renders weight via its own
+// system fallback.
 func (m Phaze7Theme) Font(style fyne.TextStyle) fyne.Resource {
-	r := GetAssetResource("fonts/Tahoma.ttf")
-	if len(r.Content()) > 1024 {
-		return r
+	// Try Inter first (if a future build bundles it), then Tahoma, then default.
+	for _, path := range []string{"fonts/Inter.ttf", "fonts/Tahoma.ttf"} {
+		r := GetAssetResource(path)
+		if len(r.Content()) > 1024 {
+			return r
+		}
 	}
 	return theme.DefaultTheme().Font(style)
 }
@@ -69,17 +186,29 @@ func (m Phaze7Theme) Font(style fyne.TextStyle) fyne.Resource {
 func (m Phaze7Theme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNamePadding:
+		return 10 // was 8 — modern apps breathe more
+	case theme.SizeNameInnerPadding:
 		return 8
 	case theme.SizeNameText:
 		return 14
+	case theme.SizeNameHeadingText:
+		return 20
+	case theme.SizeNameSubHeadingText:
+		return 16
 	case theme.SizeNameInputBorder:
 		return 1
+	case theme.SizeNameInputRadius:
+		return 8 // rounded inputs (Fyne >=2.4)
+	case theme.SizeNameSelectionRadius:
+		return 8
 	case theme.SizeNameCaptionText:
 		return 11
 	case theme.SizeNameInlineIcon:
-		return 20
+		return 18
 	case theme.SizeNameScrollBar:
-		return 12
+		return 10
+	case theme.SizeNameSeparatorThickness:
+		return 1
 	}
 	return theme.DefaultTheme().Size(name)
 }

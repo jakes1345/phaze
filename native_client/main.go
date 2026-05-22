@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
 	"github.com/zalando/go-keyring"
 	_ "modernc.org/sqlite"
@@ -137,9 +138,10 @@ type PhazeApp struct {
 	DBPath string
 
 	// Settings
-	CompactMode   bool
-	ServerAddress string
-	SoundEnabled  bool
+	CompactMode          bool
+	ServerAddress        string
+	SoundEnabled         bool
+	NotificationsEnabled bool
 
 	// Network
 	Username     string
@@ -295,8 +297,9 @@ func NewPhazeApp() *PhazeApp {
 		CallWindows:      make(map[string]fyne.Window),
 		DB:               db,
 		DBPath:           dbPath,
-		CompactMode:      false,
-		SoundEnabled:     true,
+		CompactMode:          false,
+		SoundEnabled:         true,
+		NotificationsEnabled: true,
 		ChatLogs:         make(map[string]*fyne.Container),
 		ChatTypingLabels: make(map[string]*widget.Label),
 		TypingTimers:     make(map[string]*time.Timer),
@@ -535,12 +538,15 @@ func (s *PhazeApp) connect(password, totpCode, sessionToken string) (authResult,
 		s.Conn.Close()
 	}
 
+	// Production-only fallbacks. Local dev hits the override path below by
+	// setting ServerAddress via Settings; we don't probe ws://localhost in
+	// the general flow because end users don't run a local Nexus and the
+	// failed handshake delays first connect.
 	targets := []string{
 		s.Infra.Gateway,
-		"ws://localhost:8080/ws",
 		"wss://phazechat.world/ws",
 	}
-	if s.ServerAddress != "" && !strings.Contains(s.ServerAddress, "localhost") && s.ServerAddress != s.Infra.Gateway {
+	if s.ServerAddress != "" && s.ServerAddress != s.Infra.Gateway {
 		targets = append([]string{s.ServerAddress}, targets...)
 	}
 
@@ -999,15 +1005,22 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 		s.DB.Exec("INSERT INTO Messages (chatname, author, body_xml, timestamp, type) VALUES (?, ?, ?, ?, 61)",
 			msg.Sender, msg.Sender, bodyText, ts)
 
+		// Always fire an OS notification for incoming DMs — the OS handles
+		// suppression when the app is foregrounded on macOS/Windows.
+		// (Linux generally surfaces them regardless; that's the platform
+		// contract.) Suppress only when the user actively muted notifications.
+		if s.NotificationsEnabled {
+			s.App.SendNotification(fyne.NewNotification(
+				"Phaze — "+msg.Sender,
+				bodyText,
+			))
+		}
+
 		if logContainer, ok := s.ChatLogs[msg.Sender]; ok {
 			logContainer.Add(ui.NewMessageBubble(msg.Sender, bodyText, false, s.Slicer))
 			logContainer.Refresh()
 		} else {
 			s.UnreadCounts[msg.Sender]++
-			s.App.SendNotification(fyne.NewNotification(
-				"Message from "+msg.Sender,
-				bodyText,
-			))
 		}
 
 	case "typing":
@@ -2229,6 +2242,14 @@ func (s *PhazeApp) ShowLoginWindow() {
 		}
 	}
 
+	// Defend against stale local-dev configs: if the saved server points at
+	// localhost we silently upgrade to the production Nexus. Users who do
+	// run a local server can re-enter it via Settings → Server.
+	if strings.Contains(savedServer, "localhost") || strings.Contains(savedServer, "127.0.0.1") {
+		log.Printf("[startup] dropping stale localhost server %q in favor of phazechat.world", savedServer)
+		savedServer = "wss://phazechat.world/ws"
+		s.DB.Exec("INSERT OR REPLACE INTO Profile (key, value) VALUES ('server', ?)", savedServer)
+	}
 	// Auto-login: prefer stored session token, then password
 	if savedUser != "" && savedServer != "" {
 		s.Username = savedUser
@@ -2282,7 +2303,7 @@ func (s *PhazeApp) ShowLoginWindow() {
 		container.NewVBox(
 			container.NewCenter(logo),
 			widget.NewLabelWithStyle("Phaze: Private & Safe", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("Don't stop til you've had enough", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
+			widget.NewLabelWithStyle("Stay in phase.", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
 			widget.NewLabel("Sign in to your account"),
 			container.NewPadded(usernameEntry),
 			container.NewPadded(passwordEntry),
@@ -2489,11 +2510,24 @@ func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
 			statusLabel.Show()
 			return
 		}
+		if len(passwordEntry.Text) < 8 {
+			statusLabel.SetText("Password must be at least 8 characters")
+			statusLabel.Show()
+			return
+		}
+		if passwordEntry.Text != confirmEntry.Text {
+			statusLabel.SetText("Passwords do not match")
+			statusLabel.Show()
+			return
+		}
 
-		// Use the currently configured server address
+		// Always register against the production Nexus unless the user has
+		// explicitly pointed the client at a different (e.g. self-hosted)
+		// server via Settings. No localhost fallback — that only worked
+		// when a Nexus happened to be running on the same machine.
 		addr := s.ServerAddress
-		if addr == "" {
-			addr = "ws://localhost:8080/ws" // Default to local if unset
+		if addr == "" || strings.Contains(addr, "localhost") {
+			addr = "wss://phazechat.world/ws"
 		}
 
 		c, _, err := websocket.DefaultDialer.Dial(addr, nil)
@@ -2530,6 +2564,8 @@ func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
 		container.NewVBox(
 			widget.NewLabelWithStyle("Create Your Account", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 			container.NewPadded(usernameEntry),
+			container.NewPadded(emailEntry),
+			container.NewPadded(moodEntry),
 			container.NewPadded(passwordEntry),
 			container.NewPadded(confirmEntry),
 			statusLabel,
@@ -2541,7 +2577,30 @@ func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
 
 // ---------- Main ----------
 
+// initSentry wires error reporting when SENTRY_DSN is set. Same shape as
+// the nexus side — no-op when DSN unset so we ship safely without it.
+func initSentry() {
+	dsn := os.Getenv("SENTRY_DSN")
+	if dsn == "" {
+		return
+	}
+	env := os.Getenv("SENTRY_ENVIRONMENT")
+	if env == "" {
+		env = "production"
+	}
+	_ = sentry.Init(sentry.ClientOptions{
+		Dsn:              dsn,
+		Environment:      env,
+		TracesSampleRate: 0.05,
+		ServerName:       "phaze-native",
+	})
+}
+
 func main() {
+	initSentry()
+	defer sentry.Flush(2 * time.Second)
+	defer sentry.Recover()
+
 	phaze := NewPhazeApp()
 	phaze.App.Settings().SetTheme(&ui.Phaze7Theme{})
 

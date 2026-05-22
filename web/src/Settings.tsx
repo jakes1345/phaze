@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
-type Tab = 'profile' | 'security' | 'privacy' | 'sessions' | 'danger'
+type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger'
 
 interface Session {
   token: string
@@ -17,10 +17,13 @@ interface Props {
   send: (m: NexusMessage) => void
   subscribe: (handler: (m: NexusMessage) => void) => () => void
   onClose: () => void
+  onSetBackupPin: (pin: string) => Promise<void>
+  onDeleteBackup: () => void
+  initialTab?: Tab
 }
 
-export default function Settings({ me, sessionToken, send, subscribe, onClose }: Props) {
-  const [tab, setTab] = useState<Tab>('profile')
+export default function Settings({ me, sessionToken, send, subscribe, onClose, onSetBackupPin, onDeleteBackup, initialTab }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'profile')
 
   // Profile
   const [displayName, setDisplayName] = useState('')
@@ -172,10 +175,77 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose }:
   const tabs: { id: Tab; label: string }[] = [
     { id: 'profile', label: '👤 Profile' },
     { id: 'security', label: '🔒 Security' },
+    { id: 'devices', label: '💾 Backup & Devices' },
     { id: 'privacy', label: '🛡 Privacy' },
     { id: 'sessions', label: '📱 Sessions' },
     { id: 'danger', label: '⚠ Danger' },
   ]
+
+  // ── Backup & Devices state ───────────────────────────────────
+  const [backupPin1, setBackupPin1] = useState('')
+  const [backupPin2, setBackupPin2] = useState('')
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMsg, setBackupMsg] = useState('')
+  const [linkCode, setLinkCode] = useState('')
+  const [linkPollBusy, setLinkPollBusy] = useState(false)
+  const [linkMsg, setLinkMsg] = useState('')
+
+  const handleSetPin = async () => {
+    setBackupMsg('')
+    if (backupPin1.length < 4) { setBackupMsg('PIN must be at least 4 characters'); return }
+    if (backupPin1 !== backupPin2) { setBackupMsg('PINs do not match'); return }
+    setBackupBusy(true)
+    try {
+      await onSetBackupPin(backupPin1)
+      setBackupMsg('✓ Backup saved. Now your keys can be restored on any device with this PIN.')
+      setBackupPin1('')
+      setBackupPin2('')
+    } catch (e) {
+      setBackupMsg((e as Error).message || 'Failed to save backup')
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  const handleDeleteBackup = () => {
+    if (!confirm('Delete your encrypted key backup from the server? You will not be able to restore on a new device until you set a new PIN.')) return
+    onDeleteBackup()
+    setBackupMsg('Backup deleted.')
+  }
+
+  const generateLinkCode = () => {
+    setLinkMsg('')
+    setLinkCode('')
+    send({ type: 'link_create' })
+  }
+
+  // Subscribe to link_result / link_check responses while devices tab is open.
+  useEffect(() => {
+    if (tab !== 'devices') return
+    const unsub = subscribe((m: NexusMessage) => {
+      if (m.type === 'link_result' && m.status === 'ok' && m.token) {
+        setLinkCode(m.token)
+        // Begin polling so we can show "approved" status.
+        const poll = setInterval(() => {
+          send({ type: 'link_check', token: m.token })
+        }, 2500)
+        setLinkPollBusy(true)
+        ;(window as unknown as { __phazeLinkPoll?: ReturnType<typeof setInterval> }).__phazeLinkPoll = poll
+      }
+      if (m.type === 'link_check' && m.status === 'approved') {
+        const poll = (window as unknown as { __phazeLinkPoll?: ReturnType<typeof setInterval> }).__phazeLinkPoll
+        if (poll) clearInterval(poll)
+        setLinkPollBusy(false)
+        setLinkMsg('✓ New device linked successfully.')
+        setLinkCode('')
+      }
+    })
+    return () => {
+      unsub()
+      const poll = (window as unknown as { __phazeLinkPoll?: ReturnType<typeof setInterval> }).__phazeLinkPoll
+      if (poll) clearInterval(poll)
+    }
+  }, [tab, subscribe, send])
 
   return (
     <div className="settings-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -249,6 +319,46 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose }:
                   <button className="settings-btn" onClick={enableTotp}>Enable 2FA</button>
                   <button className="settings-btn-secondary" onClick={disableTotp}>Disable 2FA</button>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Backup & Devices ─────────────────────────────── */}
+          {tab === 'devices' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Recovery PIN</h3>
+              <p className="settings-empty">
+                Set a Recovery PIN to encrypt and back up your end-to-end encryption keys on the
+                server. The server can never read them — only your PIN can unlock the backup.
+                Without this, signing in on a new device or after clearing your browser will
+                give you a fresh identity (your old messages stay readable on the original device only).
+              </p>
+              <input className="settings-input" type="password" placeholder="Recovery PIN (4+ chars)" value={backupPin1} onChange={(e) => setBackupPin1(e.target.value)} />
+              <input className="settings-input" type="password" placeholder="Confirm PIN" value={backupPin2} onChange={(e) => setBackupPin2(e.target.value)} />
+              {backupMsg && <p className={`settings-msg ${backupMsg.startsWith('✓') ? 'ok' : 'err'}`}>{backupMsg}</p>}
+              <div className="settings-row">
+                <button className="settings-btn" onClick={() => void handleSetPin()} disabled={backupBusy}>{backupBusy ? 'Saving…' : 'Save backup'}</button>
+                <button className="settings-btn-secondary" onClick={handleDeleteBackup}>Delete backup</button>
+              </div>
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">Link a new device</h3>
+              <p className="settings-empty">
+                Generate a one-time code, then enter it on the device you want to sign in.
+                The new device will get its own session — and if you have a Recovery PIN,
+                it can also restore your encryption keys so old messages are readable.
+              </p>
+              {linkMsg && <p className="settings-msg ok">{linkMsg}</p>}
+              {linkCode ? (
+                <>
+                  <code className="settings-totp-code-block" style={{ fontSize: '1.4rem', letterSpacing: '0.1em', textAlign: 'center' }}>{linkCode}</code>
+                  <p className="settings-empty">
+                    {linkPollBusy ? 'Waiting for the new device to enter this code…' : 'Code expires in 5 minutes.'}
+                  </p>
+                </>
+              ) : (
+                <button className="settings-btn" onClick={generateLinkCode}>Generate link code</button>
               )}
             </div>
           )}

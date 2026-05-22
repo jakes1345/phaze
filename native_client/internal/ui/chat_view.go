@@ -51,7 +51,7 @@ func NewChatView(props ChatViewProps) *ChatView {
 	)
 	
 	header := container.NewBorder(nil, nil, icon, headerActions, headerInfo)
-	headerBg := canvas.NewRectangle(color.NRGBA{R: 250, G: 252, B: 255, A: 255})
+	headerBg := canvas.NewRectangle(PhazePanel)
 	headerContainer := container.NewStack(headerBg, container.NewPadded(header))
 
 	// 2. Message Area
