@@ -1,10 +1,13 @@
-# Cross-compile Phaze client packages (Fyne) for common desktop and mobile targets.
+# Build Phaze client artifacts on every push to master.
 #
-# Uses fyne-io/fyne-cross (Docker on Linux; native toolchain on macOS for Darwin).
-# Artifacts are attached to each workflow run (Actions → this workflow → latest run).
-#
-# iOS packaging often needs signing / full Xcode beyond what hosted runners provide;
-# that step is best-effort and does not fail the workflow.
+# Strategy:
+#   - Linux:    native ubuntu-latest with apt-installed libvpx/libasound deps,
+#               produces a tar.gz via `fyne package`.
+#   - Windows:  native ubuntu-latest cross-compile via mingw-w64 toolchain,
+#               same approach release.yml uses successfully.
+#   - Android:  fyne-cross android (its image has what's needed) on ubuntu.
+#   - macOS:    native macos-latest with `fyne package` (no Docker).
+#   - iOS:      skipped — Apple Developer Program ($99/yr) required for signing.
 
 name: Build Client Packages
 
@@ -17,119 +20,148 @@ on:
       - '.github/workflows/build-clients.yml'
       - 'go.work'
   schedule:
-    # Weekly full matrix so artifacts stay fresh even with low commit volume
     - cron: '0 7 * * 1'
 
 permissions:
   contents: read
 
-concurrency:
-  group: build-clients-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  fyne-cross-docker:
-    name: fyne-cross (Linux, Windows, Android, FreeBSD, Web)
+  linux:
+    name: Linux (amd64) — native
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
           cache: true
           cache-dependency-path: native_client/go.sum
 
-      - name: Cache fyne-cross Docker layers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/fyne-cross
-          key: fyne-cross-cache-${{ runner.os }}-${{ hashFiles('native_client/go.sum') }}
-
-      - name: Install fyne tooling
+      - name: Install Linux build dependencies
         run: |
-          go install github.com/fyne-io/fyne-cross@latest
+          sudo apt-get update
+          sudo apt-get install -y pkg-config \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev libasound2-dev libpulse-dev \
+            libvpx-dev libxcursor-dev libxinerama-dev libxi-dev libxrandr-dev
+
+      - name: Install fyne CLI
+        run: |
           go install fyne.io/fyne/v2/cmd/fyne@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Docker engine
-        run: docker version
-
-      - name: Linux (amd64, arm64)
+      - name: Package Linux app
         working-directory: native_client
-        run: fyne-cross linux --arch amd64,arm64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
+        run: |
+          fyne package -os linux --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png
+          ls -la *.tar.xz *.tar.gz 2>/dev/null || true
 
-      - name: Windows (amd64)
-        working-directory: native_client
-        run: fyne-cross windows --arch amd64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
+      - name: Stage artifact
+        run: |
+          mkdir -p bin/linux
+          cp native_client/Phaze.tar.xz bin/linux/Phaze-linux-amd64.tar.xz 2>/dev/null || \
+            cp native_client/*.tar.xz bin/linux/ 2>/dev/null || \
+            (cd native_client && go build -o ../bin/linux/Phaze .)
 
-      - name: Android (arm64 APK)
-        working-directory: native_client
-        run: fyne-cross android --arch arm64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app -icon assets/Icon.png
-
-      - name: FreeBSD (amd64)
-        continue-on-error: true
-        working-directory: native_client
-        run: fyne-cross freebsd --arch amd64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
-
-      - name: Web (WASM bundle)
-        continue-on-error: true
-        working-directory: native_client
-        run: fyne-cross web --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
-
-      - name: Upload fyne-cross output
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: phaze-client-linux-windows-android-freebsd-web-${{ github.sha }}
-          path: |
-            native_client/fyne-cross/
+          name: phaze-linux-amd64
+          path: bin/linux/
           retention-days: 21
           if-no-files-found: warn
 
-  fyne-cross-apple:
-    name: fyne-cross (macOS desktop + iOS best-effort)
-    runs-on: macos-latest
-    timeout-minutes: 120
+  windows:
+    name: Windows (amd64) — mingw cross
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
           cache: true
           cache-dependency-path: native_client/go.sum
 
-      - name: Install deps and fyne tooling
+      - name: Install mingw cross toolchain + libvpx headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config gcc-mingw-w64-x86-64 \
+            libvpx-dev libasound2-dev mingw-w64-x86-64-dev
+
+      - name: Cross-build Phaze.exe
+        working-directory: native_client
+        env:
+          CGO_ENABLED: '1'
+          GOOS: windows
+          GOARCH: amd64
+          CC: x86_64-w64-mingw32-gcc
+          CXX: x86_64-w64-mingw32-g++
+        run: |
+          mkdir -p ../bin/windows
+          go build -ldflags "-s -w -H windowsgui" -o ../bin/windows/Phaze.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phaze-windows-amd64
+          path: bin/windows/
+          retention-days: 21
+          if-no-files-found: warn
+
+  android:
+    name: Android (arm64 APK) — fyne-cross
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Install fyne-cross
+        run: |
+          go install github.com/fyne-io/fyne-cross@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Build Android APK
+        working-directory: native_client
+        run: |
+          fyne-cross android --arch arm64 --pull --env GOTOOLCHAIN=auto \
+            -app-id world.phazechat.app -icon assets/Icon.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phaze-android-arm64
+          path: native_client/fyne-cross/dist/android-arm64/
+          retention-days: 21
+          if-no-files-found: warn
+
+  macos:
+    name: macOS (universal) — native
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Install brew deps + fyne CLI
         run: |
           brew install libvpx pkg-config
-          go install github.com/fyne-io/fyne-cross@latest
           go install fyne.io/fyne/v2/cmd/fyne@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      # On macOS runners we use `fyne package` directly — fyne-cross needs
-      # a Docker/Podman engine that the GitHub-hosted Mac runners don't ship.
-      # The macOS toolchain is already native so no cross-compile needed.
-      - name: macOS (current arch — universal lipo'd below)
+      - name: Package macOS app (unsigned)
         working-directory: native_client
-        run: |
-          mkdir -p ../bin
-          fyne package -os darwin --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png
-          # The .app bundle lands in native_client/ as Phaze.app
-          ls -la Phaze.app 2>/dev/null && tar -czf ../bin/Phaze-macos.tar.gz Phaze.app || echo "no Phaze.app produced"
-
-      - name: iOS (best effort — signing usually required)
-        id: ios
         continue-on-error: true
-        working-directory: native_client
         run: |
-          fyne package -os ios --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png || echo "iOS build needs signing; expected to fail without certs"
+          fyne package -os darwin --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png
+          mkdir -p ../bin/macos
+          [ -d Phaze.app ] && tar -czf ../bin/macos/Phaze-macos.tar.gz Phaze.app || echo "no Phaze.app produced"
 
-      - name: Upload fyne-cross output
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: phaze-client-macos-ios-${{ github.sha }}
-          path: |
-            native_client/fyne-cross/
+          name: phaze-macos
+          path: bin/macos/
           retention-days: 21
           if-no-files-found: warn
