@@ -7,62 +7,84 @@
    Avoids: Tailwind, runtime CSS-in-JS, framer-motion.
 */
 
+/* Spaces inherits its palette from the app-level tokens. */
 :root {
-  /* Light by default; dark below. */
-  --bg-base: #e7eef6;
-  --bg-noise: rgba(255,255,255,0.55);
-  --rail-glass: rgba(255,255,255,0.55);
-  --rail-edge: rgba(255,255,255,0.7);
-  --panel-glass: rgba(255,255,255,0.78);
-  --panel-edge: #c7d6e6;
-  --panel-inset: rgba(255,255,255,0.85);
-  --chat-bg: rgba(255,255,255,0.62);
+  --bg-base: #fafafa;
+  --bg-noise: transparent;
+  --rail-glass: #ffffff;
+  --rail-edge: #ececef;
+  --panel-glass: #ffffff;
+  --panel-edge: #ececef;
+  --panel-inset: #ffffff;
+  --chat-bg: #ffffff;
 
-  --ink: #0b2235;
-  --ink-soft: #44607a;
-  --ink-muted: #7d93a8;
+  --ink: #0a0a0a;
+  --ink-soft: #404048;
+  --ink-muted: #6b6b75;
 
-  --accent: #00aff0;
-  --accent-deep: #0078d4;
-  --accent-bright: #36cdfa;
+  --accent: #863bff;
+  --accent-deep: #6f1ee0;
+  --accent-bright: #a677ff;
   --accent-on: #ffffff;
-  --accent-glow: 0 0 0 1px rgba(0,175,240,0.45), 0 6px 22px rgba(0,120,212,0.22);
+  --accent-glow: 0 0 0 3px rgba(134, 59, 255, 0.22);
 
-  --danger: #d94235;
-  --danger-soft: rgba(217,66,53,0.12);
-  --success: #1d9c5a;
-  --warn: #e2a51b;
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.10);
+  --success: #10b981;
+  --warn: #f59e0b;
 
-  --bubble-me: linear-gradient(180deg, #d6f1ff 0%, #b7e5ff 100%);
-  --bubble-them: rgba(255,255,255,0.92);
-  --bubble-edge: rgba(108,150,184,0.35);
+  --bubble-me: #863bff;
+  --bubble-them: #f4f4f7;
+  --bubble-edge: transparent;
 
-  --ring: 0 0 0 3px rgba(0,175,240,0.28);
-  --shadow-soft: 0 1px 0 rgba(255,255,255,0.6) inset,
-                 0 10px 30px -10px rgba(15,60,100,0.20),
-                 0 1px 2px rgba(15,60,100,0.06);
+  --ring: 0 0 0 3px rgba(134, 59, 255, 0.22);
+  --shadow-soft: 0 1px 2px rgba(15, 18, 24, 0.04), 0 1px 1px rgba(15, 18, 24, 0.02);
 
-  --spring: cubic-bezier(0.22,1,0.36,1);
+  --spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app.theme-dark .spaces-root,
+.app.theme-dark ~ .spaces-root,
+[data-theme="dark"] .spaces-root,
+.spaces-root[data-theme="dark"] {
+  --bg-base: #0b0b0d;
+  --bg-noise: transparent;
+  --rail-glass: #131316;
+  --rail-edge: #232328;
+  --panel-glass: #16161a;
+  --panel-edge: #232328;
+  --panel-inset: #1c1c20;
+  --chat-bg: #131316;
+
+  --ink: #fafafa;
+  --ink-soft: #c7c7cc;
+  --ink-muted: #a1a1aa;
+
+  --accent: #a677ff;
+  --accent-deep: #9a5cff;
+  --accent-bright: #9aa6ff;
+
+  --bubble-me: #9a5cff;
+  --bubble-them: #1e1e23;
+  --bubble-edge: transparent;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg-base: #0a1622;
-    --bg-noise: rgba(20,30,45,0.55);
-    --rail-glass: rgba(20,32,48,0.6);
-    --rail-edge: rgba(255,255,255,0.06);
-    --panel-glass: rgba(22,36,54,0.72);
-    --panel-edge: rgba(255,255,255,0.08);
-    --panel-inset: rgba(255,255,255,0.04);
-    --chat-bg: rgba(15,25,38,0.55);
-
-    --ink: #e6f1fb;
-    --ink-soft: #97b1c8;
-    --ink-muted: #6d8499;
-
-    --bubble-me: linear-gradient(180deg, #0a4b78 0%, #073a62 100%);
-    --bubble-them: rgba(255,255,255,0.06);
-    --bubble-edge: rgba(255,255,255,0.08);
+  :root:not(.theme-light) {
+    --bg-base: #0b0b0d;
+    --rail-glass: #131316;
+    --rail-edge: #232328;
+    --panel-glass: #16161a;
+    --panel-edge: #232328;
+    --panel-inset: #1c1c20;
+    --chat-bg: #131316;
+    --ink: #fafafa;
+    --ink-soft: #c7c7cc;
+    --ink-muted: #a1a1aa;
+    --accent: #a677ff;
+    --accent-deep: #9a5cff;
+    --bubble-me: #9a5cff;
+    --bubble-them: #1e1e23;
   }
 }
 
@@ -73,10 +95,7 @@
   height: 100vh;
   width: 100%;
   color: var(--ink);
-  background:
-    radial-gradient(1200px 800px at 20% -10%, rgba(0,175,240,0.18), transparent 60%),
-    radial-gradient(1000px 700px at 100% 110%, rgba(0,120,212,0.18), transparent 60%),
-    linear-gradient(180deg, var(--bg-base), color-mix(in oklab, var(--bg-base) 80%, #ffffff 20%));
+  background: var(--bg-base);
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
   -webkit-font-smoothing: antialiased;
@@ -92,8 +111,7 @@
   gap: 8px;
   padding: 14px 8px;
   background: var(--rail-glass);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  backdrop-filter: blur(24px) saturate(160%);
+  /* flat — no glass */
   border-right: 1px solid var(--rail-edge);
   overflow-y: auto;
   scrollbar-width: none;
@@ -147,7 +165,7 @@
 }
 
 .server-icon.active {
-  background: linear-gradient(180deg, #36cdfa 0%, var(--accent) 50%, var(--accent-deep) 100%);
+  background: var(--accent);
   color: var(--accent-on);
   border-radius: 16px;
   box-shadow:
@@ -182,7 +200,7 @@
 }
 
 .server-icon.home {
-  background: linear-gradient(180deg, #ffffff, #e6f5fd);
+  background: var(--panel-inset);
   border: 1px solid rgba(0,175,240,0.35);
 }
 
@@ -220,8 +238,7 @@
   display: flex;
   flex-direction: column;
   background: var(--panel-glass);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
-  backdrop-filter: blur(22px) saturate(150%);
+  /* flat — no glass */
   border-right: 1px solid var(--panel-edge);
   min-height: 0;
 }
@@ -309,7 +326,7 @@
   color: var(--ink);
 }
 .channel-row.active {
-  background: linear-gradient(90deg, rgba(0,175,240,0.16), rgba(0,120,212,0.10));
+  background: var(--accent-glow);
   color: var(--ink);
   border-color: rgba(0,175,240,0.32);
   font-weight: 600;
@@ -348,7 +365,7 @@
   font-size: 0.86rem;
 }
 .mini-btn {
-  background: linear-gradient(180deg, #36cdfa, var(--accent));
+  background: var(--accent);
   color: var(--accent-on);
   border: 1px solid var(--accent-deep);
   border-radius: 8px;
@@ -383,8 +400,7 @@
   display: flex;
   flex-direction: column;
   background: var(--chat-bg);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
-  backdrop-filter: blur(14px) saturate(140%);
+  /* flat — no glass */
   min-height: 0;
 }
 

@@ -9,6 +9,7 @@ import {
   generateKeyPair,
 } from './e2ee'
 import { loadPins, savePins } from './keyPins'
+import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup } from './keyBackup'
 import { playPhazeSound } from './phazeSounds'
 import Spaces from './Spaces'
 import Settings from './Settings'
@@ -16,6 +17,58 @@ import './App.css'
 
 const SESSION_KEY = 'phaze_session_token_v1'
 const KEYS_KEY = 'phaze_nacl_keys_v1'
+const THEME_KEY = 'phaze_theme_v1'
+const BACKUP_NAG_KEY = 'phaze_backup_nag_dismissed_at_v1'
+const BACKUP_NAG_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
+const HISTORY_LIMIT = 500
+const historyKey = (me: string, peer: string) => `phaze_chat_${me}_${peer}_v1`
+const unreadKey = (me: string) => `phaze_unread_${me}_v1`
+
+const EMOJIS = ['😀','😂','😍','😎','🤔','😢','😡','👍','👎','❤️','🔥','🎉','🙏','👀','💯','✨','😅','🥹','😴','🤝','🚀','👋','🤣','😭']
+
+function avatarColor(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  const hue = h % 360
+  return `hsl(${hue} 65% 50%)`
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const week = 7 * 24 * 60 * 60 * 1000
+  if (now.getTime() - ts < week) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+function loadHistory(me: string, peer: string): ChatLine[] {
+  try {
+    const raw = localStorage.getItem(historyKey(me, peer))
+    if (!raw) return []
+    const arr = JSON.parse(raw) as ChatLine[]
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+function saveHistory(me: string, peer: string, lines: ChatLine[]) {
+  try {
+    const trimmed = lines.slice(-HISTORY_LIMIT)
+    localStorage.setItem(historyKey(me, peer), JSON.stringify(trimmed))
+  } catch { /* quota */ }
+}
+
+function loadUnread(me: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(unreadKey(me))
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {}
+  } catch { return {} }
+}
+
+function saveUnread(me: string, u: Record<string, number>) {
+  try { localStorage.setItem(unreadKey(me), JSON.stringify(u)) } catch { /* quota */ }
+}
 
 async function registerPush(send: (m: NexusMessage) => void) {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
@@ -44,7 +97,169 @@ async function registerPush(send: (m: NexusMessage) => void) {
   }
 }
 
-type ChatLine = { id: string; from: string; text: string; me: boolean }
+type FileAttachment = { url: string; name: string; mime: string; size: number }
+type ChatLine = {
+  id: string
+  from: string
+  text: string
+  me: boolean
+  ts: number
+  edited?: boolean
+  deleted?: boolean
+  reactions?: Record<string, string[]> // emoji -> users
+  file?: FileAttachment
+}
+
+const FILE_PREFIX = 'phaze-file'
+
+function encodeFileBody(att: FileAttachment): string {
+  return FILE_PREFIX + JSON.stringify(att)
+}
+
+function decodeFileBody(text: string): FileAttachment | null {
+  if (!text.startsWith(FILE_PREFIX)) return null
+  try {
+    const a = JSON.parse(text.slice(FILE_PREFIX.length)) as FileAttachment
+    if (a && typeof a.url === 'string' && typeof a.name === 'string') return a
+    return null
+  } catch { return null }
+}
+
+function isImage(mime: string, name: string): boolean {
+  if (mime?.startsWith('image/')) return true
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
+}
+
+function isAudio(mime: string, name: string): boolean {
+  if (mime?.startsWith('audio/')) return true
+  return /\.(mp3|m4a|ogg|wav|webm|opus)$/i.test(name)
+}
+
+function fmtDuration(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = Math.floor(s % 60)
+  return `${m}:${sec.toString().padStart(2, '0')}`
+}
+
+function newMsgId(): string {
+  const a = new Uint8Array(12)
+  crypto.getRandomValues(a)
+  return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🔥']
+
+interface SlashCmd {
+  cmd: string
+  desc: string
+  // run returns the replacement text to send. Empty string means do nothing.
+  run: (arg: string) => string | { local: string }
+}
+
+const SLASH_COMMANDS: SlashCmd[] = [
+  { cmd: '/me', desc: 'Send a third-person action message', run: (a) => `*${a}*` },
+  { cmd: '/shrug', desc: 'Append ¯\\_(ツ)_/¯', run: (a) => `${a} ¯\\_(ツ)_/¯`.trim() },
+  { cmd: '/tableflip', desc: 'Flip a table', run: (a) => `${a} (╯°□°）╯︵ ┻━┻`.trim() },
+  { cmd: '/unflip', desc: 'Put the table back', run: (a) => `${a} ┬─┬ ノ( ゜-゜ノ)`.trim() },
+  { cmd: '/lenny', desc: 'Send a lenny face', run: (a) => `${a} ( ͡° ͜ʖ ͡°)`.trim() },
+  { cmd: '/clear', desc: 'Clear the conversation view (local only)', run: () => ({ local: 'clear' }) },
+  { cmd: '/help', desc: 'List available slash commands', run: () => ({ local: 'help' }) },
+]
+
+function relTime(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return 'now'
+  if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)}m`
+  if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / (60 * 60_000))}h`
+  const d = new Date(ts)
+  const days = Math.floor(diff / (24 * 60 * 60_000))
+  if (days < 7) return `${days}d`
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+function lastLineFor(me: string | null, peer: string): { text: string; ts: number } | null {
+  if (!me) return null
+  try {
+    const raw = localStorage.getItem(`phaze_chat_${me}_${peer}_v1`)
+    if (!raw) return null
+    const arr = JSON.parse(raw) as { text: string; ts: number; file?: { name?: string }; deleted?: boolean; me?: boolean }[]
+    if (!arr.length) return null
+    const last = arr[arr.length - 1]
+    let text = last.text || ''
+    if (last.deleted) text = '[deleted]'
+    else if (last.file?.name) text = `📎 ${last.file.name}`
+    if (last.me) text = `You: ${text}`
+    return { text, ts: last.ts }
+  } catch { return null }
+}
+
+const MENTION_RE = /@([A-Za-z0-9_]{2,32})/g
+
+const pinKey = (me: string, peer: string) => `phaze_pins_${me}_${peer}_v1`
+
+function loadPinned(me: string, peer: string): string[] {
+  try {
+    const raw = localStorage.getItem(pinKey(me, peer))
+    return raw ? JSON.parse(raw) as string[] : []
+  } catch { return [] }
+}
+
+function savePinned(me: string, peer: string, ids: string[]) {
+  try { localStorage.setItem(pinKey(me, peer), JSON.stringify(ids)) } catch { /* quota */ }
+}
+
+type Segment = { kind: 'text' | 'url' | 'mention'; value: string }
+
+function tokenize(text: string): Segment[] {
+  if (!text) return []
+  const out: Segment[] = []
+  // Combined regex preserves order across both URL and @mention matches.
+  const combined = /(https?:\/\/[^\s<>"']+[^\s<>"'.,!?:;)])|@([A-Za-z0-9_]{2,32})/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = combined.exec(text)) !== null) {
+    if (m.index > last) out.push({ kind: 'text', value: text.slice(last, m.index) })
+    if (m[1]) out.push({ kind: 'url', value: m[1] })
+    else if (m[2]) out.push({ kind: 'mention', value: m[2] })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push({ kind: 'text', value: text.slice(last) })
+  return out
+}
+
+function RichText({ text, me }: { text: string; me: string | null }) {
+  const segs = useMemo(() => tokenize(text), [text])
+  return (
+    <>
+      {segs.map((s, i) => {
+        if (s.kind === 'url') {
+          return <a key={i} href={s.value} target="_blank" rel="noopener noreferrer" className="msg-link">{s.value}</a>
+        }
+        if (s.kind === 'mention') {
+          const isMe = me === s.value
+          return <span key={i} className={`msg-mention ${isMe ? 'me' : ''}`}>@{s.value}</span>
+        }
+        return <span key={i}>{s.value}</span>
+      })}
+    </>
+  )
+}
+
+function containsMention(text: string, who: string): boolean {
+  if (!text || !who) return false
+  MENTION_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = MENTION_RE.exec(text)) !== null) {
+    if (m[1] === who) return true
+  }
+  return false
+}
 type CallState = {
   peer: string
   type: 'audio' | 'video'
@@ -112,7 +327,9 @@ export default function App() {
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
   const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
-  const [mode, setMode] = useState<'login' | 'register'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
+  const [mode, setMode] = useState<'login' | 'register' | 'link'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
+  const [linkInput, setLinkInput] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
   const [regStep, setRegStep] = useState<'form' | 'verify' | 'done'>('form')
   const [regUser, setRegUser] = useState('')
   const [regEmail, setRegEmail] = useState('')
@@ -122,6 +339,68 @@ export default function App() {
   const [view, setView] = useState<'dms' | 'spaces'>('dms')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'light')
+  const [unread, setUnread] = useState<Record<string, number>>({})
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const unreadRef = useRef<Record<string, number>>({})
+  const chatScrollRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const draftInputRef = useRef<HTMLInputElement>(null)
+  const [restoreBackup, setRestoreBackup] = useState<import('./nexusTypes').KeyBackup | null>(null)
+  const [restorePin, setRestorePin] = useState('')
+  const [restoreBusy, setRestoreBusy] = useState(false)
+  const restoreCheckedRef = useRef(false)
+  const [showBackupNag, setShowBackupNag] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQuery, setPaletteQuery] = useState('')
+  const [paletteIdx, setPaletteIdx] = useState(0)
+  const [slashIdx, setSlashIdx] = useState(0)
+  const [recording, setRecording] = useState(false)
+  const [recDuration, setRecDuration] = useState(0)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const recStartRef = useRef<number>(0)
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const recChunksRef = useRef<Blob[]>([])
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger'>('profile')
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
+  const [pinsOpen, setPinsOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionIdx, setMentionIdx] = useState(0)
+  const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, theme)
+    document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  useEffect(() => {
+    const el = chatScrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [log])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+        setPaletteQuery('')
+        setPaletteIdx(0)
+        return
+      }
+      if (mod && e.key === '/') {
+        e.preventDefault()
+        draftInputRef.current?.focus()
+        return
+      }
+      if (e.key === 'Escape') {
+        if (paletteOpen) setPaletteOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [paletteOpen])
 
   const subscribersRef = useRef(new Set<(m: NexusMessage) => void>())
   const subscribe = useCallback((handler: (m: NexusMessage) => void) => {
@@ -148,14 +427,59 @@ export default function App() {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
 
-  useEffect(() => { meRef.current = me }, [me])
+  useEffect(() => {
+    meRef.current = me
+    if (me) {
+      const u = loadUnread(me)
+      unreadRef.current = u
+      setUnread(u)
+    } else {
+      unreadRef.current = {}
+      setUnread({})
+    }
+  }, [me])
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { callStateRef.current = callState }, [callState])
   useEffect(() => { turnRef.current = turn }, [turn])
 
-  const appendLog = useCallback((from: string, text: string, isMe: boolean) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    setLog((prev) => [...prev, { id, from, text, me: isMe }])
+  const appendLog = useCallback((from: string, text: string, isMe: boolean, opts?: { id?: string; file?: FileAttachment }) => {
+    const id = opts?.id || newMsgId()
+    const ts = Date.now()
+    const file = opts?.file || decodeFileBody(text) || undefined
+    const line: ChatLine = { id, from, text: file ? '' : text, me: isMe, ts, file }
+    const my = meRef.current
+    const peer = isMe ? selectedRef.current : from
+    if (my && peer) {
+      const existing = loadHistory(my, peer)
+      saveHistory(my, peer, [...existing, line])
+    }
+    if (peer && peer === selectedRef.current) {
+      setLog((prev) => [...prev, line])
+    }
+    if (!isMe && my && peer && peer !== selectedRef.current) {
+      const bump = containsMention(line.text, my) ? 2 : 1
+      const next = { ...unreadRef.current, [peer]: (unreadRef.current[peer] || 0) + bump }
+      unreadRef.current = next
+      setUnread(next)
+      saveUnread(my, next)
+    }
+  }, [])
+
+  const mutateMessage = useCallback((peer: string, msgId: string, fn: (l: ChatLine) => ChatLine) => {
+    const my = meRef.current
+    if (!my) return
+    const stored = loadHistory(my, peer)
+    let changed = false
+    const updated = stored.map((l) => {
+      if (l.id !== msgId) return l
+      changed = true
+      return fn(l)
+    })
+    if (!changed) return
+    saveHistory(my, peer, updated)
+    if (selectedRef.current === peer) {
+      setLog((prev) => prev.map((l) => (l.id === msgId ? fn(l) : l)))
+    }
   }, [])
 
   const acceptPeerKey = useCallback((peer: string, pk: Uint8Array, fpHint: string) => {
@@ -174,8 +498,16 @@ export default function App() {
         pinsRef.current[peer] = { fingerprint: fp, publicKeyB64: encodePublicKeyB64(pk) }
         savePins(pinsRef.current)
       }
+      const hadKey = !!peerKeysRef.current[peer]
       peerKeysRef.current[peer] = pk
-      if (peer === selectedRef.current) setE2eReady(true)
+      if (peer === selectedRef.current) {
+        setE2eReady(true)
+        // If we just learned this peer's key, re-pull server history so we
+        // can decrypt rows that came in before the handshake.
+        if (!hadKey && meRef.current) {
+          sendRef.current({ type: 'dm_history', sender: meRef.current, recipient: peer })
+        }
+      }
     })()
   }, [])
 
@@ -303,6 +635,14 @@ export default function App() {
               public_key: encodePublicKeyB64(keysRef.current.publicKey),
             })
             registerPush(sendRef.current)
+            // On first login of this browser session, ask the server whether
+            // this account has a PIN-encrypted key backup waiting. If yes
+            // (and we don't already have the same keys), we'll prompt the
+            // user to restore.
+            if (!restoreCheckedRef.current) {
+              restoreCheckedRef.current = true
+              sendRef.current({ type: 'key_backup_get' })
+            }
           } else {
             localStorage.removeItem(SESSION_KEY)
             if (msg.status === 'totp_required') setErr('2FA required: enter TOTP code.')
@@ -372,8 +712,95 @@ export default function App() {
 
         case 'msg':
           if (msg.sender && msg.body !== undefined) {
-            appendLog(msg.sender, msg.body || '[empty]', msg.sender === meRef.current)
-            if (msg.sender !== meRef.current) playPhazeSound('MessageReceived.wav')
+            const my = meRef.current
+            const incomingId = msg.msg_id
+            // Suppress duplicate when the server echoes a message we already
+            // wrote optimistically (sender === me path).
+            if (incomingId && msg.sender === my) {
+              const peer = selectedRef.current
+              if (peer && loadHistory(my!, peer).some((l) => l.id === incomingId)) break
+            }
+            appendLog(msg.sender, msg.body || '[empty]', msg.sender === my, { id: incomingId })
+            if (msg.sender !== my) playPhazeSound('MessageReceived.wav')
+          }
+          break
+
+        case 'dm_history':
+          if (msg.recipient && msg.dm_history) {
+            ingestDMHistory(msg.recipient, msg.dm_history)
+          }
+          break
+
+        case 'link_check':
+          if (msg.status === 'approved' && msg.qr_token) {
+            // Server returned a fresh session token for the linked device.
+            localStorage.setItem(SESSION_KEY, msg.qr_token)
+            setSessionToken(msg.qr_token)
+            setLinkBusy(false)
+            setErr('')
+            sendRef.current({ type: 'session_auth', qr_token: msg.qr_token, device_info: `web/${window.location.hostname}` })
+          }
+          break
+
+        case 'key_backup':
+          // Surface restore prompt only when a backup exists AND the user
+          // doesn't already appear to have any peer keys / chat history
+          // for the current device — otherwise just ignore.
+          if (msg.status === 'ok' && msg.key_backup) {
+            const haveExistingKeys = !!localStorage.getItem(KEYS_KEY)
+            // Treat the backup as "needed" if we just generated fresh keys
+            // (i.e. localStorage was empty before this session). The
+            // simplest signal: never auto-prompt if the user already has
+            // any pinned peer keys — then nothing's wrong.
+            const pins = (() => { try { return Object.keys(loadPins()) } catch { return [] as string[] } })()
+            if (haveExistingKeys && pins.length === 0) {
+              setRestoreBackup(msg.key_backup)
+            }
+          } else if (msg.status === 'not_found') {
+            // User has no Recovery PIN backup — nag them to set one so they
+            // can sign in on other devices / browsers later. Respect a
+            // 7-day cooldown if they've dismissed it before.
+            const dismissedAt = Number(localStorage.getItem(BACKUP_NAG_KEY) || '0')
+            if (Date.now() - dismissedAt > BACKUP_NAG_COOLDOWN_MS) {
+              setShowBackupNag(true)
+            }
+          }
+          break
+
+        case 'key_backup_result':
+          if (msg.status === 'stored') {
+            setErr('✓ Recovery PIN saved')
+            setShowBackupNag(false)
+            localStorage.setItem(BACKUP_NAG_KEY, String(Date.now()))
+          } else if (msg.status === 'deleted') setErr('Recovery backup removed')
+          else if (msg.error) setErr(`Backup error: ${msg.error}`)
+          break
+
+        case 'msg_edit':
+          if (msg.sender && msg.msg_id && msg.body !== undefined) {
+            mutateMessage(msg.sender, msg.msg_id, (l) => ({ ...l, text: msg.body || '', edited: true, deleted: false }))
+          }
+          break
+
+        case 'msg_delete':
+          if (msg.sender && msg.msg_id) {
+            mutateMessage(msg.sender, msg.msg_id, (l) => ({ ...l, text: '', deleted: true, file: undefined }))
+          }
+          break
+
+        case 'msg_react':
+          if (msg.sender && msg.msg_id && msg.reaction) {
+            const reactor = msg.sender
+            const emoji = msg.reaction
+            mutateMessage(msg.sender, msg.msg_id, (l) => {
+              const r = { ...(l.reactions || {}) }
+              const users = new Set(r[emoji] || [])
+              if (users.has(reactor)) users.delete(reactor)
+              else users.add(reactor)
+              if (users.size === 0) delete r[emoji]
+              else r[emoji] = [...users]
+              return { ...l, reactions: r }
+            })
           }
           break
 
@@ -425,7 +852,17 @@ export default function App() {
             localStorage.removeItem(KEYS_KEY)
             peerKeysRef.current = {}
             pinsRef.current = {}
-            try { localStorage.removeItem('phaze_key_pins_v1') } catch { /* fine */ }
+            try {
+              localStorage.removeItem('phaze_key_pins_v1')
+              const my = meRef.current
+              if (my) {
+                localStorage.removeItem(unreadKey(my))
+                for (let i = localStorage.length - 1; i >= 0; i--) {
+                  const k = localStorage.key(i)
+                  if (k && k.startsWith(`phaze_chat_${my}_`)) localStorage.removeItem(k)
+                }
+              }
+            } catch { /* fine */ }
             setMe(null)
             setFriends({})
             setPending([])
@@ -499,28 +936,291 @@ export default function App() {
     setPending((p) => p.filter((x) => x !== from))
   }
 
+  const ingestDMHistory = useCallback((peer: string, rows: import('./nexusTypes').DMMessage[]) => {
+    const my = meRef.current
+    if (!my || !peer || !rows?.length) return
+    const peerKey = peerKeysRef.current[peer]
+    const mySec = keysRef.current.secretKey
+    const local = loadHistory(my, peer)
+    const byId = new Map<string, ChatLine>(local.map((l) => [l.id, l]))
+    for (const r of rows) {
+      const isMe = r.sender === my
+      let text = r.body || ''
+      // For E2EE bodies we only know how to decrypt if we have the peer key.
+      // If the peer key isn't loaded yet, leave as-is; the next presence
+      // exchange will provide it and a later refresh will resolve.
+      if (text && peerKey) {
+        try { text = decryptFromPeer(text, peerKey, mySec) } catch { /* leave raw */ }
+      }
+      const file = decodeFileBody(text) || undefined
+      const ts = Date.parse(r.created_at + 'Z') || Date.now()
+      const existing = byId.get(r.msg_id)
+      const line: ChatLine = {
+        id: r.msg_id,
+        from: r.sender,
+        text: file ? '' : (r.deleted ? '' : text),
+        me: isMe,
+        ts: existing?.ts ?? ts,
+        edited: r.edited || existing?.edited,
+        deleted: r.deleted || existing?.deleted,
+        reactions: r.reactions || existing?.reactions,
+        file: file || existing?.file,
+      }
+      byId.set(r.msg_id, line)
+    }
+    const merged = Array.from(byId.values()).sort((a, b) => a.ts - b.ts)
+    saveHistory(my, peer, merged)
+    if (selectedRef.current === peer) {
+      setLog(merged)
+    }
+  }, [])
+
   const openChat = (name: string) => {
     setSelected(name)
-    setLog([])
+    setEditingId(null)
+    setDraft('')
+    setSearch('')
+    setSearchOpen(false)
+    setMentionQuery(null)
+    setPinsOpen(false)
+    if (me) {
+      setLog(loadHistory(me, name))
+      setPinnedIds(loadPinned(me, name))
+      if (unreadRef.current[name]) {
+        const next = { ...unreadRef.current, [name]: 0 }
+        unreadRef.current = next
+        setUnread(next)
+        saveUnread(me, next)
+      }
+      // Pull durable history from the server so messages survive a localStorage
+      // wipe, a new browser, or a fresh device. Server stores E2EE ciphertext.
+      send({ type: 'dm_history', sender: me, recipient: name })
+    } else {
+      setLog([])
+      setPinnedIds([])
+    }
     setE2eReady(!!peerKeysRef.current[name])
     if (!peerKeysRef.current[name]) {
       send({ type: 'key_request', sender: me ?? undefined, recipient: name })
     }
   }
 
+  const togglePin = useCallback((line: ChatLine) => {
+    if (!selected || !me) return
+    setPinnedIds((prev) => {
+      const next = prev.includes(line.id) ? prev.filter((x) => x !== line.id) : [...prev, line.id]
+      savePinned(me, selected, next)
+      return next
+    })
+  }, [selected, me])
+
+  const scrollToMessage = useCallback((id: string) => {
+    const el = document.querySelector(`[data-msg-id="${id}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('highlight-flash')
+      setTimeout(() => el.classList.remove('highlight-flash'), 1600)
+    }
+  }, [])
+
   const sendChat = () => {
     if (!selected || !me || !draft.trim()) return
+    if (editingId) {
+      submitEdit()
+      return
+    }
+    let plaintext = draft.trim()
+
+    // Slash commands run client-side. "Local" actions (e.g. /clear, /help)
+    // don't produce an outgoing message — they manipulate the UI directly.
+    if (plaintext.startsWith('/')) {
+      const space = plaintext.indexOf(' ')
+      const head = space === -1 ? plaintext : plaintext.slice(0, space)
+      const tail = space === -1 ? '' : plaintext.slice(space + 1)
+      const cmd = SLASH_COMMANDS.find((c) => c.cmd === head)
+      if (cmd) {
+        const out = cmd.run(tail)
+        setDraft('')
+        if (typeof out === 'string') {
+          if (!out) return
+          plaintext = out
+        } else if (out.local === 'clear') {
+          setLog([])
+          return
+        } else if (out.local === 'help') {
+          const helpLines = SLASH_COMMANDS.map((c) => `${c.cmd} — ${c.desc}`).join('\n')
+          appendLog('system', `Available commands:\n${helpLines}`, false, { id: newMsgId() })
+          return
+        }
+      }
+    }
+
     const peer = peerKeysRef.current[selected]
-    let body = draft.trim()
-    if (peer) body = encryptForPeer(body, peer, keysRef.current.secretKey)
-    send({ type: 'msg', sender: me, recipient: selected, body })
-    appendLog(me, draft.trim(), true)
+    const body = peer ? encryptForPeer(plaintext, peer, keysRef.current.secretKey) : plaintext
+    const msgId = newMsgId()
+    send({ type: 'msg', sender: me, recipient: selected, body, msg_id: msgId })
+    appendLog(me, plaintext, true, { id: msgId })
     playPhazeSound('MessageOutgoing.wav')
     setDraft('')
+    setEmojiOpen(false)
+  }
+
+  const slashMatches = useMemo(() => {
+    if (!draft.startsWith('/')) return [] as SlashCmd[]
+    const head = draft.split(' ')[0].toLowerCase()
+    return SLASH_COMMANDS.filter((c) => c.cmd.startsWith(head)).slice(0, 6)
+  }, [draft])
+
+  const paletteMatches = useMemo(() => {
+    const q = paletteQuery.trim().toLowerCase()
+    const list = Object.entries(friends)
+    if (!q) return list.slice(0, 12)
+    return list.filter(([u]) => u.toLowerCase().includes(q)).slice(0, 12)
+  }, [paletteQuery, friends])
+
+  const sendFile = useCallback(async (file: File) => {
+    if (!selected || !me || !sessionToken) {
+      setErr('Sign in to send files')
+      return
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setErr('File exceeds 25 MB')
+      return
+    }
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const resp = await fetch('/api/v1/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        body: fd,
+      })
+      if (!resp.ok) {
+        setErr(`Upload failed: ${resp.status}`)
+        return
+      }
+      const att = await resp.json() as FileAttachment
+      const peerKey = peerKeysRef.current[selected]
+      const plaintext = encodeFileBody(att)
+      const body = peerKey ? encryptForPeer(plaintext, peerKey, keysRef.current.secretKey) : plaintext
+      const msgId = newMsgId()
+      send({ type: 'msg', sender: me, recipient: selected, body, msg_id: msgId })
+      appendLog(me, '', true, { id: msgId, file: att })
+      playPhazeSound('MessageOutgoing.wav')
+    } catch (e) {
+      setErr(`Upload error: ${(e as Error).message}`)
+    }
+  }, [selected, me, sessionToken, send, appendLog])
+
+  const stopRecording = useCallback((cancel = false) => {
+    const r = recorderRef.current
+    if (!r) return
+    recorderRef.current = null
+    if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null }
+    setRecording(false)
+    if (cancel) {
+      try { r.ondataavailable = null; r.onstop = null; r.stream.getTracks().forEach((t) => t.stop()) } catch { /* noop */ }
+      try { r.stop() } catch { /* noop */ }
+      recChunksRef.current = []
+      return
+    }
+    // Real stop — the onstop handler will do the upload.
+    try { r.stop() } catch { /* noop */ }
+  }, [])
+
+  const startRecording = useCallback(async () => {
+    if (!selected || !sessionToken) {
+      setErr('Sign in and open a chat to record voice')
+      return
+    }
+    if (recording) { stopRecording(false); return }
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setErr('Microphone access denied')
+      return
+    }
+    const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+    let mimeType = ''
+    for (const m of mimeCandidates) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) { mimeType = m; break }
+    }
+    const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+    recorderRef.current = rec
+    recChunksRef.current = []
+    rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) recChunksRef.current.push(e.data) }
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop())
+      const dur = Math.max(1, Math.round((Date.now() - recStartRef.current) / 1000))
+      const blob = new Blob(recChunksRef.current, { type: rec.mimeType || 'audio/webm' })
+      recChunksRef.current = []
+      // Wrap into a File so it lands cleanly on the upload endpoint.
+      const ext = (rec.mimeType || '').includes('mp4') ? 'm4a' : (rec.mimeType || '').includes('ogg') ? 'ogg' : 'webm'
+      const file = new File([blob], `voice-${Date.now()}-${dur}s.${ext}`, { type: rec.mimeType || 'audio/webm' })
+      void sendFile(file)
+    }
+    recStartRef.current = Date.now()
+    setRecDuration(0)
+    setRecording(true)
+    recTimerRef.current = setInterval(() => {
+      setRecDuration(Math.round((Date.now() - recStartRef.current) / 1000))
+    }, 250)
+    // Auto-stop at 2 minutes to keep uploads reasonable
+    rec.start()
+    setTimeout(() => { if (recorderRef.current === rec) stopRecording(false) }, 2 * 60 * 1000)
+  }, [selected, sessionToken, recording, stopRecording, sendFile])
+
+  const reactTo = useCallback((line: ChatLine, emoji: string) => {
+    if (!selected || !me) return
+    send({ type: 'msg_react', sender: me, recipient: selected, msg_id: line.id, reaction: emoji })
+    mutateMessage(selected, line.id, (l) => {
+      const r = { ...(l.reactions || {}) }
+      const users = new Set(r[emoji] || [])
+      if (users.has(me)) users.delete(me)
+      else users.add(me)
+      if (users.size === 0) delete r[emoji]
+      else r[emoji] = [...users]
+      return { ...l, reactions: r }
+    })
+  }, [selected, me, send, mutateMessage])
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const beginEdit = (line: ChatLine) => {
+    setEditingId(line.id)
+    setDraft(line.text)
+  }
+  const cancelEdit = () => { setEditingId(null); setDraft('') }
+  const submitEdit = () => {
+    if (!selected || !me || !editingId) return
+    const text = draft.trim()
+    if (!text) return
+    const peer = peerKeysRef.current[selected]
+    const body = peer ? encryptForPeer(text, peer, keysRef.current.secretKey) : text
+    send({ type: 'msg_edit', sender: me, recipient: selected, msg_id: editingId, body })
+    mutateMessage(selected, editingId, (l) => ({ ...l, text, edited: true }))
+    setEditingId(null)
+    setDraft('')
+  }
+  const deleteMessage = (line: ChatLine) => {
+    if (!selected || !me) return
+    if (!confirm('Delete this message for both of you?')) return
+    send({ type: 'msg_delete', sender: me, recipient: selected, msg_id: line.id })
+    mutateMessage(selected, line.id, (l) => ({ ...l, text: '', deleted: true, file: undefined }))
   }
 
   const handleDraftChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDraft(e.target.value)
+    const v = e.target.value
+    setDraft(v)
+    const caret = e.target.selectionStart ?? v.length
+    const upto = v.slice(0, caret)
+    const m = /(?:^|\s)@([A-Za-z0-9_]{0,32})$/.exec(upto)
+    if (m) {
+      setMentionQuery(m[1].toLowerCase())
+      setMentionIdx(0)
+    } else {
+      setMentionQuery(null)
+    }
     if (selectedRef.current && meRef.current) {
       if (!outTypingTimerRef.current) {
         sendRef.current({ type: 'typing', recipient: selectedRef.current })
@@ -529,6 +1229,30 @@ export default function App() {
       outTypingTimerRef.current = setTimeout(() => { outTypingTimerRef.current = null }, 2000)
     }
   }
+
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) return [] as string[]
+    const q = mentionQuery
+    return Object.keys(friends).filter((u) => u.toLowerCase().startsWith(q)).slice(0, 6)
+  }, [mentionQuery, friends])
+
+  const completeMention = useCallback((username: string) => {
+    const inp = draftInputRef.current
+    const caret = inp?.selectionStart ?? draft.length
+    const before = draft.slice(0, caret).replace(/@([A-Za-z0-9_]{0,32})$/, `@${username} `)
+    const after = draft.slice(caret)
+    const next = before + after
+    setDraft(next)
+    setMentionQuery(null)
+    queueMicrotask(() => {
+      const el = draftInputRef.current
+      if (el) {
+        const pos = before.length
+        el.focus()
+        el.setSelectionRange(pos, pos)
+      }
+    })
+  }, [draft])
 
   const doRegister = () => {
     setErr('')
@@ -544,12 +1268,50 @@ export default function App() {
     send({ type: 'verify_email', sender: regUser, body: regCode.trim() })
   }
 
+  const doRestore = useCallback(async () => {
+    if (!restoreBackup || !restorePin) return
+    setRestoreBusy(true)
+    try {
+      const { publicKey, secretKey } = await decryptKeyBackup(restoreBackup, restorePin)
+      keysRef.current = { publicKey, secretKey }
+      localStorage.setItem(
+        KEYS_KEY,
+        JSON.stringify({
+          pub: btoa(String.fromCharCode(...publicKey)),
+          sec: btoa(String.fromCharCode(...secretKey)),
+        }),
+      )
+      const my = meRef.current
+      if (my) {
+        sendRef.current({
+          type: 'presence',
+          sender: my,
+          status: 'Online',
+          public_key: encodePublicKeyB64(publicKey),
+        })
+      }
+      setRestoreBackup(null)
+      setRestorePin('')
+      setErr('✓ Keys restored from backup')
+    } catch (e) {
+      setErr((e as Error).message || 'Restore failed')
+    } finally {
+      setRestoreBusy(false)
+    }
+  }, [restoreBackup, restorePin])
+
+  const totalUnread = useMemo(() => Object.values(unread).reduce((a, b) => a + b, 0), [unread])
+  useEffect(() => {
+    const base = 'Phaze'
+    document.title = totalUnread > 0 ? `(${totalUnread}) ${base}` : base
+  }, [totalUnread])
+
   return (
-    <div className="app">
+    <div className={`app theme-${theme}`}>
       <header className="top">
         <div className="brand">
           <h1>Phaze</h1>
-          <p className="tagline">Messaging &amp; calls — sovereign, not corporate.</p>
+          <p className="tagline">Stay in phase.</p>
         </div>
         {me && (
           <div className="view-switch" role="tablist" aria-label="View">
@@ -557,7 +1319,18 @@ export default function App() {
             <button type="button" role="tab" aria-selected={view === 'spaces'} className={view === 'spaces' ? 'on' : ''} onClick={() => setView('spaces')}>Spaces</button>
           </div>
         )}
+        {me && (
+          <button className="palette-hint" title="Quick switcher (⌘K)" onClick={() => { setPaletteOpen(true); setPaletteQuery(''); setPaletteIdx(0) }}>
+            <span>Search friends…</span>
+            <kbd>⌘K</kbd>
+          </button>
+        )}
         <span className={`pill ${conn === 'open' ? 'ok' : ''}`}>{conn}</span>
+        <button
+          className="settings-gear"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        >{theme === 'dark' ? '☀' : '🌙'}</button>
         {me && (
           <button className="settings-gear" title="Settings" onClick={() => setSettingsOpen(true)}>⚙</button>
         )}
@@ -566,8 +1339,109 @@ export default function App() {
 
       {err && <div className="banner">{err}</div>}
 
+      {restoreBackup && (
+        <div className="restore-overlay">
+          <div className="restore-card">
+            <h2>Restore your chat history</h2>
+            <p className="muted small">
+              We found a Recovery PIN backup on the server (created {restoreBackup.created_at}).
+              Enter your PIN to restore your encryption keys so you can read messages from your other devices.
+            </p>
+            <input
+              type="password"
+              autoFocus
+              placeholder="Recovery PIN"
+              value={restorePin}
+              onChange={(e) => setRestorePin(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void doRestore() }}
+            />
+            <div className="row">
+              <button type="button" onClick={() => void doRestore()} disabled={restoreBusy}>{restoreBusy ? 'Restoring…' : 'Restore'}</button>
+              <button type="button" className="link-btn" onClick={() => { setRestoreBackup(null); setRestorePin('') }}>Skip — use new keys</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {settingsOpen && me && (
-        <Settings me={me} sessionToken={sessionToken} send={send} subscribe={subscribe} onClose={() => setSettingsOpen(false)} />
+        <Settings
+          me={me}
+          sessionToken={sessionToken}
+          send={send}
+          subscribe={subscribe}
+          onClose={() => { setSettingsOpen(false); setSettingsInitialTab('profile') }}
+          initialTab={settingsInitialTab}
+          onSetBackupPin={async (pin: string) => {
+            const blob = await encryptKeyBackup(keysRef.current.publicKey, keysRef.current.secretKey, pin)
+            send({ type: 'key_backup_put', key_backup: blob })
+          }}
+          onDeleteBackup={() => send({ type: 'key_backup_delete' })}
+        />
+      )}
+
+      {me && paletteOpen && (
+        <div className="palette-overlay" onClick={() => setPaletteOpen(false)}>
+          <div className="palette" onClick={(e) => e.stopPropagation()}>
+            <input
+              autoFocus
+              placeholder="Search friends, jump to a chat…"
+              value={paletteQuery}
+              onChange={(e) => { setPaletteQuery(e.target.value); setPaletteIdx(0) }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); setPaletteIdx((i) => Math.min(i + 1, paletteMatches.length - 1)) }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); setPaletteIdx((i) => Math.max(0, i - 1)) }
+                else if (e.key === 'Enter') {
+                  const pick = paletteMatches[paletteIdx]
+                  if (pick) { openChat(pick[0]); setPaletteOpen(false) }
+                }
+              }}
+            />
+            <div className="palette-list">
+              {paletteMatches.length === 0 && (
+                <div className="palette-empty">No friends match.</div>
+              )}
+              {paletteMatches.map(([u, st], i) => {
+                const last = lastLineFor(me, u)
+                return (
+                  <button
+                    key={u}
+                    type="button"
+                    className={`palette-row ${i === paletteIdx ? 'on' : ''}`}
+                    onMouseEnter={() => setPaletteIdx(i)}
+                    onClick={() => { openChat(u); setPaletteOpen(false) }}
+                  >
+                    <span className="avatar" style={{ background: avatarColor(u) }}>
+                      {u[0]?.toUpperCase()}
+                      <span className="avatar-dot" style={{ background: statusColor(st) }} />
+                    </span>
+                    <span className="palette-meta">
+                      <span className="palette-name">{u}</span>
+                      <span className="palette-preview">{last?.text || st}</span>
+                    </span>
+                    {last && <span className="palette-time">{relTime(last.ts)}</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="palette-foot">
+              <span><kbd>↑↓</kbd> navigate</span>
+              <span><kbd>↵</kbd> open</span>
+              <span><kbd>esc</kbd> close</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {me && showBackupNag && !settingsOpen && (
+        <div className="backup-nag">
+          <span className="backup-nag-icon">🔐</span>
+          <div className="backup-nag-text">
+            <strong>Protect your chat history.</strong>
+            <span>Set a Recovery PIN so you can sign in on a new browser or device without losing your encrypted messages.</span>
+          </div>
+          <button type="button" className="backup-nag-cta" onClick={() => { setSettingsInitialTab('devices'); setSettingsOpen(true) }}>Set PIN</button>
+          <button type="button" className="backup-nag-dismiss" title="Remind me later" onClick={() => { setShowBackupNag(false); localStorage.setItem(BACKUP_NAG_KEY, String(Date.now())) }}>✕</button>
+        </div>
       )}
 
       {/* ── Call overlay ─────────────────────────────────────────── */}
@@ -616,6 +1490,22 @@ export default function App() {
                   <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
                   <button type="button" onClick={() => doAuth(loginUser.trim(), loginPass, loginTotp.trim())}>Sign in</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
+                  <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
+                </div>
+              ) : mode === 'link' ? (
+                <div className="form">
+                  <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
+                  <input placeholder="Link code" value={linkInput} onChange={(e) => setLinkInput(e.target.value.trim())} autoFocus maxLength={32} />
+                  <button type="button" disabled={linkBusy || linkInput.length < 8} onClick={() => {
+                    setLinkBusy(true)
+                    setErr('Waiting for approval on your other device…')
+                    const tok = linkInput
+                    // Approval happens on the other device → poll until it lands.
+                    const poll = setInterval(() => sendRef.current({ type: 'link_check', token: tok }), 2500)
+                    sendRef.current({ type: 'link_check', token: tok })
+                    setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
+                  }}>{linkBusy ? 'Waiting…' : 'Sign in with code'}</button>
+                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
                 </div>
               ) : regStep === 'form' ? (
                 <div className="form">
@@ -649,13 +1539,36 @@ export default function App() {
             <>
               <section className="panel">
                 <h2>Friends</h2>
+                {Object.keys(friends).length === 0 && (
+                  <div className="friends-empty">
+                    <div className="friends-empty-icon">👋</div>
+                    <p><strong>No friends yet.</strong></p>
+                    <p className="muted small">Add someone above by their Phaze username. They get a friend request and once they accept you can chat + call.</p>
+                  </div>
+                )}
                 <ul className="list">
-                  {Object.entries(friends).map(([u, st]) => (
+                  {Object.entries(friends)
+                    .map(([u, st]) => ({ u, st, last: lastLineFor(me, u) }))
+                    .sort((a, b) => (b.last?.ts ?? 0) - (a.last?.ts ?? 0))
+                    .map(({ u, st, last }) => (
                     <li key={u}>
-                      <button type="button" className={selected === u ? 'sel' : ''} onClick={() => openChat(u)}>
-                        <span className="status-dot" style={{ background: statusColor(st) }} />
-                        <span className="friend-name">{u}</span>
-                        <span className="friend-st muted">{st}</span>
+                      <button type="button" className={`friend-row ${selected === u ? 'sel' : ''}`} onClick={() => openChat(u)}>
+                        <span className="avatar" style={{ background: avatarColor(u) }}>
+                          {u[0]?.toUpperCase()}
+                          <span className="avatar-dot" style={{ background: statusColor(st) }} />
+                        </span>
+                        <span className="friend-meta">
+                          <span className="friend-line">
+                            <span className="friend-name">{u}</span>
+                            {last && <span className="friend-time">{relTime(last.ts)}</span>}
+                          </span>
+                          <span className="friend-line">
+                            <span className="friend-preview">{last?.text || st}</span>
+                            {unread[u] > 0 && selected !== u && (
+                              <span className="unread-badge">{unread[u] > 99 ? '99+' : unread[u]}</span>
+                            )}
+                          </span>
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -685,6 +1598,18 @@ export default function App() {
                         <button
                           type="button"
                           className="chat-call-btn"
+                          title={pinnedIds.length > 0 ? `${pinnedIds.length} pinned` : 'No pinned messages'}
+                          onClick={() => setPinsOpen((v) => !v)}
+                        >📌{pinnedIds.length > 0 ? <span className="header-count">{pinnedIds.length}</span> : null}</button>
+                        <button
+                          type="button"
+                          className="chat-call-btn"
+                          title="Search in this chat"
+                          onClick={() => setSearchOpen((v) => !v)}
+                        >🔍</button>
+                        <button
+                          type="button"
+                          className="chat-call-btn"
                           title="Audio call"
                           onClick={() => void startCall('audio')}
                           disabled={!me}
@@ -703,13 +1628,133 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="chat">
-                  {log.map((line) => (
-                    <div key={line.id} className={`bubble ${line.me ? 'me' : ''}`}>
-                      <span className="who">{line.from}</span>
-                      {line.text}
+                {selected && searchOpen && (
+                  <div className="search-bar">
+                    <input
+                      autoFocus
+                      placeholder="Find in conversation…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearch('') } }}
+                    />
+                    {search && (
+                      <span className="muted small">{log.filter((l) => !l.deleted && l.text.toLowerCase().includes(search.toLowerCase())).length} matches</span>
+                    )}
+                    <button type="button" className="link-btn" onClick={() => { setSearch(''); setSearchOpen(false) }}>Close</button>
+                  </div>
+                )}
+
+                {selected && pinsOpen && pinnedIds.length > 0 && (
+                  <div className="pinned-strip">
+                    <div className="pinned-title">📌 Pinned</div>
+                    {log.filter((l) => pinnedIds.includes(l.id)).map((l) => (
+                      <button
+                        type="button"
+                        key={l.id}
+                        className="pinned-item"
+                        onClick={() => { scrollToMessage(l.id) }}
+                        title="Jump to message"
+                      >
+                        <span className="muted small">{l.from}:</span>{' '}
+                        <span>{l.file ? `📎 ${l.file.name}` : (l.deleted ? '[deleted]' : l.text.slice(0, 80))}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="chat" ref={chatScrollRef}>
+                  {!selected && (
+                    <div className="chat-empty">
+                      <div className="chat-empty-art">
+                        <img src="/web/favicon.svg" alt="" />
+                      </div>
+                      <h3>Stay in phase.</h3>
+                      <p>
+                        {Object.keys(friends).length === 0
+                          ? 'Pick a username on the left to add your first friend — once they accept, your chat shows up here.'
+                          : 'Pick someone from your friends list to start (or jump in) a conversation.'}
+                      </p>
+                      <p className="chat-empty-hints">
+                        <kbd>⌘K</kbd> quick switcher · <kbd>/</kbd> commands · <kbd>@</kbd> mention
+                      </p>
                     </div>
-                  ))}
+                  )}
+                  {(() => {
+                    const q = search.trim().toLowerCase()
+                    const view = q ? log.filter((l) => !l.deleted && (l.text.toLowerCase().includes(q) || l.from.toLowerCase().includes(q))) : log
+                    return view.map((line, i) => {
+                    const prev = view[i - 1]
+                    const showGap = !prev || (line.ts - prev.ts) > 5 * 60 * 1000 || prev.me !== line.me
+                    const isPinned = pinnedIds.includes(line.id)
+                    const mentionsMe = !!me && containsMention(line.text, me)
+                    return (
+                      <div key={line.id} data-msg-id={line.id} className={`bubble-row ${line.me ? 'me' : ''}`}>
+                        {!line.me && showGap && (
+                          <span className="bubble-avatar" style={{ background: avatarColor(line.from) }}>
+                            {line.from[0]?.toUpperCase()}
+                          </span>
+                        )}
+                        {!line.me && !showGap && <span className="bubble-avatar-spacer" />}
+                        <div className={`bubble ${line.me ? 'me' : ''} ${line.deleted ? 'deleted' : ''} ${isPinned ? 'pinned' : ''} ${mentionsMe ? 'mentions-me' : ''}`} title={new Date(line.ts).toLocaleString()}>
+                          {showGap && !line.me && <span className="who">{line.from}</span>}
+                          {line.deleted ? (
+                            <span className="bubble-text deleted-text">message deleted</span>
+                          ) : line.file ? (
+                            isImage(line.file.mime, line.file.name) ? (
+                              <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
+                                <img src={line.file.url} alt={line.file.name} className="bubble-image" loading="lazy" />
+                              </a>
+                            ) : isAudio(line.file.mime, line.file.name) ? (
+                              <div className="bubble-audio">
+                                <span className="bubble-audio-icon">🎙️</span>
+                                <audio controls preload="metadata" src={line.file.url} />
+                              </div>
+                            ) : (
+                              <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-file">
+                                <span className="bubble-file-icon">📎</span>
+                                <span className="bubble-file-meta">
+                                  <span className="bubble-file-name">{line.file.name}</span>
+                                  <span className="bubble-file-size">{fmtBytes(line.file.size)}</span>
+                                </span>
+                              </a>
+                            )
+                          ) : (
+                            <span className="bubble-text"><RichText text={line.text} me={me} />{line.edited && <span className="edited-tag"> (edited)</span>}</span>
+                          )}
+                          <span className="bubble-ts">{formatTime(line.ts)}</span>
+                          {line.reactions && Object.keys(line.reactions).length > 0 && (
+                            <div className="reactions">
+                              {Object.entries(line.reactions).map(([e, users]) => (
+                                <button
+                                  key={e}
+                                  type="button"
+                                  className={`react-chip ${me && users.includes(me) ? 'mine' : ''}`}
+                                  onClick={() => reactTo(line, e)}
+                                  title={users.join(', ')}
+                                >{e} {users.length}</button>
+                              ))}
+                            </div>
+                          )}
+                          {!line.deleted && (
+                            <div className="bubble-actions">
+                              {REACTION_EMOJIS.map((e) => (
+                                <button key={e} type="button" className="action-btn react" onClick={() => reactTo(line, e)} title={`React ${e}`}>{e}</button>
+                              ))}
+                              <button type="button" className="action-btn" onClick={() => togglePin(line)} title={isPinned ? 'Unpin' : 'Pin'}>{isPinned ? '📍' : '📌'}</button>
+                              {line.me && !line.file && (
+                                <button type="button" className="action-btn" onClick={() => beginEdit(line)} title="Edit">✏️</button>
+                              )}
+                              {line.me && (
+                                <button type="button" className="action-btn" onClick={() => deleteMessage(line)} title="Delete">🗑</button>
+                              )}
+                            </div>
+                          )}
+                          {isPinned && <span className="pin-indicator" title="Pinned">📌</span>}
+                        </div>
+                      </div>
+                    )
+                  })
+                  })()}
                   {selected && typingPeers.has(selected) && (
                     <div className="typing-indicator">
                       <span>{selected} is typing</span>
@@ -718,15 +1763,124 @@ export default function App() {
                   )}
                 </div>
 
+                {selected && editingId && (
+                  <div className="edit-banner">
+                    <span>Editing message</span>
+                    <button type="button" className="link-btn" onClick={cancelEdit}>Cancel</button>
+                  </div>
+                )}
+
+                {selected && recording && (
+                  <div className="edit-banner rec-banner">
+                    <span><span className="rec-dot" /> Recording {fmtDuration(recDuration)} — press ⏹ to send, ✕ to cancel</span>
+                  </div>
+                )}
+
                 {selected && (
                   <div className="row send">
                     <input
-                      value={draft}
-                      onChange={handleDraftChange}
-                      onKeyDown={(e) => e.key === 'Enter' && sendChat()}
-                      placeholder={e2eReady ? 'Message (E2EE)' : 'Message'}
+                      ref={fileInputRef}
+                      type="file"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) void sendFile(f)
+                        e.target.value = ''
+                      }}
                     />
-                    <button type="button" onClick={sendChat}>Send</button>
+                    <button
+                      type="button"
+                      className="emoji-btn"
+                      title="Attach file"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={!!editingId || recording}
+                    >📎</button>
+                    <button
+                      type="button"
+                      className={`emoji-btn mic-btn ${recording ? 'recording' : ''}`}
+                      title={recording ? `Stop & send (${fmtDuration(recDuration)})` : 'Record voice message'}
+                      onClick={() => void startRecording()}
+                      disabled={!!editingId}
+                    >{recording ? '⏹' : '🎙️'}</button>
+                    {recording && (
+                      <button
+                        type="button"
+                        className="emoji-btn"
+                        title="Cancel"
+                        onClick={() => stopRecording(true)}
+                      >✕</button>
+                    )}
+                    <div className="emoji-wrap">
+                      <button type="button" className="emoji-btn" title="Emoji" onClick={() => setEmojiOpen((v) => !v)}>😊</button>
+                      {emojiOpen && (
+                        <div className="emoji-picker" role="dialog" aria-label="Emoji picker">
+                          {EMOJIS.map((e) => (
+                            <button
+                              key={e}
+                              type="button"
+                              className="emoji-cell"
+                              onClick={() => { setDraft((d) => d + e); setEmojiOpen(false) }}
+                            >{e}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="draft-wrap">
+                      <input
+                        ref={draftInputRef}
+                        value={draft}
+                        onChange={handleDraftChange}
+                        onKeyDown={(e) => {
+                          if (slashMatches.length > 0) {
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashMatches.length); return }
+                            if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashMatches.length) % slashMatches.length); return }
+                            if (e.key === 'Tab') { e.preventDefault(); setDraft(slashMatches[slashIdx].cmd + ' '); setSlashIdx(0); return }
+                          }
+                          if (mentionMatches.length > 0 && mentionQuery !== null) {
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionMatches.length); return }
+                            if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return }
+                            if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); completeMention(mentionMatches[mentionIdx]); return }
+                            if (e.key === 'Escape') { setMentionQuery(null); return }
+                          }
+                          if (e.key === 'Enter') sendChat()
+                          else if (e.key === 'Escape' && editingId) cancelEdit()
+                        }}
+                        placeholder={editingId ? 'Edit message…' : (e2eReady ? 'Message  ·  / for commands  ·  @ to mention' : 'Message')}
+                      />
+                      {slashMatches.length > 0 && (
+                        <div className="mention-pop slash-pop" role="dialog" aria-label="Slash commands">
+                          {slashMatches.map((c, i) => (
+                            <button
+                              key={c.cmd}
+                              type="button"
+                              className={`mention-row ${i === slashIdx ? 'on' : ''}`}
+                              onMouseDown={(e) => { e.preventDefault(); setDraft(c.cmd + ' '); setSlashIdx(0); draftInputRef.current?.focus() }}
+                              onMouseEnter={() => setSlashIdx(i)}
+                            >
+                              <span className="slash-cmd mono">{c.cmd}</span>
+                              <span className="slash-desc">{c.desc}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {mentionMatches.length > 0 && mentionQuery !== null && (
+                        <div className="mention-pop">
+                          {mentionMatches.map((u, i) => (
+                            <button
+                              type="button"
+                              key={u}
+                              className={`mention-row ${i === mentionIdx ? 'on' : ''}`}
+                              onMouseDown={(e) => { e.preventDefault(); completeMention(u) }}
+                              onMouseEnter={() => setMentionIdx(i)}
+                            >
+                              <span className="avatar small" style={{ background: avatarColor(u) }}>{u[0]?.toUpperCase()}</span>
+                              <span>{u}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button type="button" onClick={sendChat}>{editingId ? 'Save' : 'Send'}</button>
                   </div>
                 )}
               </section>

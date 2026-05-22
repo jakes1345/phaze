@@ -3,160 +3,189 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Phaze — Classic-style chat and calls (open source)</title>
-<meta name="description" content="Phaze: sovereign Skype-style chat, voice, and video in Go. E2EE messaging, self-hostable Nexus relay. Desktop (Linux, Windows) and Android.">
+<title>Phaze — Stay in phase.</title>
+<meta name="description" content="Phaze — sovereign chat & calls. End-to-end encrypted DMs, voice + video calls, voice messages, cross-device history. Web, desktop, Android. Open source and self-hostable.">
+<link rel="icon" type="image/svg+xml" href="../web/public/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 
 <style>
   :root {
-    --aero-blue: #00AFF0;
-    --aero-dark: #005F8F;
-    --aero-light: #B3E5FC;
-    --bg: #f5f7fa;
+    --brand: #863bff;
+    --brand-hover: #6f1ee0;
+    --brand-soft: rgba(134, 59, 255, 0.10);
+    --bg: #fafafa;
     --panel: #ffffff;
-    --text: #333;
-    --muted: #777;
-    --border: #d8dee5;
+    --text: #0a0a0a;
+    --muted: #6b6b75;
+    --border: #ececef;
   }
   * { box-sizing: border-box; }
-  body {
+  html, body {
     margin: 0;
-    font-family: "Segoe UI", Tahoma, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     color: var(--text);
-    background: linear-gradient(180deg, var(--aero-light) 0%, var(--bg) 240px);
+    background: var(--bg);
     line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.005em;
   }
-  header { text-align: center; padding: 80px 20px 40px; }
+  header {
+    text-align: center;
+    padding: 110px 20px 70px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(900px 500px at 50% -10%, var(--brand-soft), transparent 65%);
+    pointer-events: none;
+  }
+  header > * { position: relative; }
   header h1 {
-    font-size: 56px;
-    font-weight: 300;
-    margin: 0 0 12px;
-    color: var(--aero-dark);
-    letter-spacing: -1px;
+    font-size: 64px;
+    font-weight: 700;
+    margin: 0 0 14px;
+    color: var(--text);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
   }
-  header .tagline { font-size: 20px; color: var(--muted); margin-bottom: 32px; }
-  .downloads { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 16px; }
+  header h1 strong { color: var(--brand); }
+  header .tagline { font-size: 20px; color: var(--muted); margin: 0 auto 32px; max-width: 600px; }
+  .downloads { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
   .btn {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 28px;
-    background: linear-gradient(180deg, var(--aero-blue), var(--aero-dark));
+    padding: 12px 24px;
+    background: var(--brand);
     color: #fff;
     text-decoration: none;
     font-weight: 600;
-    border-radius: 4px;
-    border: 1px solid var(--aero-dark);
+    font-size: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--brand);
+    transition: background 120ms ease;
   }
-  main { max-width: 960px; margin: 48px auto; padding: 0 24px; }
+  .btn:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+  .btn.ghost { background: transparent; color: var(--brand); border-color: var(--brand); }
+  .btn.ghost:hover { background: var(--brand-soft); }
+  main { max-width: 1000px; margin: 56px auto; padding: 0 24px; }
   .features {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
     margin: 36px 0;
   }
   .feature {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 14px;
     padding: 22px;
   }
-  .feature h3 { margin: 0 0 8px; color: var(--aero-dark); font-size: 17px; }
-  .feature p { margin: 0; font-size: 14px; color: var(--muted); }
+  .feature h3 { margin: 0 0 8px; color: var(--text); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .feature p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.5; }
   h2 {
-    color: var(--aero-dark);
-    font-weight: 300;
+    color: var(--text);
+    font-weight: 700;
     font-size: 28px;
-    margin-top: 48px;
+    letter-spacing: -0.02em;
+    margin-top: 56px;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 8px;
+    padding-bottom: 10px;
   }
   pre {
-    background: #1e1e1e;
-    color: #dcdcdc;
+    background: #0a0a0a;
+    color: #e6e6ea;
     padding: 18px 20px;
-    border-radius: 4px;
+    border-radius: 10px;
     overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 13px;
   }
+  code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.9em; }
   footer {
     text-align: center;
     padding: 40px 20px;
     color: var(--muted);
     font-size: 13px;
     border-top: 1px solid var(--border);
-    margin-top: 60px;
+    margin-top: 80px;
   }
   .disclaimer {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--muted);
-    max-width: 640px;
-    margin: 24px auto 0;
+    max-width: 680px;
+    margin: 18px auto 0;
     text-align: center;
   }
+  a { color: var(--brand); }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Phaze</h1>
-  <p class="tagline">Classic Skype-style chat and calls — rebuilt in Go. Open source, self-hostable, no ads.</p>
+  <h1><strong>Stay in phase.</strong></h1>
+  <p class="tagline">Sovereign chat &amp; calls. End-to-end encrypted. No ads, no tracking, no sold data. Open source.</p>
 
   <div class="downloads">
-    <a class="btn" href="https://github.com/jakes1345/skype7-reborn/releases/latest">Download</a>
-    <a class="btn ghost" href="https://phazechat.world/">Public relay</a>
+    <a class="btn" href="https://phazechat.world/web/">Open Phaze Web</a>
+    <a class="btn ghost" href="https://phazechat.world/download">Download apps</a>
     <a class="btn ghost" href="https://github.com/jakes1345/skype7-reborn">View on GitHub</a>
   </div>
-  <div class="disclaimer">
-    MIT license. Public relay: <code>phazechat.world</code>. Pre-1.0 — see the repo README for current capabilities and limits.
-  </div>
-  <p class="disclaimer">Self-host the open-source <strong>nexus_server</strong> and point <strong>native_client</strong> / <strong>web</strong> at your relay. See the repository <code>README.md</code> for build steps.</p>
+  <p class="disclaimer">MIT license · Public relay <code>phazechat.world</code> · Pre-1.0 — see README for current capabilities and limits.</p>
 </header>
 
 <main>
 <div class="features">
   <div class="feature">
-    <h3>Classic-style UI</h3>
-    <p>Fyne desktop experience inspired by the Aero-era Skype look.</p>
+    <h3>🔒 E2EE direct messages</h3>
+    <p>NaCl (Curve25519 + XSalsa20-Poly1305) per-recipient encryption. The Nexus relay stores ciphertext but cannot read message bodies.</p>
   </div>
   <div class="feature">
-    <h3>Encrypted messages</h3>
-    <p>Pairwise NaCl box for direct messages; per-member envelopes for groups so the relay never sees plaintext bodies.</p>
+    <h3>📞 Voice &amp; video calls</h3>
+    <p>WebRTC P2P with automatic public TURN fallback so calls work behind symmetric NAT. Opus audio, VP8 video.</p>
   </div>
   <div class="feature">
-    <h3>Voice &amp; video</h3>
-    <p>WebRTC voice (PCMU). VP8 video on Linux desktop; Windows + Android use more constrained video paths — see README.</p>
+    <h3>🎙️ Voice messages</h3>
+    <p>Record-and-send voice notes on the web client. MediaRecorder → encrypted attachment → inline playback.</p>
   </div>
   <div class="feature">
-    <h3>Group chats</h3>
-    <p>Named conversations; per-member ciphertext fan-out so the relay does not see message bodies.</p>
+    <h3>💾 Cross-device history</h3>
+    <p>Encrypted message history stored server-side and replayed to every device that knows your Recovery PIN.</p>
   </div>
   <div class="feature">
-    <h3>Accounts &amp; security</h3>
-    <p>Email verification, password reset, optional TOTP 2FA, QR sign-in, encrypted local SQLite on desktop, GDPR account-delete.</p>
+    <h3>✨ Modern chat UX</h3>
+    <p>Reactions, edits, deletes, @mentions with autocomplete, pinned messages, in-chat search, ⌘K palette, slash commands, dark mode.</p>
   </div>
   <div class="feature">
-    <h3>Self-hostable relay</h3>
-    <p>Run your own Nexus (Docker or <code>go run</code>). Clients can point at your <code>wss://</code> host. Built-in <code>/metrics</code> and litestream backups when you configure S3 credentials.</p>
+    <h3>🛠️ Self-hostable relay</h3>
+    <p>Run your own Nexus in Docker. Point clients at your <code>wss://</code> host. Built-in <code>/metrics</code> + Litestream-to-S3 backups when configured.</p>
   </div>
 </div>
 
 <h2>Quick start</h2>
-<p>Download the archive for your platform from GitHub Releases, extract, and run the <code>phaze</code> binary (Windows: <code>phaze.exe</code>). First launch walks you through account creation against the configured server (default: public relay). The desktop app self-updates from GitHub Releases with SHA-256 verification.</p>
+<p>The web client at <a href="https://phazechat.world/web/">phazechat.world/web</a> is the easiest way to try Phaze — no install needed. Native apps are also available for Linux, Windows and Android (macOS/iOS deferred; the web client works great on every platform). After signing up, set a Recovery PIN in Settings → Backup &amp; Devices so you can use the same account on multiple devices.</p>
 
-<h2>Run your own server</h2>
+<h2>Run your own relay</h2>
 <pre><code>docker run -p 8080:8080 -v nexus_data:/data \
   ghcr.io/jakes1345/skype7-reborn-nexus:latest</code></pre>
 <p>Or clone the repo and <code>go run ./nexus_server</code>. Point clients at your WebSocket URL (e.g. <code>wss://your-host/ws</code>).</p>
 
-<h2>Contribute &amp; beta</h2>
-<p>Issues and PRs welcome at <a href="https://github.com/jakes1345/skype7-reborn">github.com/jakes1345/skype7-reborn</a>. Use the <strong>Bug report</strong> and <strong>Beta feedback</strong> issue templates when testing prereleases.</p>
-<p><strong>Not yet the focus of v1:</strong> Opus wideband audio, iOS/macOS desktop, multi-relay federation, screen sharing, and full WebRTC parity in the web client — track the README roadmap.</p>
+<h2>Contribute</h2>
+<p>Issues and PRs welcome at <a href="https://github.com/jakes1345/skype7-reborn">github.com/jakes1345/skype7-reborn</a>. The <strong>Bug report</strong> and <strong>Beta feedback</strong> templates are the right entry points when testing prereleases.</p>
+<p><strong>Not in v1 scope yet:</strong> iOS/macOS native apps (no Apple build hardware), Spaces (group channels) feature-parity with DMs, screen sharing, multi-relay federation. Track the README roadmap.</p>
 
 </main>
 
 <footer>
-  Phaze is an independent project (Skype 7 Reborn lineage).<br>
-  Skype is a trademark of Microsoft Corporation. Not affiliated with or endorsed by Microsoft.
+  Phaze · Open source under the MIT license · Not affiliated with Microsoft.
 </footer>
 </body>
 </html>

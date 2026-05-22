@@ -8,14 +8,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #00AFF0;
-            --skype-dark: #0078D4;
-            --text-dark: #333;
-            --text-light: #666;
-            --bg-light: #f5f5f5;
+            --skype-blue: #863bff;
+            --skype-dark: #6f1ee0;
+            --text-dark: #0a0a0a;
+            --text-light: #6b6b75;
+            --bg-light: #fafafa;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', 'Inter', system-ui, sans-serif; color: var(--text-dark); background: #fff; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; color: var(--text-dark); background: #fff; }
         a { color: var(--skype-blue); text-decoration: none; }
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
@@ -30,7 +30,7 @@
         .nav-get-btn { background: var(--skype-blue); color: #fff !important; padding: 8px 24px; border-radius: 4px; font-weight: 600; }
 
         .dl-hero {
-            background: linear-gradient(135deg, #00AFF0, #0078D4);
+            background: #863bff;
             color: #fff; padding: 60px 0 80px; text-align: center;
         }
         .dl-hero h1 { font-size: 2.5rem; font-weight: 300; margin-bottom: 12px; }
@@ -98,7 +98,7 @@
     <nav class="navbar">
         <div class="container">
             <a href="/" class="nav-brand">
-                <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#00AFF0"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg>
+                <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#863bff"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg>
                 Phaze
             </a>
             <ul class="nav-links">
@@ -117,43 +117,55 @@
     <section class="dl-hero">
         <div class="container">
             <h1><strong>Download Phaze</strong></h1>
-            <p>Available for Windows, macOS, Linux and Android. Free, private, and sovereign.</p>
+            <p>Native apps for Linux, Windows and Android. Or just open the web client — it has every feature.</p>
         </div>
     </section>
 
     <section class="platform-section">
         <div class="container">
-            <h2>Choose your platform</h2>
-            <p style="text-align:center;color:var(--text-light);font-size:0.9rem;max-width:640px;margin:0 auto 28px;">
-                Official builds are published on
-                <a href="https://github.com/jakes1345/skype7-reborn/releases/latest" target="_blank" rel="noopener noreferrer">GitHub Releases</a>
-                (Windows, Linux, macOS, Android). Buttons below prefer those links when available, and fall back to this server’s <code>/downloads/</code> mirror.
-                Linux updates via Flatpak/Flathub are <a href="https://github.com/jakes1345/skype7-reborn/blob/HEAD/docs/LINUX_DISTRIBUTION.md" target="_blank" rel="noopener noreferrer">documented here</a> (not on Flathub yet).
+            <h2>Pick your platform</h2>
+            <p style="text-align:center;color:var(--text-light);font-size:0.9rem;max-width:680px;margin:0 auto 28px;">
+                Honest status: <strong>web client</strong> is the production-ready surface. Native binaries are pre-1.0 and shipped without code-signing — your OS may warn you. macOS and iOS are deferred (no Apple hardware available for the build pipeline yet).
             </p>
             <div class="platform-grid" id="platforms">
-                <div class="platform-card" id="card-windows">
-                    <span class="platform-icon">🪟</span>
-                    <div class="platform-name">Windows</div>
-                    <div class="platform-detail">Windows 10+ · x64 · <strong>Surface Pro</strong></div>
-                    <a href="/downloads/Phaze.exe" download="Phaze.exe" class="platform-btn" data-dl="windows">Download .exe / zip</a>
+                <div class="platform-card" id="card-web">
+                    <span class="platform-icon">🌐</span>
+                    <div class="platform-name">Web</div>
+                    <div class="platform-detail">Any modern browser · works on phone too</div>
+                    <a href="/web/" class="platform-btn" style="background:var(--brand);color:#fff;">Open Phaze Web</a>
                 </div>
                 <div class="platform-card" id="card-linux">
                     <span class="platform-icon">🐧</span>
                     <div class="platform-name">Linux</div>
-                    <div class="platform-detail">Ubuntu, Fedora, Arch, Debian · x64 &amp; arm64</div>
-                    <a href="/downloads/Phaze.linux" download="Phaze.linux" class="platform-btn" data-dl="linux">Download archive</a>
+                    <div class="platform-detail">x86_64 binary · Ubuntu 24.04+ / Fedora 40+ tested</div>
+                    <a href="/downloads/Phaze.linux" download="Phaze.linux" class="platform-btn" data-dl="linux">Download binary</a>
+                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">After download: <code>chmod +x Phaze.linux &amp;&amp; ./Phaze.linux</code></p>
                 </div>
-                <div class="platform-card soon" id="card-macos">
-                    <span class="platform-icon">🍎</span>
-                    <div class="platform-name">macOS</div>
-                    <div class="platform-detail">Coming soon · Intel &amp; Apple Silicon</div>
-                    <span class="platform-btn disabled" aria-disabled="true">Not yet available</span>
+                <div class="platform-card" id="card-windows">
+                    <span class="platform-icon">🪟</span>
+                    <div class="platform-name">Windows</div>
+                    <div class="platform-detail">Windows 10+ · x64 · unsigned</div>
+                    <a href="/downloads/Phaze.exe" download="Phaze.exe" class="platform-btn" data-dl="windows">Download .exe</a>
+                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">SmartScreen may warn — click "More info → Run anyway".</p>
                 </div>
                 <div class="platform-card" id="card-android">
                     <span class="platform-icon">📱</span>
                     <div class="platform-name">Android</div>
                     <div class="platform-detail">Android 10+ · ARM64</div>
                     <a href="/downloads/Phaze.apk" download="Phaze.apk" class="platform-btn" data-dl="android">Download .apk</a>
+                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">Enable "Install unknown apps" for your browser, then open the .apk.</p>
+                </div>
+                <div class="platform-card soon" id="card-macos">
+                    <span class="platform-icon">🍎</span>
+                    <div class="platform-name">macOS</div>
+                    <div class="platform-detail">Deferred — no Apple build hardware yet</div>
+                    <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
+                </div>
+                <div class="platform-card soon" id="card-ios">
+                    <span class="platform-icon"></span>
+                    <div class="platform-name">iOS</div>
+                    <div class="platform-detail">Deferred — App Store + signing needs Mac hardware</div>
+                    <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
                 </div>
             </div>
         </div>

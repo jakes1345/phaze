@@ -34,7 +34,7 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 	welcome.TextSize = 28 // Flagship size
 	welcome.Alignment = fyne.TextAlignCenter
 
-	slogan := canvas.NewText("Don't stop til you've had enough", color.NRGBA{R: 255, G: 255, B: 255, A: 180})
+	slogan := canvas.NewText("Stay in phase.", color.NRGBA{R: 255, G: 255, B: 255, A: 180})
 	slogan.TextStyle = fyne.TextStyle{Italic: true}
 	slogan.TextSize = 14
 	slogan.Alignment = fyne.TextAlignCenter
@@ -53,12 +53,8 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 	statusContainer := container.NewCenter(statusIcon)
 	statusContainer.Resize(fyne.NewSize(16, 16))
 
-	// The Hood Gradient Background (Phaze Aero Blue)
-	hoodBg := canvas.NewLinearGradient(
-		color.NRGBA{R: 0, G: 160, B: 245, A: 255},
-		color.NRGBA{R: 45, G: 190, B: 255, A: 255},
-		0,
-	)
+	// Modern flat brand fill — matches the web client's indigo accent.
+	hoodBg := canvas.NewRectangle(PhazeBrand)
 
 	hoodContent := container.NewBorder(
 		nil, nil,
@@ -141,9 +137,10 @@ func createHomeTile(title, desc string, icon fyne.Resource) fyne.CanvasObject {
 	img.SetMinSize(fyne.NewSize(32, 32))
 	img.FillMode = canvas.ImageFillContain
 
-	cardBg := canvas.NewRectangle(color.NRGBA{R: 245, G: 250, B: 255, A: 255})
-	cardBg.StrokeColor = color.NRGBA{R: 200, G: 220, B: 240, A: 255}
+	cardBg := canvas.NewRectangle(PhazePanel)
+	cardBg.StrokeColor = PhazeSeparator
 	cardBg.StrokeWidth = 1
+	cardBg.CornerRadius = 10
 
 	content := container.NewHBox(
 		container.NewPadded(img),
@@ -158,9 +155,10 @@ func createActivityCard(item ActivityItem) fyne.CanvasObject {
 	actionLabel := widget.NewLabel(item.Action + ":")
 	contentLabel := widget.NewLabelWithStyle(item.Content, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 	
-	cardBg := canvas.NewRectangle(color.White)
-	cardBg.StrokeColor = color.NRGBA{R: 0, G: 0, B: 0, A: 20}
+	cardBg := canvas.NewRectangle(PhazePanel)
+	cardBg.StrokeColor = PhazeSeparator
 	cardBg.StrokeWidth = 1
+	cardBg.CornerRadius = 10
 	
 	header := container.NewHBox(avatar, nameLabel, actionLabel)
 	body := container.NewPadded(contentLabel)
