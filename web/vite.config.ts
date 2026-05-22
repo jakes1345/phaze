@@ -14,10 +14,10 @@ export default defineConfig({
   base: process.env.VITE_BASE || '/web/',
   server: {
     proxy: {
-      '/public': {
-        target: nexusOrigin,
-        changeOrigin: true,
-      },
+      '/public':  { target: nexusOrigin, changeOrigin: true },
+      '/api':     { target: nexusOrigin, changeOrigin: true },
+      '/uploads': { target: nexusOrigin, changeOrigin: true },
+      '/ws':      { target: nexusOrigin, changeOrigin: true, ws: true },
     },
   },
 })

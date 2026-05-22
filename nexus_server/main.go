@@ -31,6 +31,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -191,6 +192,13 @@ type NexusMessage struct {
 	QRData      string      `json:"qr_data,omitempty"`
 	DeviceInfo  string      `json:"device_info,omitempty"`
 
+	// MsgID is a stable client-generated ID for a chat message. It lets edits,
+	// deletes, and reactions target a specific previously-sent message without
+	// needing the server to assign IDs (DMs are E2EE so the server can't see
+	// content anyway). Forwarded verbatim to the recipient.
+	MsgID    string `json:"msg_id,omitempty"`
+	Reaction string `json:"reaction,omitempty"`
+
 	// Envelopes[recipient] = ciphertext body encrypted to that member's key.
 	// Used for group E2EE: the client fans out per-member ciphertext so the
 	// server never sees plaintext. Only set on "convo_msg".
@@ -215,6 +223,14 @@ type NexusMessage struct {
 	Channels    []ChannelInfo      `json:"channels,omitempty"`
 	Messages    []ChannelMsg       `json:"messages,omitempty"`
 	HistoryFrom int64              `json:"history_from,omitempty"` // id cursor (return messages with id < this)
+
+	// DMHistory is the response payload for "dm_history" requests:
+	// durable cross-device history of DMs between the requester and Recipient.
+	DMHistory []DMMessage `json:"dm_history,omitempty"`
+
+	// KeyBackup carries the PIN-encrypted E2EE keypair blob between client
+	// and server. Used by key_backup_put / key_backup_get cases.
+	KeyBackup *KeyBackupPayload `json:"key_backup,omitempty"`
 }
 
 // ServerSummary is the slim view a client gets for the server-list pane.
@@ -246,6 +262,30 @@ type ChannelMsg struct {
 	Sender    string `json:"sender"`
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
+}
+
+// KeyBackupPayload is the opaque envelope clients use to back up their
+// E2EE NaCl keypair. The server never sees plaintext: ciphertext is the
+// AES-GCM encryption of the keypair under a key derived from the user's
+// recovery PIN via PBKDF2(Salt, Iterations). CreatedAt is informational.
+type KeyBackupPayload struct {
+	Ciphertext string `json:"ciphertext"`
+	Salt       string `json:"salt"`
+	Iterations int    `json:"iterations"`
+	CreatedAt  string `json:"created_at,omitempty"`
+}
+
+// DMMessage is one row from dm_messages serialized back to clients during
+// history fetch. The body is still E2EE-encrypted — the client decrypts.
+type DMMessage struct {
+	MsgID     string              `json:"msg_id"`
+	Sender    string              `json:"sender"`
+	Recipient string              `json:"recipient"`
+	Body      string              `json:"body"`
+	Edited    bool                `json:"edited,omitempty"`
+	Deleted   bool                `json:"deleted,omitempty"`
+	CreatedAt string              `json:"created_at"`
+	Reactions map[string][]string `json:"reactions,omitempty"`
 }
 
 type TurnConfig struct {
@@ -298,10 +338,21 @@ var (
 	TurnShortTerm = os.Getenv("PHAZE_TURN_SHORT_TERM") == "true"
 )
 
+// openRelayTURN is a free public TURN/STUN cluster from metered.ca. We use
+// it as the automatic fallback when no self-hosted TURN is configured, so
+// voice/video calls work for users behind symmetric NAT out of the box.
+// For production traffic, set PHAZE_TURN_URL + PHAZE_TURN_SECRET to point
+// at a self-hosted coturn instance — open relay has bandwidth limits.
+var openRelayTURN = &TurnConfig{
+	URL:      "turn:openrelay.metered.ca:80",
+	Username: "openrelayproject",
+	Password: "openrelayproject",
+}
+
 func (s *NexusServer) generateMediaToken(username string) *TurnConfig {
 	if TurnSecret == "" || TurnURL == "" {
-		log.Printf("[TURN] No TURN configured (TURN_SECRET or TURN_URL not set)")
-		return nil
+		log.Printf("[TURN] No self-hosted TURN configured — falling back to openrelay.metered.ca public TURN for %s", username)
+		return openRelayTURN
 	}
 
 	var expiresIn time.Duration
@@ -466,6 +517,39 @@ func (s *NexusServer) initDB() {
 			used INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			used_at DATETIME
+		)`,
+		// dm_messages: durable cross-device history of direct messages.
+		// body holds the E2EE ciphertext exactly as the sender produced it —
+		// the server cannot decrypt. msg_id is the client-generated stable
+		// ID so edits/deletes/reactions can target a row from either side.
+		`CREATE TABLE IF NOT EXISTS dm_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			msg_id TEXT NOT NULL UNIQUE,
+			sender TEXT NOT NULL,
+			recipient TEXT NOT NULL,
+			body TEXT NOT NULL,
+			edited INTEGER DEFAULT 0,
+			deleted INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_dm_pair       ON dm_messages(sender, recipient, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_dm_pair_rev   ON dm_messages(recipient, sender, id)`,
+		`CREATE TABLE IF NOT EXISTS dm_reactions (
+			msg_id TEXT NOT NULL,
+			username TEXT NOT NULL,
+			emoji TEXT NOT NULL,
+			PRIMARY KEY (msg_id, username, emoji)
+		)`,
+		// key_backups: PIN-encrypted NaCl keypair. The blob is opaque to the
+		// server — encrypted client-side with a key derived from a user-chosen
+		// recovery PIN (PBKDF2/Argon2). Lets a public user restore their E2EE
+		// identity on a new browser / device / after a localStorage wipe.
+		`CREATE TABLE IF NOT EXISTS key_backups (
+			username TEXT PRIMARY KEY,
+			ciphertext TEXT NOT NULL,
+			salt TEXT NOT NULL,
+			iterations INTEGER NOT NULL DEFAULT 200000,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
 	for _, q := range tables {
@@ -1149,6 +1233,129 @@ func (s *NexusServer) getPendingRequests(username string) []string {
 }
 
 // ---------- Offline Messages ----------
+
+// persistDM stores a delivered (or queued) direct message in dm_messages.
+// Idempotent on msg_id so retries and offline-redelivery don't duplicate.
+func (s *NexusServer) persistDM(msgID, sender, recipient, body string) {
+	if msgID == "" || sender == "" || recipient == "" {
+		return
+	}
+	if _, err := s.DB.Exec(
+		`INSERT OR IGNORE INTO dm_messages (msg_id, sender, recipient, body) VALUES (?, ?, ?, ?)`,
+		msgID, sender, recipient, body); err != nil {
+		log.Printf("[dm-persist] %s->%s: %v", sender, recipient, err)
+	}
+}
+
+func (s *NexusServer) editDM(msgID, sender, newBody string) {
+	if _, err := s.DB.Exec(
+		`UPDATE dm_messages SET body = ?, edited = 1 WHERE msg_id = ? AND sender = ? AND deleted = 0`,
+		newBody, msgID, sender); err != nil {
+		log.Printf("[dm-edit] %s/%s: %v", sender, msgID, err)
+	}
+}
+
+func (s *NexusServer) deleteDM(msgID, sender string) {
+	if _, err := s.DB.Exec(
+		`UPDATE dm_messages SET body = '', deleted = 1 WHERE msg_id = ? AND sender = ?`,
+		msgID, sender); err != nil {
+		log.Printf("[dm-delete] %s/%s: %v", sender, msgID, err)
+	}
+}
+
+// toggleReaction inserts or removes a (msg_id, user, emoji) row. Returns
+// true if the reaction was added, false if it was removed. The caller
+// forwards the same toggle event to the peer so both sides converge.
+func (s *NexusServer) toggleReaction(msgID, user, emoji string) bool {
+	var n int
+	s.DB.QueryRow(`SELECT COUNT(*) FROM dm_reactions WHERE msg_id = ? AND username = ? AND emoji = ?`,
+		msgID, user, emoji).Scan(&n)
+	if n > 0 {
+		s.DB.Exec(`DELETE FROM dm_reactions WHERE msg_id = ? AND username = ? AND emoji = ?`, msgID, user, emoji)
+		return false
+	}
+	s.DB.Exec(`INSERT OR IGNORE INTO dm_reactions (msg_id, username, emoji) VALUES (?, ?, ?)`, msgID, user, emoji)
+	return true
+}
+
+// fetchDMHistory returns up to limit messages between the two parties in
+// chronological order (oldest first). If beforeID > 0, only rows with
+// id < beforeID are returned — for paginating older history.
+func (s *NexusServer) fetchDMHistory(a, b string, beforeID int64, limit int) []DMMessage {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	q := `SELECT id, msg_id, sender, recipient, body, edited, deleted, created_at
+	      FROM dm_messages
+	      WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?))`
+	args := []any{a, b, b, a}
+	if beforeID > 0 {
+		q += ` AND id < ?`
+		args = append(args, beforeID)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.DB.Query(q, args...)
+	if err != nil {
+		log.Printf("[dm-history] query: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var out []DMMessage
+	var ids []string
+	for rows.Next() {
+		var id int64
+		var ed, del int
+		var m DMMessage
+		if err := rows.Scan(&id, &m.MsgID, &m.Sender, &m.Recipient, &m.Body, &ed, &del, &m.CreatedAt); err != nil {
+			continue
+		}
+		m.Edited = ed == 1
+		m.Deleted = del == 1
+		if m.Deleted {
+			m.Body = ""
+		}
+		out = append(out, m)
+		ids = append(ids, m.MsgID)
+	}
+	// Reverse to chronological order (oldest first).
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+
+	if len(ids) > 0 {
+		placeholders := strings.Repeat("?,", len(ids))
+		placeholders = placeholders[:len(placeholders)-1]
+		ra := make([]any, 0, len(ids))
+		for _, id := range ids {
+			ra = append(ra, id)
+		}
+		rxRows, err := s.DB.Query(
+			`SELECT msg_id, username, emoji FROM dm_reactions WHERE msg_id IN (`+placeholders+`)`, ra...)
+		if err == nil {
+			defer rxRows.Close()
+			byID := map[string]map[string][]string{}
+			for rxRows.Next() {
+				var mid, user, emoji string
+				if rxRows.Scan(&mid, &user, &emoji) != nil {
+					continue
+				}
+				if byID[mid] == nil {
+					byID[mid] = map[string][]string{}
+				}
+				byID[mid][emoji] = append(byID[mid][emoji], user)
+			}
+			for i := range out {
+				if r, ok := byID[out[i].MsgID]; ok {
+					out[i].Reactions = r
+				}
+			}
+		}
+	}
+	return out
+}
 
 func (s *NexusServer) storeOfflineMessage(sender, recipient, body, msgType string) {
 	if _, err := s.DB.Exec("INSERT INTO offline_messages (sender, recipient, body, msg_type) VALUES (?, ?, ?, ?)",
@@ -1889,6 +2096,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			log.Printf("Message from %s to %s", msg.Sender, msg.Recipient)
+			// Durable cross-device history: store the ciphertext exactly as
+			// the sender produced it. Idempotent on msg_id so retries are
+			// safe. Both ends fetch this via "dm_history" on chat open.
+			s.persistDM(msg.MsgID, msg.Sender, msg.Recipient, msg.Body)
 			s.Mu.RLock()
 			recipientClient, online := s.Clients[msg.Recipient]
 			s.Mu.RUnlock()
@@ -2029,6 +2240,137 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				})
 			}
 			s.Mu.RUnlock()
+
+		// Edit / delete / react are best-effort live relays for DMs. The body
+		// (for msg_edit) and emoji (for msg_react) are still E2EE-encrypted
+		// client-side; the server only forwards the envelope. If the
+		// recipient is offline the signal is dropped — clients reconcile
+		// from their own local history when they reconnect.
+		case "msg_edit", "msg_delete", "msg_react":
+			if username == "" || msg.Recipient == "" || msg.MsgID == "" {
+				continue
+			}
+			if s.isBlocked(msg.Recipient, username) || s.isBlocked(username, msg.Recipient) {
+				continue
+			}
+			msg.Sender = username
+			// Mirror the action into durable history so both sides see it
+			// after a refresh / new-device login.
+			switch msg.Type {
+			case "msg_edit":
+				s.editDM(msg.MsgID, username, msg.Body)
+			case "msg_delete":
+				s.deleteDM(msg.MsgID, username)
+			case "msg_react":
+				if msg.Reaction != "" {
+					s.toggleReaction(msg.MsgID, username, msg.Reaction)
+				}
+			}
+			s.Mu.RLock()
+			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
+				recipientClient.Send(msg)
+			}
+			s.Mu.RUnlock()
+
+		case "dm_history":
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			limit := 100
+			rows := s.fetchDMHistory(username, msg.Recipient, msg.HistoryFrom, limit)
+			client.Send(NexusMessage{
+				Type:      "dm_history",
+				Recipient: msg.Recipient,
+				DMHistory: rows,
+			})
+
+		// Key backup put/get/delete: server is dumb storage for an opaque
+		// PIN-encrypted blob containing the user's NaCl keypair. The plain
+		// keys never touch the server.
+		case "key_backup_put":
+			if username == "" || msg.KeyBackup == nil {
+				continue
+			}
+			b := msg.KeyBackup
+			if b.Ciphertext == "" || b.Salt == "" || b.Iterations < 10000 {
+				client.Send(NexusMessage{Type: "key_backup_result", Error: "invalid backup payload"})
+				continue
+			}
+			if _, err := s.DB.Exec(
+				`INSERT INTO key_backups (username, ciphertext, salt, iterations) VALUES (?, ?, ?, ?)
+				 ON CONFLICT(username) DO UPDATE SET ciphertext = excluded.ciphertext, salt = excluded.salt,
+				 iterations = excluded.iterations, created_at = CURRENT_TIMESTAMP`,
+				username, b.Ciphertext, b.Salt, b.Iterations); err != nil {
+				client.Send(NexusMessage{Type: "key_backup_result", Error: err.Error()})
+				continue
+			}
+			client.Send(NexusMessage{Type: "key_backup_result", Status: "stored"})
+
+		case "key_backup_get":
+			if username == "" {
+				continue
+			}
+			var ct, salt, created string
+			var iters int
+			err := s.DB.QueryRow(
+				`SELECT ciphertext, salt, iterations, created_at FROM key_backups WHERE username = ?`,
+				username,
+			).Scan(&ct, &salt, &iters, &created)
+			if err != nil {
+				client.Send(NexusMessage{Type: "key_backup", Status: "not_found"})
+				continue
+			}
+			client.Send(NexusMessage{
+				Type:   "key_backup",
+				Status: "ok",
+				KeyBackup: &KeyBackupPayload{
+					Ciphertext: ct, Salt: salt, Iterations: iters, CreatedAt: created,
+				},
+			})
+
+		case "key_backup_delete":
+			if username == "" {
+				continue
+			}
+			s.DB.Exec(`DELETE FROM key_backups WHERE username = ?`, username)
+			client.Send(NexusMessage{Type: "key_backup_result", Status: "deleted"})
+
+		// Device link: create / approve / poll a short-lived link code. The
+		// new device shows the code; the existing logged-in device "approves"
+		// to authorize a session for the new one. Reuses the qr_login_* DB
+		// table — qr_login was already the same pattern for QR sign-in.
+		case "link_create":
+			tok, err := s.createQRLogin()
+			if err != nil {
+				client.Send(NexusMessage{Type: "link_result", Error: err.Error()})
+				continue
+			}
+			client.Send(NexusMessage{Type: "link_result", Status: "ok", Token: tok})
+
+		case "link_approve":
+			if username == "" || msg.Token == "" {
+				continue
+			}
+			device := msg.DeviceInfo
+			if device == "" {
+				device = "linked-device"
+			}
+			if err := s.approveQRLogin(msg.Token, username, device); err != nil {
+				client.Send(NexusMessage{Type: "link_result", Error: err.Error()})
+				continue
+			}
+			client.Send(NexusMessage{Type: "link_result", Status: "approved"})
+
+		case "link_check":
+			if msg.Token == "" {
+				continue
+			}
+			u, sess, approved := s.checkQRLogin(msg.Token)
+			if approved {
+				client.Send(NexusMessage{Type: "link_check", Status: "approved", Sender: u, QRToken: sess})
+			} else {
+				client.Send(NexusMessage{Type: "link_check", Status: "pending"})
+			}
 
 		case "presence":
 			if username == "" {
@@ -2577,6 +2919,12 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	turnOK := TurnSecret != "" && TurnURL != ""
+	turnFallback := !turnOK // we still serve openrelay public TURN as fallback
+	smtpOK := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_USER") != ""
+	pushOK := os.Getenv("VAPID_PUBLIC_KEY") != "" && os.Getenv("VAPID_PRIVATE_KEY") != ""
+	fcmOK := s.fcmClient != nil
+	sentryOK := os.Getenv("SENTRY_DSN") != ""
+	litestreamOK := os.Getenv("LITESTREAM_BUCKET") != ""
 
 	s.Mu.RLock()
 	clients := len(s.Clients)
@@ -2590,12 +2938,18 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":            status,
-		"server":            "phaze-nexus",
-		"version":           v,
-		"database_ok":       dbOK,
-		"turn_configured":   turnOK,
-		"connected_clients": clients,
+		"status":                status,
+		"server":                "phaze-nexus",
+		"version":               v,
+		"database_ok":           dbOK,
+		"turn_configured":       turnOK,
+		"turn_public_fallback":  turnFallback, // openrelay.metered.ca in use
+		"smtp_configured":       smtpOK,
+		"webpush_configured":    pushOK,
+		"fcm_configured":        fcmOK,
+		"sentry_configured":     sentryOK,
+		"litestream_configured": litestreamOK,
+		"connected_clients":     clients,
 	})
 }
 
@@ -2684,7 +3038,7 @@ func (s *NexusServer) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 const rootHTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Phaze — Free calls to friends and family</title>
+<title>Phaze — Stay in phase.</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 	:root { --skype-blue: #00AFF0; --skype-dark: #0078D4; }
@@ -2727,7 +3081,7 @@ const rootHTML = `<!doctype html>
 	<section class="hero">
 		<div class="container">
 			<h1>Stay in touch with the people who <strong>matter most</strong></h1>
-			<p>Phaze keeps the world talking. Free video calls, voice calls and instant messaging on any device.</p>
+			<p>Sovereign chat Phaze keeps the world talking. Free video calls, voice calls and instant messaging on any device. calls. End-to-end encrypted. Yours, not theirs.</p>
 			<a href="/download" class="btn">Download Phaze</a>
 		</div>
 	</section>
@@ -2868,6 +3222,32 @@ type AdminReport struct {
 	ResolvedBy string `json:"resolved_by,omitempty"`
 	ResolvedAt string `json:"resolved_at,omitempty"`
 	CreatedAt  string `json:"created_at"`
+}
+
+// adminPendingVerificationsHandler returns unverified accounts + their
+// verification codes so support can rescue users when SMTP is broken.
+// Admin auth required. Returns recent unverified rows (last 24h).
+func (s *NexusServer) adminPendingVerificationsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	rows, err := s.DB.Query(`SELECT username, email, verification_code, created_at
+		FROM users WHERE is_verified = 0 AND created_at > datetime('now','-24 hours')
+		ORDER BY created_at DESC LIMIT 100`)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+	var out []map[string]string
+	for rows.Next() {
+		var u, e, c, t string
+		if err := rows.Scan(&u, &e, &c, &t); err == nil {
+			out = append(out, map[string]string{"username": u, "email": e, "code": c, "created_at": t})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *NexusServer) adminReportsHandler(w http.ResponseWriter, r *http.Request) {
@@ -3441,8 +3821,38 @@ func resolveWorkingDir() {
 	}
 }
 
+// initSentry wires error tracking when SENTRY_DSN is set. No-op when unset,
+// so the server still ships safely before an account exists. Captures all
+// unhandled panics + explicit sentry.CaptureException(...) calls.
+func initSentry(component string) {
+	dsn := os.Getenv("SENTRY_DSN")
+	if dsn == "" {
+		log.Printf("[sentry] SENTRY_DSN not set — error reporting disabled")
+		return
+	}
+	env := os.Getenv("SENTRY_ENVIRONMENT")
+	if env == "" {
+		env = "production"
+	}
+	err := sentry.Init(sentry.ClientOptions{
+		Dsn:              dsn,
+		Environment:      env,
+		Release:          os.Getenv("FLY_MACHINE_VERSION"),
+		TracesSampleRate: 0.05,
+		ServerName:       component,
+	})
+	if err != nil {
+		log.Printf("[sentry] init failed: %v", err)
+		return
+	}
+	log.Printf("[sentry] error reporting enabled (env=%s)", env)
+}
+
 func main() {
 	resolveWorkingDir()
+	initSentry("nexus")
+	defer sentry.Flush(2 * time.Second)
+	defer sentry.Recover()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -3473,6 +3883,8 @@ func main() {
 	http.HandleFunc("/api/v1/version", rateLimit(server.versionHandler))
 	http.HandleFunc("/api/v1/profile/", rateLimit(server.profileHandler))
 	http.HandleFunc("/api/v1/avatars/", rateLimit(server.avatarHandler))
+	http.HandleFunc("/api/v1/upload", rateLimit(server.uploadHandler))
+	http.HandleFunc("/uploads/", server.uploadsServeHandler)
 	http.HandleFunc("/twiml/outbound", rateLimit(server.twimlHandler))
 
 	fs := http.FileServer(http.Dir("public"))
@@ -3546,6 +3958,7 @@ func main() {
 	http.HandleFunc("/version", server.versionHandler)
 	http.HandleFunc("/health", server.healthHandler)
 	http.HandleFunc("/metrics", server.metricsHandler)
+	http.HandleFunc("/api/v1/admin/pending-verifications", server.adminPendingVerificationsHandler)
 	http.HandleFunc("/api/v1/admin/reports", server.adminReportsHandler)
 	http.HandleFunc("/api/v1/admin/reports/", server.adminResolveReportHandler) // /{id}/resolve
 	http.HandleFunc("/api/v1/admin/users/", server.adminBanHandler)             // /{username}/(ban|unban)
@@ -3658,6 +4071,126 @@ func (s *NexusServer) avatarHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, path)
+}
+
+// uploadHandler accepts authenticated multipart uploads for in-chat
+// file/image attachments. Auth is the same session token issued by /auth.
+// Files are stored under public/uploads/ with a random opaque name so the
+// URL itself doesn't leak the original filename. The returned URL is sent
+// (E2EE-encrypted on the client) as the message body — the server never
+// learns which conversation references which upload.
+const maxUploadBytes = 25 * 1024 * 1024 // 25 MB
+
+// uploadDir returns the directory where chat attachments are stored. In
+// production (Fly) set PHAZE_UPLOAD_DIR=/data/uploads so files persist on
+// the mounted volume; otherwise we fall back to public/uploads relative to
+// the working directory for local dev.
+func uploadDir() string {
+	if d := os.Getenv("PHAZE_UPLOAD_DIR"); d != "" {
+		return d
+	}
+	return uploadDir()
+}
+
+func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	authH := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authH, "Bearer ") {
+		http.Error(w, "auth required", http.StatusUnauthorized)
+		return
+	}
+	tok := strings.TrimSpace(strings.TrimPrefix(authH, "Bearer "))
+	uploader := s.sessionUsername(tok)
+	if uploader == "" {
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+	if banned, _ := s.userBanInfo(uploader); banned {
+		http.Error(w, "account suspended", http.StatusForbidden)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
+	if err := r.ParseMultipartForm(maxUploadBytes + 1<<20); err != nil {
+		http.Error(w, "file too large or malformed", http.StatusRequestEntityTooLarge)
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing file field", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	if hdr.Size > maxUploadBytes {
+		http.Error(w, "file exceeds 25MB", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(hdr.Filename))
+	// Allow only a known-safe set of extensions; reject obvious executable types.
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic",
+		".mp4", ".mov", ".webm", ".m4a", ".mp3", ".ogg", ".wav",
+		".pdf", ".txt", ".md", ".log", ".csv", ".json",
+		".zip", ".7z", ".tar", ".gz":
+		// ok
+	default:
+		http.Error(w, "file type not allowed", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	if err := os.MkdirAll(uploadDir(), 0o755); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	rnd, err := randHex(16)
+	if err != nil {
+		http.Error(w, "rng error", http.StatusInternalServerError)
+		return
+	}
+	storedName := rnd + ext
+	outPath := filepath.Join(uploadDir(), storedName)
+	out, err := os.Create(outPath)
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, io.LimitReader(file, maxUploadBytes)); err != nil {
+		os.Remove(outPath)
+		http.Error(w, "write error", http.StatusInternalServerError)
+		return
+	}
+
+	url := "/uploads/" + storedName
+	log.Printf("[upload] %s saved %s (%d bytes)", uploader, storedName, hdr.Size)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"url":  url,
+		"name": filepath.Base(hdr.Filename),
+		"size": hdr.Size,
+		"mime": hdr.Header.Get("Content-Type"),
+	})
+}
+
+func (s *NexusServer) uploadsServeHandler(w http.ResponseWriter, r *http.Request) {
+	// Strip path traversal: only allow the bare filename.
+	name := filepath.Base(strings.TrimPrefix(r.URL.Path, "/uploads/"))
+	if name == "" || name == "." || name == "/" {
+		http.NotFound(w, r)
+		return
+	}
+	full := filepath.Join(uploadDir(), name)
+	if _, err := os.Stat(full); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeFile(w, r, full)
 }
 
 func (s *NexusServer) handleBotMessage(client *Client, msg NexusMessage) {

@@ -52,6 +52,8 @@ research_files/
 
 # Keep the encrypted vault in the tree.
 !native_client/assets.vault
+# fyne-cross needs the public app icon at build time; not a secret.
+!native_client/assets/Icon.png
 
 # Local databases
 *.db

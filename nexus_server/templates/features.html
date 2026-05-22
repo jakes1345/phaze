@@ -7,14 +7,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #00AFF0;
-            --skype-dark: #0078D4;
-            --text-dark: #333;
-            --text-light: #666;
-            --bg-light: #f5f5f5;
+            --skype-blue: #863bff;
+            --skype-dark: #6f1ee0;
+            --text-dark: #0a0a0a;
+            --text-light: #6b6b75;
+            --bg-light: #fafafa;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; color: var(--text-dark); background: #fff; line-height: 1.6; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; color: var(--text-dark); background: #fff; line-height: 1.6; }
         a { color: var(--skype-blue); text-decoration: none; }
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
@@ -22,7 +22,7 @@
         .navbar .container { display: flex; align-items: center; justify-content: space-between; width: 100%; }
         .nav-brand { font-size: 1.4rem; font-weight: 700; color: var(--skype-blue); display: flex; align-items: center; gap: 8px; }
 
-        .hero { background: #00AFF0; color: #fff; padding: 60px 0; text-align: center; }
+        .hero { background: #863bff; color: #fff; padding: 60px 0; text-align: center; }
         .hero h1 { font-size: 2.5rem; font-weight: 300; }
 
         .feature-grid { padding: 80px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 60px; }
@@ -41,7 +41,7 @@
     <nav class="navbar">
         <div class="container">
             <a href="/" class="nav-brand">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#00AFF0"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg>
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#863bff"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg>
                 Phaze
             </a>
         </div>
@@ -49,52 +49,74 @@
 
     <section class="hero">
         <div class="container">
-            <h1>All the features of <strong>Phaze</strong></h1>
+            <h1>What's actually <strong>in</strong> Phaze</h1>
+            <p style="color: var(--text-light); margin-top: 12px; font-size: 1.05rem;">No empty marketing. Just the features we actually ship today.</p>
         </div>
     </section>
 
     <section class="container">
         <div class="feature-grid">
             <div class="feature-item">
-                <span class="feature-icon">📹</span>
+                <span class="feature-icon">🔒</span>
                 <div class="feature-text">
-                    <h3>Video calling</h3>
-                    <p>Free HD video calls with anyone else on Phaze. Sovereign P2P technology ensures crystal clear quality even on restricted networks.</p>
+                    <h3>End-to-end encrypted DMs</h3>
+                    <p>Every direct message is encrypted on your device with NaCl (Curve25519 + XSalsa20-Poly1305). The server stores the ciphertext but cannot read it.</p>
                 </div>
             </div>
             <div class="feature-item">
                 <span class="feature-icon">📞</span>
                 <div class="feature-text">
-                    <h3>Voice calls</h3>
-                    <p>Call anyone on Phaze for free. Or use Phaze Credit to call mobiles and landlines worldwide at low rates.</p>
+                    <h3>Voice &amp; video calls</h3>
+                    <p>WebRTC P2P calls with automatic TURN fallback so connections work even behind symmetric NAT and corporate firewalls.</p>
                 </div>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">💬</span>
+                <span class="feature-icon">🎙️</span>
                 <div class="feature-text">
-                    <h3>Instant messaging</h3>
-                    <p>Every message is encrypted end-to-end. Share plans, send links, and express yourself with our iconic animated emoticons.</p>
+                    <h3>Voice messages</h3>
+                    <p>Tap to record on the web client, send a quick voice note when typing won't cut it. Inline playback right in the chat.</p>
                 </div>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">📁</span>
+                <span class="feature-icon">💾</span>
                 <div class="feature-text">
-                    <h3>File sharing</h3>
-                    <p>Send photos, videos, and files of any size. No cloud middleman—files travel directly between you and your contact.</p>
+                    <h3>Cross-device history</h3>
+                    <p>Sign in on a new browser or device and your encrypted chat history follows you — protected by a Recovery PIN only you know.</p>
                 </div>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">🖥️</span>
+                <span class="feature-icon">✨</span>
                 <div class="feature-text">
-                    <h3>Screen sharing</h3>
-                    <p>Collaborate in real-time. Share your desktop during a call to show photos, give a presentation, or help a friend.</p>
+                    <h3>Modern chat UX</h3>
+                    <p>Reactions, message edits, deletes, @mentions with autocomplete, pinned messages, in-chat search, ⌘K command palette, slash commands.</p>
                 </div>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">👥</span>
+                <span class="feature-icon">📎</span>
                 <div class="feature-text">
-                    <h3>Group chats</h3>
-                    <p>Bring everyone together. Group IM is free and supports up to 300 people in a single conversation.</p>
+                    <h3>File &amp; image sharing</h3>
+                    <p>Send images, audio, video, PDFs, archives — up to 25MB each. URLs are encrypted in the message body so only the recipient can fetch.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🌗</span>
+                <div class="feature-text">
+                    <h3>Dark mode &amp; multi-platform</h3>
+                    <p>First-class light and dark themes. Web, Windows, macOS, Linux, and Android — sign in on every device with one Recovery PIN.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🛠️</span>
+                <div class="feature-text">
+                    <h3>Self-hostable</h3>
+                    <p>Don't trust phazechat.world? Run your own Nexus server with one Docker command. Your community, your servers, your rules.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🚫</span>
+                <div class="feature-text">
+                    <h3>No ads, no tracking</h3>
+                    <p>No third-party analytics, no behavioral profiling, no data sold to anyone. You can delete your account and export every byte we have on you.</p>
                 </div>
             </div>
         </div>

@@ -6,9 +6,9 @@
     <title>Calling Rates — Phaze</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        :root { --skype-blue: #00AFF0; --skype-dark: #0078D4; --text-dark: #333; --text-light: #666; --bg-light: #f5f5f5; }
+        :root { --skype-blue: #863bff; --skype-dark: #6f1ee0; --text-dark: #0a0a0a; --text-light: #6b6b75; --bg-light: #fafafa; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', 'Inter', system-ui, sans-serif; color: var(--text-dark); background: #fff; line-height: 1.6; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; color: var(--text-dark); background: #fff; line-height: 1.6; }
         a { color: var(--skype-blue); text-decoration: none; }
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
@@ -20,7 +20,7 @@
         .nav-links a:hover, .nav-links a.active { color: var(--skype-blue); border-bottom-color: var(--skype-blue); }
         .nav-get-btn { background: var(--skype-blue); color: #fff !important; padding: 8px 24px; border-radius: 4px; font-weight: 600; }
 
-        .rates-hero { background: linear-gradient(135deg, #00AFF0, #0078D4); color: #fff; padding: 60px 0; text-align: center; }
+        .rates-hero { background: #863bff; color: #fff; padding: 60px 0; text-align: center; }
         .rates-hero h1 { font-size: 2.5rem; font-weight: 300; margin-bottom: 12px; }
         .rates-hero h1 strong { font-weight: 700; }
 
@@ -48,55 +48,58 @@
 </head>
 <body>
     <nav class="navbar"><div class="container">
-        <a href="/" class="nav-brand"><svg viewBox="0 0 32 32" fill="none" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#00AFF0"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg> Phaze</a>
+        <a href="/" class="nav-brand"><svg viewBox="0 0 32 32" fill="none" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#863bff"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="sans-serif">P</text></svg> Phaze</a>
         <ul class="nav-links"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/rates" class="active">Rates</a></li><li><a href="/about">About</a></li></ul>
         <div class="nav-right"><a href="/download" class="nav-get-btn">Get Phaze</a></div>
     </div></nav>
 
     <section class="rates-hero">
         <div class="container">
-            <h1><strong>Calling Rates</strong></h1>
-            <p>Connect with landlines and mobiles worldwide for just a few cents.</p>
+            <h1><strong>Phaze is free.</strong></h1>
+            <p>No subscriptions. No credit packs. No surprise fees.</p>
         </div>
     </section>
 
     <section class="rates-section">
         <div class="container">
-            <h2>Popular Destinations</h2>
+            <h2>Here's the actual pricing.</h2>
             <div class="rates-grid">
                 <div class="rate-card">
-                    <h3>United States</h3>
-                    <div class="rate-price">2.3¢</div>
-                    <div class="rate-unit">per minute</div>
-                    <div class="rate-detail">Landlines & Mobiles</div>
+                    <h3>Phaze-to-Phaze</h3>
+                    <div class="rate-price">$0</div>
+                    <div class="rate-unit">forever</div>
+                    <div class="rate-detail">Messages, voice messages, voice + video calls — all free.</div>
                 </div>
                 <div class="rate-card">
-                    <h3>United Kingdom</h3>
-                    <div class="rate-price">2.1¢</div>
-                    <div class="rate-unit">per minute</div>
-                    <div class="rate-detail">Landlines only</div>
+                    <h3>File uploads</h3>
+                    <div class="rate-price">$0</div>
+                    <div class="rate-unit">up to 25MB / file</div>
+                    <div class="rate-detail">Images, audio, video, PDFs, archives.</div>
                 </div>
                 <div class="rate-card">
-                    <h3>Canada</h3>
-                    <div class="rate-price">2.3¢</div>
-                    <div class="rate-unit">per minute</div>
-                    <div class="rate-detail">Landlines & Mobiles</div>
+                    <h3>Self-host</h3>
+                    <div class="rate-price">$0</div>
+                    <div class="rate-unit">your hardware, your rules</div>
+                    <div class="rate-detail">Phaze is open source. Run the Nexus on your own server with one Docker command.</div>
                 </div>
                 <div class="rate-card">
-                    <h3>China</h3>
-                    <div class="rate-price">1.9¢</div>
-                    <div class="rate-unit">per minute</div>
-                    <div class="rate-detail">Landlines & Mobiles</div>
+                    <h3>Calls to landlines</h3>
+                    <div class="rate-price">—</div>
+                    <div class="rate-unit">not supported</div>
+                    <div class="rate-detail">We don't bridge to the phone network. Phaze is for Phaze users.</div>
                 </div>
             </div>
+            <p style="text-align:center; color: var(--text-light); margin-top: 32px; font-size: 0.95rem;">
+                How does this stay free? The phazechat.world server runs on a small Fly.io instance funded by the project. If it grows beyond what donations cover, we'll ask for an optional supporter tier — never paywall the chat.
+            </p>
         </div>
     </section>
 
     <section class="cta-band">
         <div class="container">
-            <h2>Ready to call home?</h2>
-            <a href="/sign-in" class="btn-credit">Add Phaze Credit</a>
-            <p style="margin-top: 16px; color: var(--text-light); font-size: 0.9rem;">No subscription required. Pay only for what you use.</p>
+            <h2>Ready to talk?</h2>
+            <a href="/web/" class="btn-credit">Open Phaze</a>
+            <p style="margin-top: 16px; color: var(--text-light); font-size: 0.9rem;">No payment info required. Pick a username, set a password, you're in.</p>
         </div>
     </section>
 

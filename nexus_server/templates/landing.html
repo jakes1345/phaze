@@ -3,28 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phaze — Free calls to friends and family</title>
-    <meta name="description" content="Phaze keeps the world talking. Free video calls, voice calls, instant messaging and file sharing. Download Phaze for Windows, Mac and Linux.">
+    <title>Phaze — Stay in phase.</title>
+    <meta name="description" content="Phaze — sovereign chat Phaze keeps the world talking. Free video calls, voice calls, instant messaging and file sharing. Download Phaze for Windows, Mac and Linux. calls. End-to-end encrypted. Yours, not theirs. Web, desktop, mobile.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #00AFF0;
-            --skype-dark: #0078D4;
-            --text-dark: #333;
-            --text-light: #666;
-            --bg-light: #f5f5f5;
-            --section-alt: #f8fbfd;
+            --skype-blue: #863bff;
+            --skype-dark: #6f1ee0;
+            --brand: #863bff;
+            --brand-hover: #6f1ee0;
+            --brand-soft: rgba(134,59,255,0.10);
+            --text-dark: #0a0a0a;
+            --text-light: #6b6b75;
+            --bg-light: #fafafa;
+            --section-alt: #f6f6f9;
+            --separator: #ececef;
+            --radius: 10px;
+            --radius-lg: 14px;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             color: var(--text-dark);
-            line-height: 1.6;
+            line-height: 1.55;
             background: #fff;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            letter-spacing: -0.005em;
         }
 
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
@@ -33,9 +41,11 @@
 
         /* Navigation */
         .navbar {
-            background: #fff;
-            border-bottom: 1px solid #e8e8e8;
-            height: 60px;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: saturate(180%) blur(12px);
+            -webkit-backdrop-filter: saturate(180%) blur(12px);
+            border-bottom: 1px solid var(--separator);
+            height: 64px;
             display: flex;
             align-items: center;
             position: sticky;
@@ -74,30 +84,50 @@
             text-decoration: none;
         }
         .nav-get {
-            background: var(--skype-blue);
+            background: var(--brand);
             color: #fff !important;
-            padding: 8px 24px;
-            border-radius: 4px;
+            padding: 9px 18px;
+            border-radius: var(--radius);
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.86rem;
+            border: 1px solid var(--brand);
+            transition: background 120ms ease, border-color 120ms ease;
         }
+        .nav-get:hover { background: var(--brand-hover); border-color: var(--brand-hover); text-decoration: none; }
+        .nav-links a:hover, .nav-links a.active {
+            color: var(--brand);
+            border-bottom-color: var(--brand);
+        }
+        a { color: var(--brand); }
 
         /* Hero */
         .hero {
-            background: linear-gradient(135deg, #00AFF0 0%, #0078D4 100%);
-            color: #fff;
-            padding: 80px 0;
+            background: #fff;
+            color: var(--text-dark);
+            padding: 110px 0 90px;
             text-align: center;
+            border-bottom: 1px solid var(--separator);
+            position: relative;
+            overflow: hidden;
         }
-        .hero h1 { font-size: 3rem; font-weight: 300; margin-bottom: 20px; }
-        .hero h1 strong { font-weight: 700; }
-        .hero p { font-size: 1.25rem; opacity: 0.9; max-width: 650px; margin: 0 auto 40px; }
+        .hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+              radial-gradient(900px 500px at 50% -10%, var(--brand-soft), transparent 65%);
+            pointer-events: none;
+        }
+        .hero > .container { position: relative; }
+        .hero h1 { font-size: 3.4rem; font-weight: 700; margin-bottom: 18px; letter-spacing: -0.03em; line-height: 1.1; }
+        .hero h1 strong { color: var(--brand); font-weight: 700; }
+        .hero p { font-size: 1.2rem; color: var(--text-light); max-width: 640px; margin: 0 auto 36px; line-height: 1.55; }
         .hero-btn {
             display: inline-block;
-            background: #fff;
-            color: var(--skype-blue);
-            padding: 16px 48px;
-            border-radius: 4px;
+            background: var(--brand);
+            color: #fff;
+            padding: 14px 32px;
+            border-radius: var(--radius);
             font-weight: 700;
             font-size: 1.1rem;
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
@@ -153,7 +183,7 @@
         .section-content { flex: 1; }
         .section-visual { flex: 1; }
         .section-label { color: var(--skype-blue); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 2px; margin-bottom: 15px; }
-        .section h2 { font-size: 2.5rem; font-weight: 300; margin-bottom: 20px; line-height: 1.2; }
+        .section h2 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 18px; line-height: 1.15; }
         .section h2 strong { font-weight: 700; }
         .section p { font-size: 1.1rem; color: var(--text-light); margin-bottom: 30px; }
         .section-link { font-weight: 700; color: var(--skype-blue); font-size: 1rem; }
@@ -198,7 +228,7 @@
     <nav class="navbar">
         <div class="container">
             <a href="/" class="nav-brand">
-                <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#00AFF0"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="Segoe UI, sans-serif">P</text></svg>
+                <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#863bff"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="16" font-weight="700" font-family="Segoe UI, sans-serif">P</text></svg>
                 Phaze
             </a>
             <ul class="nav-links">
@@ -215,15 +245,12 @@
 
     <section class="hero">
         <div class="container">
-            <h1>Stay in touch with the people who <strong>matter most</strong></h1>
-            <p>Phaze keeps the world talking. Free video calls, voice calls and instant messaging on any device.</p>
+            <h1><strong>Stay in phase.</strong></h1>
+            <p>End-to-end encrypted chat &amp; calls. No ads, no tracking, no sold data. Open source and self-hostable — your conversations belong to you.</p>
             <p style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:20px;">
                 <a href="/web/" class="hero-btn">Open Phaze Web</a>
                 <a href="/download" class="hero-btn" style="background:#fff;color:var(--skype-blue);border:2px solid var(--skype-blue);">Download apps</a>
             </p>
-            <div class="hero-img-container">
-                <img src="/public/img/hero.png" alt="Phaze Video Calling" class="hero-img">
-            </div>
         </div>
     </section>
 
@@ -248,31 +275,31 @@
 
     <section class="features-strip">
         <div class="container">
-            <h3 class="strip-title">However you want to say it, you can do it free with Phaze</h3>
+            <h3 class="strip-title">What's in the box</h3>
             <div class="strip-grid">
                 <div class="strip-item">
-                    <span class="strip-icon">📹</span>
-                    <span class="strip-label">Video calls</span>
-                </div>
-                <div class="strip-item">
-                    <span class="strip-icon">👥</span>
-                    <span class="strip-label">Group video</span>
+                    <span class="strip-icon">🔒</span>
+                    <span class="strip-label">E2EE DMs</span>
                 </div>
                 <div class="strip-item">
                     <span class="strip-icon">📞</span>
-                    <span class="strip-label">Voice calls</span>
+                    <span class="strip-label">Voice + video</span>
                 </div>
                 <div class="strip-item">
-                    <span class="strip-icon">💬</span>
-                    <span class="strip-label">Messaging</span>
+                    <span class="strip-icon">🎙️</span>
+                    <span class="strip-label">Voice notes</span>
                 </div>
                 <div class="strip-item">
-                    <span class="strip-icon">🖥️</span>
-                    <span class="strip-label">Screen share</span>
-                </div>
-                <div class="strip-item">
-                    <span class="strip-icon">📁</span>
+                    <span class="strip-icon">📎</span>
                     <span class="strip-label">File sharing</span>
+                </div>
+                <div class="strip-item">
+                    <span class="strip-icon">💾</span>
+                    <span class="strip-label">Cross-device</span>
+                </div>
+                <div class="strip-item">
+                    <span class="strip-icon">🛠️</span>
+                    <span class="strip-label">Self-hostable</span>
                 </div>
             </div>
         </div>

@@ -48,6 +48,34 @@ export interface NexusMessage {
   channels?: ChannelInfo[]
   messages?: ChannelMsg[]
   history_from?: number
+
+  // Edit / delete / react support — see NexusMessage in nexus_server/main.go.
+  msg_id?: string
+  reaction?: string
+
+  // Durable DM history response (dm_history).
+  dm_history?: DMMessage[]
+
+  // PIN-encrypted NaCl keypair backup blob (key_backup_put / key_backup).
+  key_backup?: KeyBackup
+}
+
+export interface KeyBackup {
+  ciphertext: string
+  salt: string
+  iterations: number
+  created_at?: string
+}
+
+export interface DMMessage {
+  msg_id: string
+  sender: string
+  recipient: string
+  body: string
+  edited?: boolean
+  deleted?: boolean
+  created_at: string
+  reactions?: Record<string, string[]>
 }
 
 export interface ServerSummary {

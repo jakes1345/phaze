@@ -39,32 +39,20 @@ func parseRichText(text string, slicer *AeroSlicer) []fyne.CanvasObject {
 }
 
 func NewMessageBubble(author, text string, isMe bool, slicer *AeroSlicer) fyne.CanvasObject {
-	var bg fyne.CanvasObject
+	// Flat, rounded bubble matching the web client's modern look.
+	// Outgoing: solid indigo brand; incoming: subtle hover/panel surface.
+	rect := canvas.NewRectangle(color.Transparent)
+	rect.CornerRadius = 14
+	rect.StrokeWidth = 0
 	if isMe {
-		// Phaze Premium Blue Gradient
-		top := color.NRGBA{R: 225, G: 245, B: 255, A: 255}
-		bottom := color.NRGBA{R: 210, G: 235, B: 250, A: 255}
-		grad := canvas.NewLinearGradient(top, bottom, 90) // Vertical
-
-		rect := canvas.NewRectangle(color.Transparent)
-		rect.StrokeColor = color.NRGBA{R: 0, G: 175, B: 240, A: 40}
-		rect.StrokeWidth = 1
-		bg = container.NewStack(grad, rect)
+		rect.FillColor = PhazeBrand
 	} else {
-		// Classic Neutral Gray Gradient
-		top := color.NRGBA{R: 248, G: 248, B: 248, A: 255}
-		bottom := color.NRGBA{R: 235, G: 235, B: 235, A: 255}
-		grad := canvas.NewLinearGradient(top, bottom, 90)
-
-		rect := canvas.NewRectangle(color.Transparent)
-		rect.StrokeColor = color.NRGBA{R: 0, G: 0, B: 0, A: 20}
-		rect.StrokeWidth = 1
-		bg = container.NewStack(grad, rect)
+		rect.FillColor = PhazeBubbleIn
 	}
 
 	nameLabel := widget.NewLabelWithStyle(author, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	bodyContent := container.NewHBox(parseRichText(text, slicer)...)
 
 	content := container.NewVBox(nameLabel, bodyContent)
-	return container.NewStack(bg, container.NewPadded(content))
+	return container.NewStack(rect, container.NewPadded(content))
 }
