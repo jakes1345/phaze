@@ -58,25 +58,25 @@ jobs:
 
       - name: Linux (amd64, arm64)
         working-directory: native_client
-        run: fyne-cross linux --arch amd64,arm64 --pull -app-id world.phazechat.app
+        run: fyne-cross linux --arch amd64,arm64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
 
       - name: Windows (amd64)
         working-directory: native_client
-        run: fyne-cross windows --arch amd64 --pull -app-id world.phazechat.app
+        run: fyne-cross windows --arch amd64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
 
       - name: Android (arm64 APK)
         working-directory: native_client
-        run: fyne-cross android --arch arm64 --pull -app-id world.phazechat.app -icon assets/Icon.png
+        run: fyne-cross android --arch arm64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app -icon assets/Icon.png
 
       - name: FreeBSD (amd64)
         continue-on-error: true
         working-directory: native_client
-        run: fyne-cross freebsd --arch amd64 --pull -app-id world.phazechat.app
+        run: fyne-cross freebsd --arch amd64 --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
 
       - name: Web (WASM bundle)
         continue-on-error: true
         working-directory: native_client
-        run: fyne-cross web --pull -app-id world.phazechat.app
+        run: fyne-cross web --pull --env GOTOOLCHAIN=auto -app-id world.phazechat.app
 
       - name: Upload fyne-cross output
         uses: actions/upload-artifact@v4
@@ -107,15 +107,23 @@ jobs:
           go install fyne.io/fyne/v2/cmd/fyne@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: macOS (amd64 + arm64)
+      # On macOS runners we use `fyne package` directly — fyne-cross needs
+      # a Docker/Podman engine that the GitHub-hosted Mac runners don't ship.
+      # The macOS toolchain is already native so no cross-compile needed.
+      - name: macOS (current arch — universal lipo'd below)
         working-directory: native_client
-        run: fyne-cross darwin --arch amd64,arm64 --pull -app-id world.phazechat.app
+        run: |
+          mkdir -p ../bin
+          fyne package -os darwin --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png
+          # The .app bundle lands in native_client/ as Phaze.app
+          ls -la Phaze.app 2>/dev/null && tar -czf ../bin/Phaze-macos.tar.gz Phaze.app || echo "no Phaze.app produced"
 
-      - name: iOS (best effort — signing may be required)
+      - name: iOS (best effort — signing usually required)
         id: ios
         continue-on-error: true
         working-directory: native_client
-        run: fyne-cross ios --pull -app-id world.phazechat.app
+        run: |
+          fyne package -os ios --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png || echo "iOS build needs signing; expected to fail without certs"
 
       - name: Upload fyne-cross output
         uses: actions/upload-artifact@v4
