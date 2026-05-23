@@ -38,7 +38,11 @@ export default function UserProfile({ username, me, friends, pendingOut = [], se
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     fetch(`/api/v1/profile/${encodeURIComponent(username)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((r) => {
+        if (r.status === 404) return Promise.reject(new Error('User not found'))
+        if (!r.ok) return Promise.reject(new Error(`HTTP ${r.status}`))
+        return r.json()
+      })
       .then((data: Profile) => { if (!cancelled) setProfile(data) })
       .catch((e: Error) => { if (!cancelled) setErr(e.message || 'Could not load profile') })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -86,7 +90,7 @@ export default function UserProfile({ username, me, friends, pendingOut = [], se
         {loading && <p className="muted small">Loading…</p>}
         {err && <p className="user-profile-err">{err}</p>}
 
-        {!isMe && (
+        {!isMe && !err && (
           <div className="user-profile-actions">
             <button type="button" className="user-profile-btn primary" onClick={handleStartDM}>
               📨 Message
