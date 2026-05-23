@@ -571,6 +571,10 @@ func (s *NexusServer) initDB() {
 		`ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`,
+		// Role hierarchy. Values (low → high): "user","helper","moderator","admin","super_admin".
+		// Kept alongside is_admin for backwards-compatibility; is_admin is set to 1
+		// when role is admin or super_admin and used by older code paths.
+		`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`,
 		`ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN ban_reason TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN banned_at DATETIME`,
@@ -596,11 +600,54 @@ func (s *NexusServer) initDB() {
 			if u == "" {
 				continue
 			}
-			if _, err := s.DB.Exec(`UPDATE users SET is_admin = 1 WHERE username = ?`, u); err != nil {
+			if _, err := s.DB.Exec(`UPDATE users SET is_admin = 1, role = 'super_admin' WHERE username = ?`, u); err != nil {
 				log.Printf("[admin] promote %s: %v", u, err)
 			}
 		}
 	}
+	// Backfill role from legacy is_admin flag for users created before the
+	// role column existed: existing admins get the lowest-privilege admin
+	// tier (real admin, not super_admin). Set super_admin only via the
+	// PHAZE_ADMIN_USERS env var above.
+	if _, err := s.DB.Exec(`UPDATE users SET role = 'admin' WHERE is_admin = 1 AND (role = '' OR role = 'user')`); err != nil {
+		log.Printf("[role] backfill: %v", err)
+	}
+}
+
+// ---------- Roles ----------
+
+// Role hierarchy from lowest to highest. roleRank(r) returns the numeric
+// position; higher rank means more power. Use roleAtLeast(actor, target)
+// to gate endpoints.
+var roleRanks = map[string]int{
+	"user":        0,
+	"helper":      1,
+	"moderator":   2,
+	"admin":       3,
+	"super_admin": 4,
+}
+
+func roleRank(role string) int {
+	if r, ok := roleRanks[role]; ok {
+		return r
+	}
+	return 0
+}
+
+func (s *NexusServer) userRole(username string) string {
+	var r string
+	if err := s.DB.QueryRow(`SELECT COALESCE(role, 'user') FROM users WHERE username = ?`, username).Scan(&r); err != nil {
+		return "user"
+	}
+	if r == "" {
+		return "user"
+	}
+	return r
+}
+
+// roleAtLeast returns true when the user's role rank >= required rank.
+func (s *NexusServer) roleAtLeast(username, minRole string) bool {
+	return roleRank(s.userRole(username)) >= roleRank(minRole)
 }
 
 // ---------- Account Management (bcrypt) ----------
@@ -3673,6 +3720,29 @@ func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) s
 	return u
 }
 
+// modFromRequest authenticates a caller and requires at least the given
+// role (one of "helper", "moderator", "admin", "super_admin"). Returns
+// the username + role, or "" on rejection (already responded).
+func (s *NexusServer) modFromRequest(w http.ResponseWriter, r *http.Request, minRole string) (string, string) {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		http.Error(w, "Authorization required", http.StatusUnauthorized)
+		return "", ""
+	}
+	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	u := s.sessionUsername(tok)
+	if u == "" {
+		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+		return "", ""
+	}
+	role := s.userRole(u)
+	if roleRank(role) < roleRank(minRole) {
+		http.Error(w, "insufficient role (need at least "+minRole+")", http.StatusForbidden)
+		return "", ""
+	}
+	return u, role
+}
+
 // AdminReport is one row of the abuse_reports table for the listing endpoint.
 type AdminReport struct {
 	ID         int64  `json:"id"`
@@ -3790,11 +3860,11 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Path: /api/v1/admin/users/{username}/(ban|unban)
+	// Path: /api/v1/admin/users/{username}/(ban|unban|role)
 	tail := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/users/")
 	parts := strings.Split(tail, "/")
 	if len(parts) < 2 {
-		http.Error(w, "expected /api/v1/admin/users/{username}/(ban|unban)", http.StatusBadRequest)
+		http.Error(w, "expected /api/v1/admin/users/{username}/(ban|unban|role)", http.StatusBadRequest)
 		return
 	}
 	target := parts[0]
@@ -3808,14 +3878,15 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var reason string
-	if r.ContentLength > 0 && r.ContentLength < 4096 {
-		var body struct {
-			Reason string `json:"reason"`
-		}
-		_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
-		reason = strings.TrimSpace(body.Reason)
+	// Single body decode shared by ban (reason) and role (role).
+	var reqBody struct {
+		Reason string `json:"reason"`
+		Role   string `json:"role"`
 	}
+	if r.ContentLength > 0 && r.ContentLength < 4096 {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&reqBody)
+	}
+	reason := strings.TrimSpace(reqBody.Reason)
 
 	switch action {
 	case "ban":
@@ -3857,8 +3928,39 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[admin] %s unbanned %s", admin, target)
+	case "role":
+		// Role hierarchy enforcement: actor must outrank target both before
+		// and after. Stops a regular admin from minting fellow admins.
+		if _, ok := roleRanks[reqBody.Role]; !ok {
+			http.Error(w, "unknown role (use user|helper|moderator|admin|super_admin)", http.StatusBadRequest)
+			return
+		}
+		actorRank := roleRank(s.userRole(admin))
+		if actorRank < roleRank("admin") {
+			http.Error(w, "only admins can change roles", http.StatusForbidden)
+			return
+		}
+		targetCurrentRank := roleRank(s.userRole(target))
+		desiredRank := roleRank(reqBody.Role)
+		if targetCurrentRank >= actorRank {
+			http.Error(w, "cannot modify a peer or higher-ranked user", http.StatusForbidden)
+			return
+		}
+		if desiredRank >= actorRank {
+			http.Error(w, "cannot set a role >= your own", http.StatusForbidden)
+			return
+		}
+		isAdminInt := 0
+		if desiredRank >= roleRank("admin") {
+			isAdminInt = 1
+		}
+		if _, err := s.DB.Exec(`UPDATE users SET role = ?, is_admin = ? WHERE username = ?`, reqBody.Role, isAdminInt, target); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[role] %s set %s role to %s", admin, target, reqBody.Role)
 	default:
-		http.Error(w, "expected /ban or /unban", http.StatusBadRequest)
+		http.Error(w, "expected /ban, /unban, or /role", http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -3885,8 +3987,9 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	if !s.userIsAdmin(body.Username) {
-		http.Error(w, "not an admin", http.StatusForbidden)
+	role := s.userRole(body.Username)
+	if roleRank(role) < roleRank("helper") {
+		http.Error(w, "not a staff account", http.StatusForbidden)
 		return
 	}
 	tok, err := s.issueSessionToken(body.Username, "admin-portal")
@@ -3895,16 +3998,17 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tok, "username": body.Username})
+	json.NewEncoder(w).Encode(map[string]string{"token": tok, "username": body.Username, "role": role})
 }
 
 // adminUsersHandler returns a listing of all users with key metadata, used
-// by the admin portal to browse, ban, and promote users.
+// by the admin portal to browse, ban, and promote users. Available to any
+// staff role (helper+).
 func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) {
-	if s.adminFromRequest(w, r) == "" {
+	if u, _ := s.modFromRequest(w, r, "helper"); u == "" {
 		return
 	}
-	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),'')
+	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),'')
 		FROM users ORDER BY created_at DESC LIMIT 1000`)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
@@ -3912,19 +4016,20 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 	type adminUser struct {
-		Username   string `json:"username"`
-		Email      string `json:"email"`
-		Verified   bool   `json:"verified"`
-		Banned     bool   `json:"banned"`
-		IsAdmin    bool   `json:"is_admin"`
-		BanReason  string `json:"ban_reason"`
-		CreatedAt  string `json:"created_at"`
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		Verified  bool   `json:"verified"`
+		Banned    bool   `json:"banned"`
+		IsAdmin   bool   `json:"is_admin"`
+		Role      string `json:"role"`
+		BanReason string `json:"ban_reason"`
+		CreatedAt string `json:"created_at"`
 	}
 	out := []adminUser{}
 	for rows.Next() {
 		var u adminUser
 		var v, b, a int
-		if err := rows.Scan(&u.Username, &u.Email, &v, &b, &a, &u.BanReason, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.Username, &u.Email, &v, &b, &a, &u.Role, &u.BanReason, &u.CreatedAt); err != nil {
 			continue
 		}
 		u.Verified = v == 1
@@ -3935,6 +4040,7 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
+
 
 // adminBroadcastHandler posts a message to the global Phaze Hub
 // #announcements channel as the authenticated admin user.

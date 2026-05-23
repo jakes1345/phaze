@@ -40,6 +40,12 @@ const adminPortalHTML = `<!doctype html>
   .badge.admin { background: rgba(134,59,255,0.18); color: #cab1ff; }
   .badge.verified { background: rgba(34,197,94,0.15); color: #86efac; }
   .badge.unverified { background: rgba(234,179,8,0.15); color: #fde047; }
+  .badge.role-user { background: rgba(255,255,255,0.06); color: #a1a1aa; }
+  .badge.role-helper { background: rgba(59,130,246,0.18); color: #93c5fd; }
+  .badge.role-moderator { background: rgba(168,85,247,0.18); color: #d8b4fe; }
+  .badge.role-admin { background: rgba(134,59,255,0.18); color: #cab1ff; }
+  .badge.role-super_admin { background: rgba(239,68,68,0.18); color: #fca5a5; }
+  td select { background: #1a1a1f; color: #fafafa; border: 1px solid #2a2a30; border-radius: 6px; padding: 4px 8px; font-size: 0.85rem; cursor: pointer; }
   .broadcast textarea { width: 100%; min-height: 90px; padding: 0.6rem; border-radius: 8px; border: 1px solid #2a2a30; background: #0b0b0d; color: #fafafa; font-family: inherit; resize: vertical; }
   .broadcast button { margin-top: 0.5rem; padding: 0.6rem 1.2rem; background: #863bff; color: #fff; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
   .empty { padding: 2rem; text-align: center; color: #71717a; }
@@ -116,6 +122,11 @@ async function unbanUser(u) {
   await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/unban');
   loadUsers();
 }
+async function setRole(u, role) {
+  if (!confirm('Set ' + u + "'s role to " + role + '?')) return;
+  await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/role', { role });
+  loadUsers();
+}
 async function resolveReport(id) {
   if (!confirm('Mark report ' + id + ' resolved?')) return;
   await api('POST', '/api/v1/admin/reports/' + id + '/resolve');
@@ -166,20 +177,29 @@ function renderTab() {
   if (!main) return;
   if (STATE.tab === 'users') {
     if (!STATE.users.length) { main.innerHTML = '<div class="empty">Loading users…</div>'; loadUsers(); return; }
-    main.innerHTML = '<table><thead><tr><th>Username</th><th>Email</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>' +
-      STATE.users.map((u) => '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.email) + '</td><td>' +
-        (u.is_admin ? '<span class="badge admin">admin</span> ' : '') +
+    main.innerHTML = '<table><thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>' +
+      STATE.users.map((u) => '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.email) + '</td>' +
+        '<td><span class="badge role-' + esc(u.role || 'user') + '">' + esc(u.role || 'user') + '</span></td>' +
+        '<td>' +
         (u.banned ? '<span class="badge banned">banned</span>' : (u.verified ? '<span class="badge verified">verified</span>' : '<span class="badge unverified">unverified</span>')) +
         (u.ban_reason ? '<br><small>' + esc(u.ban_reason) + '</small>' : '') +
         '</td><td>' + esc((u.created_at || '').replace('T', ' ').slice(0, 16)) + '</td><td><div class="actions">' +
         (u.banned
           ? '<button data-act="unban" data-u="' + esc(u.username) + '">Unban</button>'
           : '<button class="danger" data-act="ban" data-u="' + esc(u.username) + '">Ban</button>') +
+        '<select data-role-u="' + esc(u.username) + '"><option value="">Set role…</option><option value="user">user</option><option value="helper">helper</option><option value="moderator">moderator</option><option value="admin">admin</option></select>' +
         '</div></td></tr>').join('') + '</tbody></table>';
     main.querySelectorAll('button[data-act]').forEach((b) => b.addEventListener('click', () => {
       const u = b.dataset.u;
-      if (b.dataset.act === 'ban') banUser(u);
-      else if (b.dataset.act === 'unban') unbanUser(u);
+      const act = b.dataset.act;
+      if (act === 'ban') banUser(u);
+      else if (act === 'unban') unbanUser(u);
+    }));
+    main.querySelectorAll('select[data-role-u]').forEach((sel) => sel.addEventListener('change', (e) => {
+      const role = e.target.value;
+      if (!role) return;
+      setRole(sel.dataset.roleU, role);
+      e.target.value = '';
     }));
   } else if (STATE.tab === 'reports') {
     if (!STATE.reports.length && STATE.reports !== null) { main.innerHTML = '<div class="empty">Loading reports…</div>'; loadReports(); return; }
