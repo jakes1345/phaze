@@ -20,12 +20,12 @@ dbs:
   - path: /data/nexus.db
     replicas:
       - type: s3
-        bucket: ${LITESTREAM_BUCKET}
+        bucket: ${BUCKET_NAME}
         path: nexus.db
-        endpoint: ${LITESTREAM_ENDPOINT}
-        region: ${LITESTREAM_REGION}
-        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
-        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        endpoint: ${AWS_ENDPOINT_URL_S3}
+        region: ${AWS_REGION}
+        access-key-id: ${AWS_ACCESS_KEY_ID}
+        secret-access-key: ${AWS_SECRET_ACCESS_KEY}
         # Keep 24h of WAL + a snapshot every 6h. Tunable.
         retention: 168h
         retention-check-interval: 1h
