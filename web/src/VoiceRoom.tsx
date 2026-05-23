@@ -13,6 +13,7 @@ interface Props {
 interface PeerState {
   pc: RTCPeerConnection
   audio: HTMLAudioElement
+  stream: MediaStream | null
 }
 
 // Voice channel mesh: each participant maintains an RTCPeerConnection to
@@ -22,6 +23,10 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
   const [peers, setPeers] = useState<string[]>([])
   const [joined, setJoined] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [cameraOn, setCameraOn] = useState(false)
+  const [hasCamera, setHasCamera] = useState(false)
+  const [peerStreams, setPeerStreams] = useState<Record<string, MediaStream>>({})
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [err, setErr] = useState('')
 
   const localStreamRef = useRef<MediaStream | null>(null)
@@ -58,7 +63,12 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     audio.autoplay = true
     document.body.appendChild(audio)
     pc.ontrack = (e) => {
-      if (e.streams[0]) audio.srcObject = e.streams[0]
+      if (e.streams[0]) {
+        audio.srcObject = e.streams[0]
+        const p2 = peerMapRef.current.get(user)
+        if (p2) p2.stream = e.streams[0]
+        setPeerStreams((s) => ({ ...s, [user]: e.streams[0] }))
+      }
     }
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -73,7 +83,7 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     }
     const local = localStreamRef.current
     if (local) local.getTracks().forEach((t) => pc.addTrack(t, local))
-    p = { pc, audio }
+    p = { pc, audio, stream: null }
     peerMapRef.current.set(user, p)
     return p
   }
@@ -122,6 +132,10 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     peerMapRef.current.clear()
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
     localStreamRef.current = null
+    setLocalStream(null)
+    setPeerStreams({})
+    setHasCamera(false)
+    setCameraOn(false)
     setJoined(false)
     setPeers([])
   }
@@ -131,18 +145,42 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     tearDown()
   }
 
-  const join = async () => {
+  const join = async (withVideo: boolean) => {
     setErr('')
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo })
     } catch {
-      setErr('Microphone permission denied')
-      return
+      if (withVideo) {
+        // Fall back to audio-only if camera denied/unavailable.
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        } catch {
+          setErr('Microphone permission denied')
+          return
+        }
+      } else {
+        setErr('Microphone permission denied')
+        return
+      }
     }
     localStreamRef.current = stream
+    setLocalStream(stream)
+    const vTrack = stream.getVideoTracks()[0]
+    if (vTrack) {
+      setHasCamera(true)
+      setCameraOn(true)
+    }
     setJoined(true)
     send({ type: 'voice_join', channel_id: channelIdRef.current })
+  }
+
+  const toggleCamera = () => {
+    const track = localStreamRef.current?.getVideoTracks()[0]
+    if (!track) return
+    const next = !cameraOn
+    track.enabled = next
+    setCameraOn(next)
   }
 
   const toggleMute = () => {
@@ -187,25 +225,54 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     <div className="voice-room">
       <header className="voice-head">
         <h2><span className="hash">🎙</span>{channelName}</h2>
-        <p className="voice-sub">{joined ? `${peers.length} connected` : 'Click Join to enter voice'}</p>
+        <p className="voice-sub">{joined ? `${peers.length} connected` : 'Click Join to enter voice or video'}</p>
       </header>
       <div className="voice-peers">
-        {(joined ? peers : [me]).map((u) => (
-          <div key={u} className={`voice-peer ${u === me ? 'me' : ''}`}>
-            <div className="voice-avatar">{u[0]?.toUpperCase() ?? '?'}</div>
-            <div className="voice-name">{u}{u === me ? ' (you)' : ''}</div>
-            {u === me && muted && <span className="voice-mute-pip" title="Muted">🔇</span>}
-          </div>
-        ))}
+        {(joined ? peers : [me]).map((u) => {
+          const isMe = u === me
+          const peerStream = !isMe ? peerStreams[u] ?? null : null
+          const peerHasVideo = !!peerStream?.getVideoTracks().some((t) => t.readyState === 'live')
+          const myVideoTrack = isMe ? localStream?.getVideoTracks()[0] ?? null : null
+          const showVideo = (isMe && cameraOn && !!myVideoTrack) || (!isMe && peerHasVideo)
+          return (
+            <div key={u} className={`voice-peer ${isMe ? 'me' : ''} ${showVideo ? 'has-video' : ''}`}>
+              {showVideo ? (
+                <video
+                  className="voice-video"
+                  autoPlay
+                  playsInline
+                  muted={isMe}
+                  ref={(el) => {
+                    if (!el) return
+                    if (isMe && localStream) el.srcObject = localStream
+                    else if (!isMe && peerStream) el.srcObject = peerStream
+                  }}
+                />
+              ) : (
+                <div className="voice-avatar">{u[0]?.toUpperCase() ?? '?'}</div>
+              )}
+              <div className="voice-name">{u}{isMe ? ' (you)' : ''}</div>
+              {isMe && muted && <span className="voice-mute-pip" title="Muted">🔇</span>}
+            </div>
+          )
+        })}
       </div>
       <footer className="voice-controls">
         {!joined ? (
-          <button type="button" className="voice-join-btn" onClick={() => void join()}>🎙 Join voice</button>
+          <>
+            <button type="button" className="voice-join-btn" onClick={() => void join(false)}>🎙 Join voice</button>
+            <button type="button" className="voice-join-btn voice-join-video" onClick={() => void join(true)}>📹 Join with video</button>
+          </>
         ) : (
           <>
             <button type="button" className="voice-mute-btn" onClick={toggleMute}>
               {muted ? '🔇 Unmute' : '🎤 Mute'}
             </button>
+            {hasCamera && (
+              <button type="button" className="voice-mute-btn" onClick={toggleCamera}>
+                {cameraOn ? '📷 Camera off' : '📹 Camera on'}
+              </button>
+            )}
             <button type="button" className="voice-leave-btn" onClick={leave}>📴 Leave</button>
           </>
         )}
