@@ -12,14 +12,19 @@ set -eu
 
 DB_PATH="${DB_PATH:-/data/nexus.db}"
 
-if [ -n "${LITESTREAM_BUCKET:-}" ]; then
-  echo "[entrypoint] litestream: restoring ${DB_PATH} from s3://${LITESTREAM_BUCKET}"
+# BUCKET_NAME is set by `flyctl storage create` (Tigris). LITESTREAM_BUCKET
+# remains supported for self-hosters who bring their own S3.
+BUCKET="${BUCKET_NAME:-${LITESTREAM_BUCKET:-}}"
+
+if [ -n "$BUCKET" ]; then
+  export BUCKET_NAME="$BUCKET"
+  echo "[entrypoint] litestream: restoring ${DB_PATH} from s3://${BUCKET}"
   litestream restore -if-replica-exists -config /app/litestream.yml "${DB_PATH}" || {
     echo "[entrypoint] restore failed or no replica yet; continuing with on-disk DB"
   }
-  echo "[entrypoint] litestream: replicating ${DB_PATH} -> s3://${LITESTREAM_BUCKET}"
+  echo "[entrypoint] litestream: replicating ${DB_PATH} -> s3://${BUCKET}"
   exec litestream replicate -config /app/litestream.yml -exec "/app/nexus-server"
 fi
 
-echo "[entrypoint] litestream disabled (LITESTREAM_BUCKET unset); running without replication"
+echo "[entrypoint] litestream disabled (no BUCKET_NAME/LITESTREAM_BUCKET); running without replication"
 exec /app/nexus-server

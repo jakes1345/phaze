@@ -2978,7 +2978,7 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	pushOK := os.Getenv("VAPID_PUBLIC_KEY") != "" && os.Getenv("VAPID_PRIVATE_KEY") != ""
 	fcmOK := s.fcmClient != nil
 	sentryOK := os.Getenv("SENTRY_DSN") != ""
-	litestreamOK := os.Getenv("LITESTREAM_BUCKET") != ""
+	litestreamOK := os.Getenv("LITESTREAM_BUCKET") != "" || os.Getenv("BUCKET_NAME") != ""
 
 	s.Mu.RLock()
 	clients := len(s.Clients)
