@@ -3865,6 +3865,128 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": target, "action": action})
 }
 
+// adminLoginHandler authenticates an admin via username + password and
+// returns a session token usable as Bearer on every other admin endpoint.
+// Body JSON: { "username": "...", "password": "..." }
+func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if !s.authenticateUser(body.Username, body.Password) {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if !s.userIsAdmin(body.Username) {
+		http.Error(w, "not an admin", http.StatusForbidden)
+		return
+	}
+	tok, err := s.issueSessionToken(body.Username, "admin-portal")
+	if err != nil {
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": tok, "username": body.Username})
+}
+
+// adminUsersHandler returns a listing of all users with key metadata, used
+// by the admin portal to browse, ban, and promote users.
+func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),'')
+		FROM users ORDER BY created_at DESC LIMIT 1000`)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type adminUser struct {
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		Verified   bool   `json:"verified"`
+		Banned     bool   `json:"banned"`
+		IsAdmin    bool   `json:"is_admin"`
+		BanReason  string `json:"ban_reason"`
+		CreatedAt  string `json:"created_at"`
+	}
+	out := []adminUser{}
+	for rows.Next() {
+		var u adminUser
+		var v, b, a int
+		if err := rows.Scan(&u.Username, &u.Email, &v, &b, &a, &u.BanReason, &u.CreatedAt); err != nil {
+			continue
+		}
+		u.Verified = v == 1
+		u.Banned = b == 1
+		u.IsAdmin = a == 1
+		out = append(out, u)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// adminBroadcastHandler posts a message to the global Phaze Hub
+// #announcements channel as the authenticated admin user.
+func (s *NexusServer) adminBroadcastHandler(w http.ResponseWriter, r *http.Request) {
+	u := s.adminFromRequest(w, r)
+	if u == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
+		http.Error(w, "bad json or empty message", http.StatusBadRequest)
+		return
+	}
+	res, err := s.DB.Exec(
+		`INSERT INTO channel_messages (channel_id, sender, body) VALUES (?, ?, ?)`,
+		"global-announcements", u, strings.TrimSpace(body.Message))
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	id, _ := res.LastInsertId()
+	created := time.Now().UTC().Format(time.RFC3339)
+	// Push to every connected client subscribed to the global channel.
+	s.Mu.RLock()
+	for _, c := range s.Clients {
+		c.Send(NexusMessage{
+			Type:      "channel_msg_in",
+			ChannelID: "global-announcements",
+			ServerID:  globalSpaceID,
+			Messages: []ChannelMsg{{
+				ID: id, ChannelID: "global-announcements", Sender: u, Body: strings.TrimSpace(body.Message), CreatedAt: created,
+			}},
+		})
+	}
+	s.Mu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "ok": true})
+}
+
+// adminPortalHandler serves the single-page HTML admin dashboard.
+func (s *NexusServer) adminPortalHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write([]byte(adminPortalHTML))
+}
+
 func (s *NexusServer) adminBannedUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if s.adminFromRequest(w, r) == "" {
 		return
@@ -4428,6 +4550,11 @@ func main() {
 	http.HandleFunc("/version", server.versionHandler)
 	http.HandleFunc("/health", server.healthHandler)
 	http.HandleFunc("/metrics", server.metricsHandler)
+	http.HandleFunc("/admin", server.adminPortalHandler)
+	http.HandleFunc("/admin/", server.adminPortalHandler)
+	http.HandleFunc("/api/v1/admin/login", server.adminLoginHandler)
+	http.HandleFunc("/api/v1/admin/users", server.adminUsersHandler)
+	http.HandleFunc("/api/v1/admin/broadcast", server.adminBroadcastHandler)
 	http.HandleFunc("/api/v1/admin/pending-verifications", server.adminPendingVerificationsHandler)
 	http.HandleFunc("/api/v1/admin/reports", server.adminReportsHandler)
 	http.HandleFunc("/api/v1/admin/reports/", server.adminResolveReportHandler) // /{id}/resolve
