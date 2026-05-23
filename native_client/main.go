@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -78,6 +79,9 @@ const (
 	Version        = "1.0.0"
 	keyringService = "phaze-sovereign"
 )
+
+//go:embed assets/Icon.png
+var embeddedIconPNG []byte
 
 // NexusMessage matches the Nexus server protocol
 type NexusMessage struct {
@@ -205,8 +209,14 @@ func NewPhazeApp() *PhazeApp {
 
 	a := app.NewWithID("world.phazechat.app")
 
-	// Load the Premium Master Icon from the Vault
-	a.SetIcon(ui.GetAssetResource("assets/Icon.png"))
+	// Set the window/taskbar icon. Prefer the binary-embedded PNG so the
+	// icon shows even when assets.vault is absent (raw `go build` runs).
+	// Fall back to the vault asset for backwards compatibility.
+	if len(embeddedIconPNG) > 0 {
+		a.SetIcon(fyne.NewStaticResource("Icon.png", embeddedIconPNG))
+	} else {
+		a.SetIcon(ui.GetAssetResource("assets/Icon.png"))
+	}
 
 	home, _ := os.UserHomeDir()
 	dbDir := filepath.Join(home, ".private_phaze")
@@ -2285,8 +2295,12 @@ func (s *PhazeApp) ShowLoginWindow() {
 	})
 	loginBtn.Importance = widget.HighImportance
 
+	var loginContent fyne.CanvasObject
 	createBtn := widget.NewButton("Create Account", func() {
-		s.showRegistrationWindow(serverEntry.Text)
+		s.showRegistrationWindow(win, serverEntry.Text, func() {
+			win.SetTitle("Phaze™ - Sign In")
+			win.SetContent(loginContent)
+		})
 	})
 
 	forgotBtn := widget.NewButton("Forgot password?", func() {
@@ -2299,7 +2313,7 @@ func (s *PhazeApp) ShowLoginWindow() {
 	})
 	qrBtn.Importance = widget.LowImportance
 
-	win.SetContent(container.NewCenter(
+	loginContent = container.NewCenter(
 		container.NewVBox(
 			container.NewCenter(logo),
 			widget.NewLabelWithStyle("Phaze: Private & Safe", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -2315,7 +2329,8 @@ func (s *PhazeApp) ShowLoginWindow() {
 			layout.NewSpacer(),
 			widget.NewLabelWithStyle("Version "+Version, fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
 		),
-	))
+	)
+	win.SetContent(loginContent)
 	win.Show()
 }
 
@@ -2476,10 +2491,12 @@ func (s *PhazeApp) showForgotPasswordDialog(parent fyne.Window) {
 	d.Show()
 }
 
-func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
-	win := s.App.NewWindow("Create Account")
-	win.Resize(fyne.NewSize(400, 400))
-	win.SetFixedSize(true)
+// showRegistrationWindow swaps the given window's content to a registration
+// form. When the user clicks Back (or completes registration), the prior
+// content is restored. Keeps the whole login/register/verify flow inside a
+// single OS window instead of spawning new ones.
+func (s *PhazeApp) showRegistrationWindow(win fyne.Window, serverAddr string, restore func()) {
+	win.SetTitle("Phaze™ - Create Account")
 
 	usernameEntry := widget.NewEntry()
 	usernameEntry.SetPlaceHolder("Choose a Phaze name")
@@ -2555,10 +2572,13 @@ func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
 			dialog.ShowError(fmt.Errorf("%s", result.Error), win)
 		} else {
 			dialog.ShowInformation("Registration Success", "Account created! You can now sign in.", win)
-			win.Close()
+			restore()
 		}
 	})
 	registerBtn.Importance = widget.HighImportance
+
+	backBtn := widget.NewButton("← Back to Sign In", func() { restore() })
+	backBtn.Importance = widget.LowImportance
 
 	win.SetContent(container.NewCenter(
 		container.NewVBox(
@@ -2570,9 +2590,9 @@ func (s *PhazeApp) showRegistrationWindow(serverAddr string) {
 			container.NewPadded(confirmEntry),
 			statusLabel,
 			container.NewPadded(registerBtn),
+			container.NewCenter(backBtn),
 		),
 	))
-	win.Show()
 }
 
 // ---------- Main ----------
