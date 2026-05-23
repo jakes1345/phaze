@@ -4300,6 +4300,11 @@ func main() {
 	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err == nil {
 		webFS := http.FileServer(http.Dir(webDir))
 		http.HandleFunc("/web/", func(w http.ResponseWriter, r *http.Request) {
+			// Explicit Permissions-Policy so getUserMedia/getDisplayMedia work
+			// even when the SPA is reached via embedding proxies or CDN paths
+			// that strip defaults. Top-level HTTPS already allows these, but
+			// being explicit avoids edge-case "permission denied" silently.
+			w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), autoplay=(self)")
 			rel := strings.TrimPrefix(r.URL.Path, "/web/")
 			candidate := filepath.Join(webDir, filepath.FromSlash(rel))
 			if rel != "" {
