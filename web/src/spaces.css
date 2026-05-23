@@ -722,3 +722,60 @@
   }
   .chat-pane { display: none; }
 }
+
+/* ── Voice room ─────────────────────────────────────────────────── */
+.voice-room {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 1.5rem;
+  gap: 1.25rem;
+}
+.voice-head h2 { margin: 0 0 0.25rem; }
+.voice-sub { margin: 0; opacity: 0.6; font-size: 0.9rem; }
+.voice-peers {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+  align-content: start;
+}
+.voice-peer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgba(134,59,255,0.06);
+  border: 1px solid rgba(134,59,255,0.18);
+  position: relative;
+}
+.voice-peer.me { background: rgba(134,59,255,0.12); }
+.voice-avatar {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: #863bff; color: #fff;
+  font-size: 1.4rem; font-weight: 700;
+}
+.voice-name { font-size: 0.9rem; font-weight: 600; }
+.voice-mute-pip { position: absolute; top: 6px; right: 8px; }
+.voice-controls {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  padding-top: 0.5rem;
+}
+.voice-join-btn, .voice-mute-btn, .voice-leave-btn {
+  padding: 0.6rem 1.4rem;
+  border-radius: 999px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-join-btn { background: #863bff; color: #fff; }
+.voice-join-btn:hover { background: #6f1ee0; }
+.voice-mute-btn { background: #1f2937; color: #fff; }
+.voice-leave-btn { background: #ef4444; color: #fff; }
+.voice-err { color: #ef4444; font-size: 0.9rem; text-align: center; }
