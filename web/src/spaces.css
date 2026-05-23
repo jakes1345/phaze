@@ -779,3 +779,30 @@
 .voice-mute-btn { background: #1f2937; color: #fff; }
 .voice-leave-btn { background: #ef4444; color: #fff; }
 .voice-err { color: #ef4444; font-size: 0.9rem; text-align: center; }
+
+/* Video-enabled voice peer */
+.voice-peer.has-video {
+  padding: 0;
+  background: #000;
+  border-color: rgba(134,59,255,0.4);
+  overflow: hidden;
+}
+.voice-video {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  display: block;
+  border-radius: 12px;
+}
+.voice-peer.has-video .voice-name {
+  position: absolute;
+  bottom: 6px;
+  left: 10px;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+.voice-join-video { background: #1f2937; }
+.voice-join-video:hover { background: #111827; }
