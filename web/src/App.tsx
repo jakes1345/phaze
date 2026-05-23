@@ -1551,7 +1551,25 @@ export default function App() {
       )}
 
       {me && view === 'spaces' ? (
-        <Spaces me={me} send={send} subscribe={subscribe} turn={turn} onUserClick={setProfileUser} />
+        <Spaces
+          me={me}
+          send={send}
+          subscribe={subscribe}
+          turn={turn}
+          onUserClick={setProfileUser}
+          uploadAttachment={async (file) => {
+            if (!sessionToken) return null
+            const fd = new FormData()
+            fd.append('file', file)
+            const resp = await fetch('/api/v1/upload', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${sessionToken}` },
+              body: fd,
+            })
+            if (!resp.ok) return null
+            return await resp.json()
+          }}
+        />
       ) : me && view === 'live' ? (
         <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
