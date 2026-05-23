@@ -1773,6 +1773,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "verify_email":
 			if s.verifyUser(msg.Sender, msg.Body) {
+				s.autoJoinGlobalSpace(msg.Sender)
 				client.Send(NexusMessage{Type: "verify_result", Status: "ok"})
 			} else {
 				client.Send(NexusMessage{Type: "verify_result", Error: "Invalid verification code"})
@@ -1850,6 +1851,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			metrics.authSuccess.Add(1)
 			username = msg.Sender
+			s.autoJoinGlobalSpace(username)
 			sessTok, _ := s.issueSessionToken(username, msg.DeviceInfo)
 			s.Mu.Lock()
 			if existing, ok := s.Clients[username]; ok {
@@ -1916,6 +1918,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			username = u
+			s.autoJoinGlobalSpace(username)
 			s.Mu.Lock()
 			if existing, ok := s.Clients[username]; ok {
 				existing.Send(NexusMessage{Type: "kicked", Body: "Logged in from another location"})
@@ -2810,6 +2813,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" || msg.ServerID == "" {
 				continue
 			}
+			if msg.ServerID == globalSpaceID {
+				client.Send(NexusMessage{Type: "server_leave_result", Error: "the Phaze Hub is for everyone — can't leave"})
+				continue
+			}
 			// Owners must transfer ownership before leaving; for v1, owner
 			// can't leave their own server.
 			role := s.userServerRole(msg.ServerID, username)
@@ -3200,6 +3207,66 @@ func (s *NexusServer) streamEvictUser(username string) {
 	}
 	if endedAsHost {
 		s.streamBroadcastList()
+	}
+}
+
+// ---------- Global hub ----------
+
+// globalSpaceID is the fixed identifier for the Phaze-wide "Hub" space that
+// every user is automatically a member of. Lets new signups land in a chat
+// where the whole community is reachable without needing an invite code.
+const globalSpaceID = "global"
+
+// ensureGlobalSpace creates the hub space + its default channels if they don't
+// already exist. Safe to call on every boot — idempotent INSERT OR IGNORE.
+func (s *NexusServer) ensureGlobalSpace() {
+	if _, err := s.DB.Exec(
+		`INSERT OR IGNORE INTO servers (id, name, description, owner, visibility, invite_code)
+		 VALUES (?, ?, ?, ?, 'public', ?)`,
+		globalSpaceID, "Phaze Hub", "The Phaze-wide chat. Everyone is welcome.", "phaze", "phaze",
+	); err != nil {
+		log.Printf("[hub] ensure space: %v", err)
+		return
+	}
+	defaults := []struct {
+		id, name, topic string
+		pos             int
+	}{
+		{"global-general", "general", "Say hi.", 0},
+		{"global-lobby", "lobby", "Casual chat.", 1},
+		{"global-announcements", "announcements", "Phaze news.", 2},
+	}
+	for _, c := range defaults {
+		if _, err := s.DB.Exec(
+			`INSERT OR IGNORE INTO channels (id, server_id, name, topic, kind, position) VALUES (?, ?, ?, ?, 'text', ?)`,
+			c.id, globalSpaceID, c.name, c.topic, c.pos,
+		); err != nil {
+			log.Printf("[hub] ensure channel %s: %v", c.name, err)
+		}
+	}
+	// Backfill membership for every existing verified user so they don't
+	// have to sign out/in to see the Hub on first deploy.
+	if _, err := s.DB.Exec(
+		`INSERT OR IGNORE INTO server_members (server_id, username, role)
+		 SELECT ?, username, 'member' FROM users WHERE is_verified = 1`,
+		globalSpaceID,
+	); err != nil {
+		log.Printf("[hub] backfill memberships: %v", err)
+	}
+}
+
+// autoJoinGlobalSpace makes the user a member of the global hub. Idempotent.
+// Called on successful register and on every auth so existing users from
+// before the hub existed get auto-enrolled the next time they sign in.
+func (s *NexusServer) autoJoinGlobalSpace(username string) {
+	if username == "" {
+		return
+	}
+	if _, err := s.DB.Exec(
+		`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`,
+		globalSpaceID, username,
+	); err != nil {
+		log.Printf("[hub] auto-join %s: %v", username, err)
 	}
 }
 
@@ -4275,6 +4342,7 @@ func main() {
 	}
 	server.initDB()
 	server.initFCM()
+	server.ensureGlobalSpace()
 
 	http.HandleFunc("/ws", rateLimit(server.handleConnections))
 	http.HandleFunc("/api/v1/version", rateLimit(server.versionHandler))
