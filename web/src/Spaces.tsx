@@ -3,6 +3,13 @@ import type { ChannelInfo, ChannelMsg, NexusMessage, ServerSummary, TurnConfig }
 import VoiceRoom from './VoiceRoom'
 import './spaces.css'
 
+interface FileAttachment {
+  url: string
+  name: string
+  mime: string
+  size: number
+}
+
 interface Props {
   me: string
   /** sends a NexusMessage on the parent socket. */
@@ -13,6 +20,33 @@ interface Props {
   turn?: TurnConfig | null
   /** Opens the parent app's user-profile modal for the given username. */
   onUserClick?: (username: string) => void
+  /** Uploads a file via the parent's session token; returns attachment or null. */
+  uploadAttachment?: (file: File) => Promise<FileAttachment | null>
+}
+
+const FILE_PREFIX = 'phaze-file'
+function decodeFile(text: string): FileAttachment | null {
+  if (!text.startsWith(FILE_PREFIX)) return null
+  try {
+    const a = JSON.parse(text.slice(FILE_PREFIX.length)) as FileAttachment
+    if (a && typeof a.url === 'string' && typeof a.name === 'string') return a
+    return null
+  } catch { return null }
+}
+function isImage(mime: string, name: string): boolean {
+  if (mime?.startsWith('image/')) return true
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
+}
+function isVideo(mime: string, name: string): boolean {
+  if (mime?.startsWith('video/')) return true
+  return /\.(mp4|mov|webm|mkv)$/i.test(name)
+}
+const CHANNEL_EMOJIS = ['😀','😂','😍','😎','🤔','😢','😡','👍','👎','❤️','🔥','🎉','🙏','👀','💯','✨','😅','🥹','😴','🤝','🚀','👋','🤣','😭','🥲','😏','💀','🤡','🫡','🫶']
+
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
 }
 
 interface Toast {
@@ -23,7 +57,7 @@ interface Toast {
 
 let toastSeq = 0
 
-export default function Spaces({ me, send, subscribe, turn = null, onUserClick }: Props) {
+export default function Spaces({ me, send, subscribe, turn = null, onUserClick, uploadAttachment }: Props) {
   const [servers, setServers] = useState<ServerSummary[]>([])
   const [activeServer, setActiveServer] = useState<string | null>(null)
   const [channelsByServer, setChannelsByServer] = useState<Record<string, ChannelInfo[]>>({})
@@ -40,6 +74,8 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick }
   const [newChannelName, setNewChannelName] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
   const chatBottomRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [emojiOpen, setEmojiOpen] = useState(false)
 
   const toast = (body: string, tone: Toast['tone'] = 'info') => {
     const id = ++toastSeq
@@ -178,6 +214,14 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick }
     if (!body) return
     send({ type: 'channel_msg', channel_id: activeChannel, body })
     setDraft('')
+  }
+
+  const submitFile = async (file: File) => {
+    if (!activeChannel || !uploadAttachment) return
+    if (file.size > 25 * 1024 * 1024) { toast('File exceeds 25 MB', 'error'); return }
+    const att = await uploadAttachment(file)
+    if (!att) { toast('Upload failed', 'error'); return }
+    send({ type: 'channel_msg', channel_id: activeChannel, body: FILE_PREFIX + JSON.stringify(att) })
   }
 
   const createServer = () => {
@@ -411,13 +455,73 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick }
                         <span className="ts">{formatTs(m.created_at)}</span>
                       </div>
                     )}
-                    <div className="chat-msg-body">{m.body}</div>
+                    <div className="chat-msg-body">
+                      {(() => {
+                        const f = decodeFile(m.body)
+                        if (!f) return m.body
+                        if (isImage(f.mime, f.name)) {
+                          return (
+                            <a href={f.url} target="_blank" rel="noopener noreferrer">
+                              <img src={f.url} alt={f.name} loading="lazy" className="chat-img" />
+                            </a>
+                          )
+                        }
+                        if (isVideo(f.mime, f.name)) {
+                          return <video controls preload="metadata" src={f.url} className="chat-video" />
+                        }
+                        return (
+                          <a href={f.url} target="_blank" rel="noopener noreferrer" className="chat-file">
+                            📎 {f.name} <span className="chat-file-size">({fmtBytes(f.size)})</span>
+                          </a>
+                        )
+                      })()}
+                    </div>
                   </div>
                 )
               })}
               <div ref={chatBottomRef} />
             </div>
             <footer className="chat-composer">
+              {uploadAttachment && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      if (f) void submitFile(f)
+                      e.target.value = ''
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="attach-btn"
+                    aria-label="Attach file"
+                    title="Attach file"
+                  >📎</button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setEmojiOpen((v) => !v)}
+                className="attach-btn"
+                aria-label="Insert emoji"
+                title="Emoji"
+              >😀</button>
+              {emojiOpen && (
+                <div className="emoji-picker">
+                  {CHANNEL_EMOJIS.map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      className="emoji-cell"
+                      onClick={() => { setDraft((d) => d + e); setEmojiOpen(false) }}
+                    >{e}</button>
+                  ))}
+                </div>
+              )}
               <textarea
                 placeholder={`Message #${activeChannelInfo.name}`}
                 value={draft}
