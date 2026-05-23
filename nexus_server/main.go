@@ -325,6 +325,11 @@ type NexusServer struct {
 	Clients    map[string]*Client
 	Mu         sync.RWMutex
 	fcmClient  *messaging.Client
+
+	// VoiceRooms tracks who is currently in each voice channel.
+	// channel_id -> set of usernames.
+	VoiceRooms   map[string]map[string]struct{}
+	VoiceRoomsMu sync.RWMutex
 }
 
 var upgrader = websocket.Upgrader{
@@ -1705,6 +1710,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				s.Mu.Unlock()
 				if !weWereReplaced {
 					s.broadcastPresence(username, "Offline")
+					s.voiceRoomEvictUser(username)
 					log.Printf("User %s disconnected", username)
 				} else {
 					log.Printf("User %s old session closed (replaced by newer login)", username)
@@ -2950,10 +2956,154 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				Messages:  history,
 			})
 
+		case "voice_join":
+			if username == "" || msg.ChannelID == "" {
+				continue
+			}
+			// Verify the channel exists and the user belongs to its server.
+			var serverID, kind string
+			if err := s.DB.QueryRow(`SELECT server_id, kind FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID, &kind); err != nil {
+				client.Send(NexusMessage{Type: "voice_peers", Error: "channel not found"})
+				continue
+			}
+			if kind != "voice" {
+				client.Send(NexusMessage{Type: "voice_peers", Error: "not a voice channel"})
+				continue
+			}
+			if !s.isServerMember(serverID, username) {
+				client.Send(NexusMessage{Type: "voice_peers", Error: "not a member"})
+				continue
+			}
+			s.voiceRoomJoin(msg.ChannelID, username)
+			s.voiceRoomBroadcastPeers(msg.ChannelID)
+
+		case "voice_leave":
+			if username == "" || msg.ChannelID == "" {
+				continue
+			}
+			s.voiceRoomLeave(msg.ChannelID, username)
+			s.voiceRoomBroadcastPeers(msg.ChannelID)
+
+		case "voice_signal":
+			// Relay WebRTC signaling (offer/answer/ice) between peers in a voice room.
+			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
+				continue
+			}
+			if !s.voiceRoomHas(msg.ChannelID, username) || !s.voiceRoomHas(msg.ChannelID, msg.Recipient) {
+				continue
+			}
+			s.Mu.RLock()
+			peer, ok := s.Clients[msg.Recipient]
+			s.Mu.RUnlock()
+			if ok {
+				peer.Send(NexusMessage{
+					Type:      "voice_signal",
+					Sender:    username,
+					Recipient: msg.Recipient,
+					ChannelID: msg.ChannelID,
+					Body:      msg.Body, // "offer" | "answer" | "ice"
+					SDP:       msg.SDP,
+					Candidate: msg.Candidate,
+				})
+			}
+
 		default:
 			log.Printf("Unknown message type: %s from %s", msg.Type, username)
 		}
 	}
+}
+
+// ---------- Voice rooms ----------
+
+func (s *NexusServer) voiceRoomJoin(channelID, username string) {
+	s.VoiceRoomsMu.Lock()
+	room, ok := s.VoiceRooms[channelID]
+	if !ok {
+		room = make(map[string]struct{})
+		s.VoiceRooms[channelID] = room
+	}
+	room[username] = struct{}{}
+	s.VoiceRoomsMu.Unlock()
+}
+
+func (s *NexusServer) voiceRoomLeave(channelID, username string) {
+	s.VoiceRoomsMu.Lock()
+	if room, ok := s.VoiceRooms[channelID]; ok {
+		delete(room, username)
+		if len(room) == 0 {
+			delete(s.VoiceRooms, channelID)
+		}
+	}
+	s.VoiceRoomsMu.Unlock()
+}
+
+func (s *NexusServer) voiceRoomHas(channelID, username string) bool {
+	s.VoiceRoomsMu.RLock()
+	defer s.VoiceRoomsMu.RUnlock()
+	if room, ok := s.VoiceRooms[channelID]; ok {
+		_, in := room[username]
+		return in
+	}
+	return false
+}
+
+// voiceRoomPeers returns the current member list of a voice channel.
+func (s *NexusServer) voiceRoomPeers(channelID string) []string {
+	s.VoiceRoomsMu.RLock()
+	defer s.VoiceRoomsMu.RUnlock()
+	room := s.VoiceRooms[channelID]
+	peers := make([]string, 0, len(room))
+	for u := range room {
+		peers = append(peers, u)
+	}
+	return peers
+}
+
+// voiceRoomBroadcastPeers pushes the current peer list to every connected
+// member of the voice room. Each member gets the same list (including
+// themselves) so the client can diff and (dis)connect peer connections.
+func (s *NexusServer) voiceRoomBroadcastPeers(channelID string) {
+	peers := s.voiceRoomPeers(channelID)
+	for _, u := range peers {
+		s.Mu.RLock()
+		c, ok := s.Clients[u]
+		s.Mu.RUnlock()
+		if ok {
+			c.Send(NexusMessage{
+				Type:      "voice_peers",
+				Status:    "ok",
+				ChannelID: channelID,
+				Results:   peers,
+			})
+		}
+	}
+}
+
+// voiceRoomEvictUser removes a user from all voice rooms (called on disconnect)
+// and broadcasts updated peer lists.
+func (s *NexusServer) voiceRoomEvictUser(username string) {
+	s.VoiceRoomsMu.Lock()
+	affected := make([]string, 0)
+	for cid, room := range s.VoiceRooms {
+		if _, in := room[username]; in {
+			delete(room, username)
+			affected = append(affected, cid)
+			if len(room) == 0 {
+				delete(s.VoiceRooms, cid)
+			}
+		}
+	}
+	s.VoiceRoomsMu.Unlock()
+	for _, cid := range affected {
+		s.voiceRoomBroadcastPeers(cid)
+	}
+}
+
+// isServerMember reports whether a user is a member of a given server.
+func (s *NexusServer) isServerMember(serverID, username string) bool {
+	var n int
+	err := s.DB.QueryRow(`SELECT 1 FROM server_members WHERE server_id = ? AND username = ?`, serverID, username).Scan(&n)
+	return err == nil
 }
 
 // ---------- Health Check ----------
@@ -3928,8 +4078,9 @@ func main() {
 	db.Exec("PRAGMA busy_timeout=5000")
 
 	server := &NexusServer{
-		DB:      db,
-		Clients: make(map[string]*Client),
+		DB:         db,
+		Clients:    make(map[string]*Client),
+		VoiceRooms: make(map[string]map[string]struct{}),
 	}
 	server.initDB()
 	server.initFCM()

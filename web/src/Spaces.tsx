@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChannelInfo, ChannelMsg, NexusMessage, ServerSummary } from './nexusTypes'
+import type { ChannelInfo, ChannelMsg, NexusMessage, ServerSummary, TurnConfig } from './nexusTypes'
+import VoiceRoom from './VoiceRoom'
 import './spaces.css'
 
 interface Props {
@@ -8,6 +9,8 @@ interface Props {
   send: (m: NexusMessage) => void
   /** lets us subscribe to every inbound message (for server_ / channel_ types). */
   subscribe: (handler: (m: NexusMessage) => void) => () => void
+  /** TURN config from the parent; passed through to voice rooms. */
+  turn?: TurnConfig | null
 }
 
 interface Toast {
@@ -18,7 +21,7 @@ interface Toast {
 
 let toastSeq = 0
 
-export default function Spaces({ me, send, subscribe }: Props) {
+export default function Spaces({ me, send, subscribe, turn = null }: Props) {
   const [servers, setServers] = useState<ServerSummary[]>([])
   const [activeServer, setActiveServer] = useState<string | null>(null)
   const [channelsByServer, setChannelsByServer] = useState<Record<string, ChannelInfo[]>>({})
@@ -363,7 +366,17 @@ export default function Spaces({ me, send, subscribe }: Props) {
       </section>
 
       <section className="chat-pane">
-        {activeChannelInfo ? (
+        {activeChannelInfo && activeChannelInfo.kind === 'voice' ? (
+          <VoiceRoom
+            key={activeChannelInfo.id}
+            me={me}
+            channelId={activeChannelInfo.id}
+            channelName={activeChannelInfo.name}
+            send={send}
+            subscribe={subscribe}
+            turn={turn}
+          />
+        ) : activeChannelInfo ? (
           <>
             <header className="chat-head">
               <h2>
