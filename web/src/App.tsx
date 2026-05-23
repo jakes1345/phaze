@@ -424,6 +424,7 @@ export default function App() {
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const incomingCallSdpRef = useRef<string | null>(null)
+  const ingestDMHistoryRef = useRef<(peer: string, rows: import('./nexusTypes').DMMessage[]) => void>(() => {})
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
 
@@ -432,6 +433,7 @@ export default function App() {
     if (me) {
       const u = loadUnread(me)
       unreadRef.current = u
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUnread(u)
     } else {
       unreadRef.current = {}
@@ -727,7 +729,7 @@ export default function App() {
 
         case 'dm_history':
           if (msg.recipient && msg.dm_history) {
-            ingestDMHistory(msg.recipient, msg.dm_history)
+            ingestDMHistoryRef.current(msg.recipient, msg.dm_history)
           }
           break
 
@@ -974,6 +976,7 @@ export default function App() {
       setLog(merged)
     }
   }, [])
+  useEffect(() => { ingestDMHistoryRef.current = ingestDMHistory }, [ingestDMHistory])
 
   const openChat = (name: string) => {
     setSelected(name)

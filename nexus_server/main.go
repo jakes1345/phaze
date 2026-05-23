@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"bytes"
 	"io"
 	"log"
 	"math/big"
@@ -875,6 +876,58 @@ func (s *NexusServer) verifyUser(username, code string) bool {
 }
 
 func (s *NexusServer) sendEmail(to, subject, body string) error {
+	if apiKey := os.Getenv("BREVO_API_KEY"); apiKey != "" {
+		return sendEmailBrevo(apiKey, to, subject, body)
+	}
+	return sendEmailSMTP(to, subject, body)
+}
+
+// sendEmailBrevo posts to Brevo's transactional API. Preferred over SMTP — auth
+// is a single header, no port 587, and bounces/opens come back via webhooks.
+func sendEmailBrevo(apiKey, to, subject, body string) error {
+	fromEmail := os.Getenv("BREVO_SENDER_EMAIL")
+	if fromEmail == "" {
+		fromEmail = os.Getenv("SMTP_FROM")
+	}
+	if fromEmail == "" {
+		fromEmail = "noreply@phazechat.world"
+	}
+	fromName := os.Getenv("BREVO_SENDER_NAME")
+	if fromName == "" {
+		fromName = "Phaze"
+	}
+
+	payload := map[string]any{
+		"sender":      map[string]string{"name": fromName, "email": fromEmail},
+		"to":          []map[string]string{{"email": to}},
+		"subject":     subject,
+		"htmlContent": body,
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("api-key", apiKey)
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("accept", "application/json")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return fmt.Errorf("brevo api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+}
+
+func sendEmailSMTP(to, subject, body string) error {
 	host := os.Getenv("SMTP_HOST")
 	port := os.Getenv("SMTP_PORT")
 	user := os.Getenv("SMTP_USER")
@@ -2920,7 +2973,8 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	turnOK := TurnSecret != "" && TurnURL != ""
 	turnFallback := !turnOK // we still serve openrelay public TURN as fallback
-	smtpOK := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_USER") != ""
+	brevoOK := os.Getenv("BREVO_API_KEY") != ""
+	smtpOK := brevoOK || (os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_USER") != "")
 	pushOK := os.Getenv("VAPID_PUBLIC_KEY") != "" && os.Getenv("VAPID_PRIVATE_KEY") != ""
 	fcmOK := s.fcmClient != nil
 	sentryOK := os.Getenv("SENTRY_DSN") != ""
@@ -2945,6 +2999,7 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"turn_configured":       turnOK,
 		"turn_public_fallback":  turnFallback, // openrelay.metered.ca in use
 		"smtp_configured":       smtpOK,
+		"brevo_configured":      brevoOK,
 		"webpush_configured":    pushOK,
 		"fcm_configured":        fcmOK,
 		"sentry_configured":     sentryOK,
