@@ -1561,14 +1561,14 @@ export default function App() {
             <h2>Connect</h2>
             {!me ? (
               mode === 'login' ? (
-                <div className="form">
+                <form className="form" onSubmit={(e) => { e.preventDefault(); doAuth(loginUser.trim(), loginPass, loginTotp.trim()) }}>
                   <input placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} autoComplete="username" />
                   <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} autoComplete="current-password" />
                   <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
-                  <button type="button" onClick={() => doAuth(loginUser.trim(), loginPass, loginTotp.trim())}>Sign in</button>
+                  <button type="submit">Sign in</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
-                </div>
+                </form>
               ) : mode === 'link' ? (
                 <div className="form">
                   <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
@@ -1585,13 +1585,13 @@ export default function App() {
                   <button type="button" className="link-btn" onClick={() => { setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
                 </div>
               ) : regStep === 'form' ? (
-                <div className="form">
+                <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
                   <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
                   <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" />
                   <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />
-                  <button type="button" onClick={doRegister}>Create account</button>
+                  <button type="submit">Create account</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
-                </div>
+                </form>
               ) : (
                 <div className="form">
                   <p className="muted small">We sent a 6-digit code to <strong>{regEmail}</strong>.</p>
