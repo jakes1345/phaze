@@ -885,6 +885,18 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(239,68,68,0.4);
 }
+.call-btn-share {
+  padding: 0.6rem 1.4rem;
+  border-radius: 999px;
+  border: none;
+  background: #1f2937;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  margin-right: 0.5rem;
+}
+.call-btn-share:hover { background: #111827; }
 
 .app:has(.spaces-root) .top + main,
 .app:has(.spaces-root) .foot {
@@ -1039,6 +1051,13 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   border-radius: 6px;
   display: block;
   background: rgba(0,0,0,0.05);
+}
+.bubble-video {
+  max-width: 360px;
+  max-height: 360px;
+  border-radius: 6px;
+  display: block;
+  background: rgba(0,0,0,0.08);
 }
 .bubble-file {
   display: flex;
