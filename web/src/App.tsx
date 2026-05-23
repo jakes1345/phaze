@@ -13,6 +13,7 @@ import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup 
 import { playPhazeSound } from './phazeSounds'
 import Spaces from './Spaces'
 import LivePage from './LivePage'
+import UserProfile from './UserProfile'
 import Settings from './Settings'
 import './App.css'
 
@@ -332,6 +333,7 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('')
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
+  const [profileUser, setProfileUser] = useState<string | null>(null)
   const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
   const [mode, setMode] = useState<'login' | 'register' | 'link'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
   const [linkInput, setLinkInput] = useState('')
@@ -1498,6 +1500,18 @@ export default function App() {
         </div>
       )}
 
+      {/* ── User profile modal ───────────────────────────────────── */}
+      {profileUser && me && (
+        <UserProfile
+          username={profileUser}
+          me={me}
+          friends={friends}
+          send={send}
+          onClose={() => setProfileUser(null)}
+          onStartDM={(u) => { setView('dms'); openChat(u) }}
+        />
+      )}
+
       {/* ── Call overlay ─────────────────────────────────────────── */}
       {callState && (
         <div className="call-overlay">
@@ -1537,7 +1551,7 @@ export default function App() {
       )}
 
       {me && view === 'spaces' ? (
-        <Spaces me={me} send={send} subscribe={subscribe} turn={turn} />
+        <Spaces me={me} send={send} subscribe={subscribe} turn={turn} onUserClick={setProfileUser} />
       ) : me && view === 'live' ? (
         <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
@@ -1655,7 +1669,7 @@ export default function App() {
                   {selected ? (
                     <>
                       <span className="status-dot" style={{ background: statusColor(friends[selected] ?? 'Offline') }} />
-                      <span className="chat-peer-name">{selected}</span>
+                      <span className="chat-peer-name clickable" onClick={() => setProfileUser(selected)}>{selected}</span>
                       <span className="chat-peer-status muted small">{friends[selected] ?? 'Offline'}</span>
                       <div className="chat-call-btns">
                         <button
@@ -1759,7 +1773,7 @@ export default function App() {
                         )}
                         {!line.me && !showGap && <span className="bubble-avatar-spacer" />}
                         <div className={`bubble ${line.me ? 'me' : ''} ${line.deleted ? 'deleted' : ''} ${isPinned ? 'pinned' : ''} ${mentionsMe ? 'mentions-me' : ''}`} title={new Date(line.ts).toLocaleString()}>
-                          {showGap && !line.me && <span className="who">{line.from}</span>}
+                          {showGap && !line.me && <span className="who clickable" onClick={() => setProfileUser(line.from)}>{line.from}</span>}
                           {line.deleted ? (
                             <span className="bubble-text deleted-text">message deleted</span>
                           ) : line.file ? (
