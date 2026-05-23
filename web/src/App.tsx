@@ -1535,7 +1535,7 @@ export default function App() {
       )}
 
       {me && view === 'spaces' ? (
-        <Spaces me={me} send={send} subscribe={subscribe} />
+        <Spaces me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
         <main className="grid">
           {/* ── Panel 1: connect / auth ───────────────────────────── */}
