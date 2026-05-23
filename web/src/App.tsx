@@ -132,7 +132,12 @@ function isImage(mime: string, name: string): boolean {
 
 function isAudio(mime: string, name: string): boolean {
   if (mime?.startsWith('audio/')) return true
-  return /\.(mp3|m4a|ogg|wav|webm|opus)$/i.test(name)
+  return /\.(mp3|m4a|ogg|wav|opus)$/i.test(name)
+}
+
+function isVideo(mime: string, name: string): boolean {
+  if (mime?.startsWith('video/')) return true
+  return /\.(mp4|mov|webm|mkv|avi)$/i.test(name)
 }
 
 function fmtDuration(s: number): string {
@@ -424,6 +429,8 @@ export default function App() {
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const incomingCallSdpRef = useRef<string | null>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
+  const cameraTrackRef = useRef<MediaStreamTrack | null>(null)
   const ingestDMHistoryRef = useRef<(peer: string, rows: import('./nexusTypes').DMMessage[]) => void>(() => {})
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -524,14 +531,56 @@ export default function App() {
     return out
   }, [])
 
+  const [sharingScreen, setSharingScreen] = useState(false)
+
   const tearDownCall = useCallback(() => {
     pcRef.current?.close()
     pcRef.current = null
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
     localStreamRef.current = null
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop())
+    screenStreamRef.current = null
+    cameraTrackRef.current = null
     incomingCallSdpRef.current = null
+    setSharingScreen(false)
     setCallState(null)
   }, [])
+
+  const toggleScreenShareRef = useRef<() => void>(() => {})
+  const toggleScreenShare = useCallback(async () => {
+    const pc = pcRef.current
+    if (!pc) return
+    const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+    if (!videoSender) return
+
+    if (screenStreamRef.current) {
+      const cam = cameraTrackRef.current
+      if (cam) await videoSender.replaceTrack(cam)
+      screenStreamRef.current.getTracks().forEach((t) => t.stop())
+      screenStreamRef.current = null
+      if (localVideoRef.current && localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current
+      }
+      setSharingScreen(false)
+      return
+    }
+
+    let display: MediaStream
+    try {
+      display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+    } catch {
+      return
+    }
+    const screenTrack = display.getVideoTracks()[0]
+    if (!screenTrack) return
+    cameraTrackRef.current = videoSender.track ?? null
+    await videoSender.replaceTrack(screenTrack)
+    screenStreamRef.current = display
+    if (localVideoRef.current) localVideoRef.current.srcObject = display
+    screenTrack.onended = () => { toggleScreenShareRef.current() }
+    setSharingScreen(true)
+  }, [])
+  useEffect(() => { toggleScreenShareRef.current = () => { void toggleScreenShare() } }, [toggleScreenShare])
 
   const hangUp = useCallback(() => {
     const cs = callStateRef.current
@@ -1471,7 +1520,14 @@ export default function App() {
                   <button className="call-btn-decline" onClick={hangUp}>Decline</button>
                 </>
               ) : (
-                <button className="call-btn-end" onClick={hangUp}>End call</button>
+                <>
+                  {callState.type === 'video' && callState.status === 'active' && (
+                    <button className="call-btn-share" onClick={() => void toggleScreenShare()} title={sharingScreen ? 'Stop sharing' : 'Share screen'}>
+                      {sharingScreen ? '🛑 Stop sharing' : '🖥 Share screen'}
+                    </button>
+                  )}
+                  <button className="call-btn-end" onClick={hangUp}>End call</button>
+                </>
               )}
             </div>
           </div>
@@ -1707,6 +1763,8 @@ export default function App() {
                               <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
                                 <img src={line.file.url} alt={line.file.name} className="bubble-image" loading="lazy" />
                               </a>
+                            ) : isVideo(line.file.mime, line.file.name) ? (
+                              <video controls preload="metadata" src={line.file.url} className="bubble-video" />
                             ) : isAudio(line.file.mime, line.file.name) ? (
                               <div className="bubble-audio">
                                 <span className="bubble-audio-icon">🎙️</span>
