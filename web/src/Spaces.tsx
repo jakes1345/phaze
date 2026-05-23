@@ -11,6 +11,8 @@ interface Props {
   subscribe: (handler: (m: NexusMessage) => void) => () => void
   /** TURN config from the parent; passed through to voice rooms. */
   turn?: TurnConfig | null
+  /** Opens the parent app's user-profile modal for the given username. */
+  onUserClick?: (username: string) => void
 }
 
 interface Toast {
@@ -21,7 +23,7 @@ interface Toast {
 
 let toastSeq = 0
 
-export default function Spaces({ me, send, subscribe, turn = null }: Props) {
+export default function Spaces({ me, send, subscribe, turn = null, onUserClick }: Props) {
   const [servers, setServers] = useState<ServerSummary[]>([])
   const [activeServer, setActiveServer] = useState<string | null>(null)
   const [channelsByServer, setChannelsByServer] = useState<Record<string, ChannelInfo[]>>({})
@@ -396,8 +398,16 @@ export default function Spaces({ me, send, subscribe, turn = null }: Props) {
                   >
                     {groupHead && (
                       <div className="chat-msg-meta">
-                        <span className="avatar" data-initial={initials(m.sender)} />
-                        <span className="sender">{m.sender}</span>
+                        <span
+                          className={`avatar ${onUserClick ? 'clickable' : ''}`}
+                          data-initial={initials(m.sender)}
+                          onClick={() => onUserClick?.(m.sender)}
+                          role={onUserClick ? 'button' : undefined}
+                        />
+                        <span
+                          className={`sender ${onUserClick ? 'clickable' : ''}`}
+                          onClick={() => onUserClick?.(m.sender)}
+                        >{m.sender}</span>
                         <span className="ts">{formatTs(m.created_at)}</span>
                       </div>
                     )}
