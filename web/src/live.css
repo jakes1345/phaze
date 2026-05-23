@@ -1,0 +1,120 @@
+.live-page {
+  padding: 1.5rem 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.live-head h1 { margin: 0; font-size: 1.75rem; }
+.live-head p { margin: 0.25rem 0 0; }
+.live-section { margin: 1.25rem 0 0.5rem; font-size: 1.1rem; }
+
+/* Go-live composer */
+.live-golive {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgba(134,59,255,0.06);
+  border: 1px solid rgba(134,59,255,0.2);
+}
+.live-golive input {
+  flex: 1;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: #fff;
+  font-size: 0.95rem;
+}
+.app.theme-dark .live-golive input { background: #1a1a1f; color: #fafafa; border-color: rgba(255,255,255,0.1); }
+.live-golive-btn {
+  padding: 0.55rem 1.25rem;
+  border-radius: 8px;
+  border: none;
+  background: #863bff;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.live-golive-btn:hover { background: #6f1ee0; }
+
+/* Grid of live cards */
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.live-card {
+  text-align: left;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.1s ease;
+}
+.live-card:hover { transform: translateY(-2px); border-color: rgba(134,59,255,0.4); }
+.app.theme-dark .live-card { background: #1a1a1f; border-color: rgba(255,255,255,0.08); }
+.live-card-thumb {
+  background: #111;
+  color: #ef4444;
+  height: 130px;
+  display: grid;
+  place-items: center;
+  font-size: 2.5rem;
+}
+.live-card-title { padding: 0.6rem 0.8rem 0.1rem; font-weight: 700; }
+.live-card-host { padding: 0 0.8rem 0.6rem; opacity: 0.65; font-size: 0.85rem; }
+
+/* Broadcaster / viewer stage */
+.live-stage {
+  position: relative;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+.live-video-local, .live-video-remote {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.live-on-air {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  background: rgba(239,68,68,0.9);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.8rem;
+  border-radius: 999px;
+}
+.live-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 600;
+}
+.live-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.live-host { font-weight: 700; }
+.live-stop-btn {
+  padding: 0.5rem 1.2rem;
+  border-radius: 999px;
+  border: none;
+  background: #ef4444;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.live-err { color: #ef4444; font-size: 0.9rem; }

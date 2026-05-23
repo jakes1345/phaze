@@ -330,6 +330,9 @@ type NexusServer struct {
 	// channel_id -> set of usernames.
 	VoiceRooms   map[string]map[string]struct{}
 	VoiceRoomsMu sync.RWMutex
+	// Streams maps broadcaster username -> active livestream metadata.
+	// Guarded by VoiceRoomsMu (shared mutex — both are room-style state).
+	Streams map[string]*liveStream
 }
 
 var upgrader = websocket.Upgrader{
@@ -1711,6 +1714,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				if !weWereReplaced {
 					s.broadcastPresence(username, "Offline")
 					s.voiceRoomEvictUser(username)
+					s.streamEvictUser(username)
 					log.Printf("User %s disconnected", username)
 				} else {
 					log.Printf("User %s old session closed (replaced by newer login)", username)
@@ -3007,9 +3011,195 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				})
 			}
 
+		case "stream_start":
+			if username == "" {
+				continue
+			}
+			title := strings.TrimSpace(msg.Body)
+			if title == "" {
+				title = username + "'s stream"
+			}
+			s.streamStart(username, title)
+			s.streamBroadcastList()
+
+		case "stream_stop":
+			if username == "" {
+				continue
+			}
+			s.streamStop(username)
+			s.streamBroadcastList()
+
+		case "stream_list":
+			client.Send(NexusMessage{
+				Type:    "stream_list_result",
+				Status:  "ok",
+				Results: s.streamList(),
+			})
+
+		case "stream_join":
+			// Viewer wants to watch broadcaster Recipient. Server adds them as a
+			// viewer and notifies the broadcaster to initiate an offer.
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			if !s.streamHas(msg.Recipient) {
+				client.Send(NexusMessage{Type: "stream_join_result", Error: "not live"})
+				continue
+			}
+			s.streamAddViewer(msg.Recipient, username)
+			s.Mu.RLock()
+			host, ok := s.Clients[msg.Recipient]
+			s.Mu.RUnlock()
+			if ok {
+				host.Send(NexusMessage{Type: "stream_viewer_join", Sender: username, Recipient: msg.Recipient})
+			}
+			client.Send(NexusMessage{Type: "stream_join_result", Status: "ok", Recipient: msg.Recipient})
+
+		case "stream_leave":
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			s.streamRemoveViewer(msg.Recipient, username)
+			s.Mu.RLock()
+			host, ok := s.Clients[msg.Recipient]
+			s.Mu.RUnlock()
+			if ok {
+				host.Send(NexusMessage{Type: "stream_viewer_leave", Sender: username, Recipient: msg.Recipient})
+			}
+
+		case "stream_signal":
+			// Relay WebRTC signaling between broadcaster and a specific viewer.
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			s.Mu.RLock()
+			peer, ok := s.Clients[msg.Recipient]
+			s.Mu.RUnlock()
+			if ok {
+				peer.Send(NexusMessage{
+					Type:      "stream_signal",
+					Sender:    username,
+					Recipient: msg.Recipient,
+					Body:      msg.Body, // "offer" | "answer" | "ice"
+					SDP:       msg.SDP,
+					Candidate: msg.Candidate,
+				})
+			}
+
 		default:
 			log.Printf("Unknown message type: %s from %s", msg.Type, username)
 		}
+	}
+}
+
+// ---------- Livestreams ----------
+
+type liveStream struct {
+	Title   string
+	Viewers map[string]struct{}
+}
+
+func (s *NexusServer) streamStart(host, title string) {
+	s.VoiceRoomsMu.Lock()
+	defer s.VoiceRoomsMu.Unlock()
+	if s.Streams == nil {
+		s.Streams = make(map[string]*liveStream)
+	}
+	s.Streams[host] = &liveStream{Title: title, Viewers: make(map[string]struct{})}
+}
+
+func (s *NexusServer) streamStop(host string) {
+	s.VoiceRoomsMu.Lock()
+	st := s.Streams[host]
+	delete(s.Streams, host)
+	s.VoiceRoomsMu.Unlock()
+	if st == nil {
+		return
+	}
+	// Tell every active viewer the stream ended.
+	for v := range st.Viewers {
+		s.Mu.RLock()
+		c, ok := s.Clients[v]
+		s.Mu.RUnlock()
+		if ok {
+			c.Send(NexusMessage{Type: "stream_ended", Sender: host})
+		}
+	}
+}
+
+func (s *NexusServer) streamHas(host string) bool {
+	s.VoiceRoomsMu.RLock()
+	defer s.VoiceRoomsMu.RUnlock()
+	_, ok := s.Streams[host]
+	return ok
+}
+
+func (s *NexusServer) streamAddViewer(host, viewer string) {
+	s.VoiceRoomsMu.Lock()
+	if st, ok := s.Streams[host]; ok {
+		st.Viewers[viewer] = struct{}{}
+	}
+	s.VoiceRoomsMu.Unlock()
+}
+
+func (s *NexusServer) streamRemoveViewer(host, viewer string) {
+	s.VoiceRoomsMu.Lock()
+	if st, ok := s.Streams[host]; ok {
+		delete(st.Viewers, viewer)
+	}
+	s.VoiceRoomsMu.Unlock()
+}
+
+// streamList returns alternating host|title pairs for the wire (kept as a flat
+// string slice to fit the existing NexusMessage.Results field).
+func (s *NexusServer) streamList() []string {
+	s.VoiceRoomsMu.RLock()
+	defer s.VoiceRoomsMu.RUnlock()
+	out := make([]string, 0, len(s.Streams)*2)
+	for host, st := range s.Streams {
+		out = append(out, host, st.Title)
+	}
+	return out
+}
+
+// streamBroadcastList pushes the live list to every connected client so a
+// "Live now" banner can appear in real time.
+func (s *NexusServer) streamBroadcastList() {
+	list := s.streamList()
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+	for _, c := range s.Clients {
+		c.Send(NexusMessage{Type: "stream_list_result", Status: "ok", Results: list})
+	}
+}
+
+// streamEvictUser called on disconnect: end the user's own stream and remove
+// them as a viewer from anyone else's stream.
+func (s *NexusServer) streamEvictUser(username string) {
+	s.VoiceRoomsMu.Lock()
+	notifyHosts := make([]string, 0)
+	endedAsHost := false
+	if _, isHost := s.Streams[username]; isHost {
+		delete(s.Streams, username)
+		endedAsHost = true
+	}
+	for host, st := range s.Streams {
+		if _, in := st.Viewers[username]; in {
+			delete(st.Viewers, username)
+			notifyHosts = append(notifyHosts, host)
+		}
+	}
+	s.VoiceRoomsMu.Unlock()
+	for _, h := range notifyHosts {
+		s.Mu.RLock()
+		c, ok := s.Clients[h]
+		s.Mu.RUnlock()
+		if ok {
+			c.Send(NexusMessage{Type: "stream_viewer_leave", Sender: username, Recipient: h})
+		}
+	}
+	if endedAsHost {
+		s.streamBroadcastList()
 	}
 }
 
@@ -4081,6 +4271,7 @@ func main() {
 		DB:         db,
 		Clients:    make(map[string]*Client),
 		VoiceRooms: make(map[string]map[string]struct{}),
+		Streams:    make(map[string]*liveStream),
 	}
 	server.initDB()
 	server.initFCM()

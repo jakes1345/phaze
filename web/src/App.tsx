@@ -12,6 +12,7 @@ import { loadPins, savePins } from './keyPins'
 import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup } from './keyBackup'
 import { playPhazeSound } from './phazeSounds'
 import Spaces from './Spaces'
+import LivePage from './LivePage'
 import Settings from './Settings'
 import './App.css'
 
@@ -341,7 +342,7 @@ export default function App() {
   const [regPass, setRegPass] = useState('')
   const [regCode, setRegCode] = useState('')
 
-  const [view, setView] = useState<'dms' | 'spaces'>('dms')
+  const [view, setView] = useState<'dms' | 'spaces' | 'live'>('dms')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'light')
@@ -1369,6 +1370,7 @@ export default function App() {
           <div className="view-switch" role="tablist" aria-label="View">
             <button type="button" role="tab" aria-selected={view === 'dms'} className={view === 'dms' ? 'on' : ''} onClick={() => setView('dms')}>Chats</button>
             <button type="button" role="tab" aria-selected={view === 'spaces'} className={view === 'spaces' ? 'on' : ''} onClick={() => setView('spaces')}>Spaces</button>
+            <button type="button" role="tab" aria-selected={view === 'live'} className={view === 'live' ? 'on' : ''} onClick={() => setView('live')}>🔴 Live</button>
           </div>
         )}
         {me && (
@@ -1536,6 +1538,8 @@ export default function App() {
 
       {me && view === 'spaces' ? (
         <Spaces me={me} send={send} subscribe={subscribe} turn={turn} />
+      ) : me && view === 'live' ? (
+        <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
         <main className="grid">
           {/* ── Panel 1: connect / auth ───────────────────────────── */}
