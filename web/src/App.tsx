@@ -766,7 +766,10 @@ export default function App() {
           break
 
         case 'friend_accepted':
-          if (msg.sender) appendLog('system', `${msg.sender} accepted your friend request`, false)
+          if (msg.sender) {
+            setFriends((f) => ({ ...f, [msg.sender!]: msg.status || 'Online' }))
+            appendLog('system', `${msg.sender} accepted your friend request`, false)
+          }
           break
 
         case 'register_result':
@@ -2191,14 +2194,12 @@ export default function App() {
       )}
 
       <footer className="foot muted small">
-        Beta — session and NaCl keys are stored in localStorage. Use HTTPS in production.
-        {' · '}
         <a
           href={bmcUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="bmc-link"
-        >☕ Buy Phaze a coffee</a>
+        >☕ Support Phaze</a>
       </footer>
     </div>
   )
