@@ -306,7 +306,7 @@ func (k *KaiBot) run() {
 				go k.respond(msg.Sender, msg.Body, false, msg.ConvoID)
 			}
 
-		case "channel_msg":
+		case "channel_msg", "channel_msg_in":
 			if msg.Sender == k.username || msg.Sender == "" {
 				continue
 			}
