@@ -1,0 +1,53 @@
+# Fly config for the Phaze TURN/STUN server.
+# Deploy with:  flyctl launch --copy-config --no-deploy  (first time)
+# then:         flyctl deploy
+
+app = "phaze-turn"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TURN_REALM = "turn.phazechat.world"
+
+# TURN needs raw UDP, not the Fly HTTPS proxy. Each port is exposed
+# directly. Add more relay ports here if you outgrow 49160-49200.
+
+[[services]]
+  protocol = "udp"
+  internal_port = 3478
+  [[services.ports]]
+    port = 3478
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3478
+  [[services.ports]]
+    port = 3478
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 5349
+  [[services.ports]]
+    port = 5349
+
+# Media relay ports. Keep narrow (40 ports here) to limit attack surface.
+# Each port carries ~2 concurrent calls.
+[[services]]
+  protocol = "udp"
+  internal_port = 49160
+  [[services.ports]]
+    port = 49160
+[[services]]
+  protocol = "udp"
+  internal_port = 49161
+  [[services.ports]]
+    port = 49161
+# ... If you need more, the metered.ca fallback covers spillover until
+# you scale this app horizontally.
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
