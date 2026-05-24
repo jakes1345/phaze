@@ -182,6 +182,21 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
         case 'channel_msg_result':
           if (m.error) toast(m.error, 'error')
           break
+        case 'channel_react_in':
+        case 'channel_edit_in':
+        case 'channel_delete_in':
+        case 'channel_pin_in': {
+          if (!m.channel_id || !m.messages?.[0]) break
+          const upd = m.messages[0]
+          setMessagesByChannel((mc) => {
+            const list = mc[m.channel_id!] ?? []
+            return {
+              ...mc,
+              [m.channel_id!]: list.map((x) => x.id === upd.id ? { ...x, ...upd } : x),
+            }
+          })
+          break
+        }
       }
     })
     return unsub
@@ -455,10 +470,12 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                         <span className="ts">{formatTs(m.created_at)}</span>
                       </div>
                     )}
-                    <div className="chat-msg-body">
-                      {(() => {
+                    <div className={`chat-msg-body ${m.pinned ? 'pinned' : ''} ${m.deleted ? 'deleted' : ''}`}>
+                      {m.deleted ? (
+                        <span className="msg-deleted">message deleted</span>
+                      ) : (() => {
                         const f = decodeFile(m.body)
-                        if (!f) return m.body
+                        if (!f) return <>{m.body}{m.edited && <span className="edited-tag"> (edited)</span>}</>
                         if (isImage(f.mime, f.name)) {
                           return (
                             <a href={f.url} target="_blank" rel="noopener noreferrer">
@@ -476,6 +493,50 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                         )
                       })()}
                     </div>
+                    {m.reactions && Object.keys(m.reactions).length > 0 && (
+                      <div className="msg-reactions">
+                        {Object.entries(m.reactions).map(([emoji, users]) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className={`msg-react-chip ${users.includes(me) ? 'mine' : ''}`}
+                            onClick={() => send({ type: 'channel_react', channel_id: activeChannel!, msg_id: String(m.id), reaction: emoji })}
+                            title={users.join(', ')}
+                          >{emoji} {users.length}</button>
+                        ))}
+                      </div>
+                    )}
+                    {!m.deleted && (
+                      <div className="msg-actions">
+                        {['👍','❤️','😂','🔥','😢'].map((e) => (
+                          <button key={e} type="button" className="msg-act"
+                            onClick={() => send({ type: 'channel_react', channel_id: activeChannel!, msg_id: String(m.id), reaction: e })}
+                            title={`React ${e}`}>{e}</button>
+                        ))}
+                        <button type="button" className="msg-act"
+                          onClick={() => send({ type: 'channel_pin', channel_id: activeChannel!, msg_id: String(m.id) })}
+                          title={m.pinned ? 'Unpin' : 'Pin'}>{m.pinned ? '📍' : '📌'}</button>
+                        {m.sender === me && !decodeFile(m.body) && (
+                          <button type="button" className="msg-act"
+                            onClick={() => {
+                              const next = prompt('Edit message', m.body)
+                              if (next && next.trim() && next !== m.body) {
+                                send({ type: 'channel_edit', channel_id: activeChannel!, msg_id: String(m.id), body: next.trim() })
+                              }
+                            }}
+                            title="Edit">✏️</button>
+                        )}
+                        {m.sender === me && (
+                          <button type="button" className="msg-act"
+                            onClick={() => {
+                              if (confirm('Delete this message?')) {
+                                send({ type: 'channel_delete', channel_id: activeChannel!, msg_id: String(m.id) })
+                              }
+                            }}
+                            title="Delete">🗑</button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
