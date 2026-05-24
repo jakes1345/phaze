@@ -14,6 +14,7 @@ import { playPhazeSound } from './phazeSounds'
 import Spaces from './Spaces'
 import LivePage from './LivePage'
 import UserProfile from './UserProfile'
+import SupportBubble from './SupportBubble'
 import Settings from './Settings'
 import './App.css'
 
@@ -1499,6 +1500,9 @@ export default function App() {
           <button type="button" className="backup-nag-dismiss" title="Remind me later" onClick={() => { setShowBackupNag(false); localStorage.setItem(BACKUP_NAG_KEY, String(Date.now())) }}>✕</button>
         </div>
       )}
+
+      {/* ── Support chat bubble (always available) ───────────────── */}
+      <SupportBubble sessionToken={sessionToken} me={me} />
 
       {/* ── User profile modal ───────────────────────────────────── */}
       {profileUser && me && (
