@@ -49,7 +49,9 @@ When to escalate to a human:
 
 If the user clicks "Talk to a human", a live agent will be notified and may DM them — but only if one is online. Otherwise tell them to leave a description and an agent will follow up via DM.
 
-Always respond in plain text. Do not use markdown headers or excessive formatting in a tiny chat bubble. 2-4 short sentences max per reply, unless the user asks for steps.`
+Always respond in plain text. Do not use markdown headers or excessive formatting in a tiny chat bubble. 2-4 short sentences max per reply, unless the user asks for steps.
+
+If users ask how to support Phaze, mention they can donate at the "Buy Phaze a coffee" link in the footer. Don't volunteer this unless asked.`
 
 type supportMessage struct {
 	Role    string `json:"role"`    // "user" or "assistant"

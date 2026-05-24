@@ -535,6 +535,23 @@ func (s *NexusServer) initDB() {
 			PRIMARY KEY (msg_id, emoji, username)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_channel_reactions ON channel_reactions(msg_id)`,
+		`CREATE TABLE IF NOT EXISTS stories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			author TEXT NOT NULL,
+			media_url TEXT NOT NULL,
+			media_kind TEXT NOT NULL,
+			caption TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_stories_author ON stories(author, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS story_views (
+			story_id INTEGER NOT NULL,
+			viewer TEXT NOT NULL,
+			viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (story_id, viewer)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_servers_invite ON servers(invite_code)`,
 		`CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -4903,13 +4920,31 @@ func main() {
 		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		const base = "https://phazechat.world"
-		paths := []string{"/", "/download", "/features", "/rates", "/about", "/support", "/privacy", "/terms", "/legal"}
+		today := time.Now().UTC().Format("2006-01-02")
+		paths := []string{"/", "/download", "/features", "/rates", "/about", "/support", "/privacy", "/terms", "/legal", "/web/"}
 		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>`)
 		fmt.Fprint(w, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
 		for _, p := range paths {
-			fmt.Fprintf(w, `<url><loc>%s%s</loc></url>`, base, p)
+			fmt.Fprintf(w, `<url><loc>%s%s</loc><lastmod>%s</lastmod><changefreq>weekly</changefreq></url>`, base, p, today)
 		}
 		fmt.Fprint(w, `</urlset>`)
+	})
+
+	// Google Search Console verification: serve the value of
+	// PHAZE_GSC_VERIFICATION as a meta-tag verification file. After you
+	// claim phazechat.world in Search Console, copy the meta-tag content
+	// value and set: flyctl secrets set PHAZE_GSC_VERIFICATION=...
+	http.HandleFunc("/google", func(w http.ResponseWriter, r *http.Request) {
+		// Path: /google<HASH>.html — Search Console asks for a file at
+		// that exact URL. Serve any /google* HTML hit with the stored
+		// hash so a single secret covers any verification token.
+		v := os.Getenv("PHAZE_GSC_VERIFICATION")
+		if v == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, "google-site-verification: "+v)
 	})
 
 	http.HandleFunc("/", server.landingHandler)
@@ -4926,6 +4961,7 @@ func main() {
 	http.HandleFunc("/health", server.healthHandler)
 	http.HandleFunc("/metrics", server.metricsHandler)
 	server.initSupportRoutes()
+	server.initStoriesRoutes()
 	http.HandleFunc("/admin", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/admin/", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))

@@ -15,6 +15,7 @@ import Spaces from './Spaces'
 import LivePage from './LivePage'
 import UserProfile from './UserProfile'
 import SupportBubble from './SupportBubble'
+import Stories from './Stories'
 import Settings from './Settings'
 import './App.css'
 
@@ -1577,6 +1578,8 @@ export default function App() {
       ) : me && view === 'live' ? (
         <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
+        <>
+        {me && sessionToken && <Stories me={me} sessionToken={sessionToken} />}
         <main className="grid">
           {/* ── Panel 1: connect / auth ───────────────────────────── */}
           <section className="panel">
@@ -1990,10 +1993,18 @@ export default function App() {
             </>
           )}
         </main>
+        </>
       )}
 
       <footer className="foot muted small">
         Beta — session and NaCl keys are stored in localStorage. Use HTTPS in production.
+        {' · '}
+        <a
+          href={import.meta.env.VITE_BMC_URL || 'https://buymeacoffee.com/'}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bmc-link"
+        >☕ Buy Phaze a coffee</a>
       </footer>
     </div>
   )
