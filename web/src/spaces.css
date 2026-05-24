@@ -868,3 +868,42 @@
   text-decoration: none;
 }
 .chat-file-size { opacity: 0.6; font-size: 0.85em; }
+
+/* Channel message lifecycle (reactions, edit, delete, pin) */
+.chat-msg { position: relative; }
+.chat-msg-body.pinned { border-left: 3px solid #f59e0b; padding-left: 0.5rem; }
+.chat-msg-body.deleted .msg-deleted { opacity: 0.55; font-style: italic; }
+.edited-tag { opacity: 0.55; font-size: 0.8em; margin-left: 0.25rem; }
+.msg-reactions { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-top: 0.25rem; }
+.msg-react-chip {
+  background: rgba(134,59,255,0.08);
+  border: 1px solid rgba(134,59,255,0.18);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.msg-react-chip.mine { background: rgba(134,59,255,0.22); border-color: rgba(134,59,255,0.45); }
+.msg-react-chip:hover { background: rgba(134,59,255,0.15); }
+.msg-actions {
+  display: none;
+  position: absolute;
+  top: -10px;
+  right: 8px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--separator, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  padding: 2px 4px;
+  gap: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+.chat-msg:hover .msg-actions { display: flex; }
+.msg-act {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.msg-act:hover { background: rgba(134,59,255,0.12); }

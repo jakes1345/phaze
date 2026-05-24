@@ -274,11 +274,15 @@ type ChannelInfo struct {
 
 // ChannelMsg is one row of channel chat history (plaintext server-side).
 type ChannelMsg struct {
-	ID        int64  `json:"id"`
-	ChannelID string `json:"channel_id"`
-	Sender    string `json:"sender"`
-	Body      string `json:"body"`
-	CreatedAt string `json:"created_at"`
+	ID        int64               `json:"id"`
+	ChannelID string              `json:"channel_id"`
+	Sender    string              `json:"sender"`
+	Body      string              `json:"body"`
+	CreatedAt string              `json:"created_at"`
+	Edited    bool                `json:"edited,omitempty"`
+	Deleted   bool                `json:"deleted,omitempty"`
+	Pinned    bool                `json:"pinned,omitempty"`
+	Reactions map[string][]string `json:"reactions,omitempty"` // emoji -> users
 }
 
 // KeyBackupPayload is the opaque envelope clients use to back up their
@@ -524,6 +528,13 @@ func (s *NexusServer) initDB() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_channels_server ON channels(server_id, position)`,
 		`CREATE INDEX IF NOT EXISTS idx_channel_messages ON channel_messages(channel_id, id)`,
+		`CREATE TABLE IF NOT EXISTS channel_reactions (
+			msg_id INTEGER NOT NULL,
+			emoji TEXT NOT NULL,
+			username TEXT NOT NULL,
+			PRIMARY KEY (msg_id, emoji, username)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_channel_reactions ON channel_reactions(msg_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_servers_invite ON servers(invite_code)`,
 		`CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -591,6 +602,11 @@ func (s *NexusServer) initDB() {
 		// Kept alongside is_admin for backwards-compatibility; is_admin is set to 1
 		// when role is admin or super_admin and used by older code paths.
 		`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`,
+		// Channel-message lifecycle: edits, deletes, pins. Added late so old
+		// rows have NULL/0 defaults that the read path treats as "unedited".
+		`ALTER TABLE channel_messages ADD COLUMN edited INTEGER DEFAULT 0`,
+		`ALTER TABLE channel_messages ADD COLUMN deleted INTEGER DEFAULT 0`,
+		`ALTER TABLE channel_messages ADD COLUMN pinned INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN ban_reason TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN banned_at DATETIME`,
@@ -1194,13 +1210,15 @@ func (s *NexusServer) channelHistory(channelID string, beforeID int64, limit int
 	var err error
 	if beforeID > 0 {
 		rows, err = s.DB.Query(
-			`SELECT id, channel_id, sender, body, CAST(created_at AS TEXT)
+			`SELECT id, channel_id, sender, body, CAST(created_at AS TEXT),
+			        COALESCE(edited,0), COALESCE(deleted,0), COALESCE(pinned,0)
 			   FROM channel_messages
 			  WHERE channel_id = ? AND id < ?
 			  ORDER BY id DESC LIMIT ?`, channelID, beforeID, limit)
 	} else {
 		rows, err = s.DB.Query(
-			`SELECT id, channel_id, sender, body, CAST(created_at AS TEXT)
+			`SELECT id, channel_id, sender, body, CAST(created_at AS TEXT),
+			        COALESCE(edited,0), COALESCE(deleted,0), COALESCE(pinned,0)
 			   FROM channel_messages
 			  WHERE channel_id = ?
 			  ORDER BY id DESC LIMIT ?`, channelID, limit)
@@ -1210,18 +1228,68 @@ func (s *NexusServer) channelHistory(channelID string, beforeID int64, limit int
 	}
 	defer rows.Close()
 	var out []ChannelMsg
+	ids := []int64{}
 	for rows.Next() {
 		var m ChannelMsg
-		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Sender, &m.Body, &m.CreatedAt); err != nil {
+		var ed, del, pin int
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Sender, &m.Body, &m.CreatedAt, &ed, &del, &pin); err != nil {
 			continue
 		}
+		m.Edited = ed == 1
+		m.Deleted = del == 1
+		m.Pinned = pin == 1
+		if m.Deleted {
+			m.Body = ""
+		}
 		out = append(out, m)
+		ids = append(ids, m.ID)
+	}
+	// Bulk-load reactions for these messages.
+	if len(ids) > 0 {
+		reactions := s.channelReactionsBulk(ids)
+		for i := range out {
+			if r, ok := reactions[out[i].ID]; ok {
+				out[i].Reactions = r
+			}
+		}
 	}
 	// Reverse to chronological.
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
+}
+
+// channelReactionsBulk loads the reaction map for many message ids in one
+// query. Returns msg_id -> emoji -> []users.
+func (s *NexusServer) channelReactionsBulk(ids []int64) map[int64]map[string][]string {
+	out := map[int64]map[string][]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.DB.Query(`SELECT msg_id, emoji, username FROM channel_reactions WHERE msg_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var emoji, user string
+		if err := rows.Scan(&id, &emoji, &user); err != nil {
+			continue
+		}
+		if out[id] == nil {
+			out[id] = map[string][]string{}
+		}
+		out[id][emoji] = append(out[id][emoji], user)
+	}
+	return out
 }
 
 // broadcastChannelMsg fan-outs a new channel message to all currently
@@ -3075,6 +3143,142 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				ServerID:  serverID,
 				ChannelID: msg.ChannelID,
 				Messages:  history,
+			})
+
+		case "channel_react":
+			if username == "" || msg.ChannelID == "" || msg.MsgID == "" || msg.Reaction == "" {
+				continue
+			}
+			// Look up the message's server for permission + fan-out scope.
+			var serverID string
+			if err := s.DB.QueryRow(`SELECT server_id FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID); err != nil {
+				continue
+			}
+			if !s.userIsServerMember(serverID, username) {
+				continue
+			}
+			id64, parseErr := strconv.ParseInt(msg.MsgID, 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			// Toggle: if exists, remove; else insert. Same UX as DMs.
+			var existed int
+			s.DB.QueryRow(`SELECT 1 FROM channel_reactions WHERE msg_id=? AND emoji=? AND username=?`,
+				id64, msg.Reaction, username).Scan(&existed)
+			if existed == 1 {
+				s.DB.Exec(`DELETE FROM channel_reactions WHERE msg_id=? AND emoji=? AND username=?`,
+					id64, msg.Reaction, username)
+			} else {
+				s.DB.Exec(`INSERT OR IGNORE INTO channel_reactions (msg_id, emoji, username) VALUES (?,?,?)`,
+					id64, msg.Reaction, username)
+			}
+			// Re-fetch the full reaction map for that message and fan out.
+			fresh := s.channelReactionsBulk([]int64{id64})[id64]
+			s.broadcastChannelMsg(serverID, NexusMessage{
+				Type:      "channel_react_in",
+				ServerID:  serverID,
+				ChannelID: msg.ChannelID,
+				MsgID:     msg.MsgID,
+				Messages: []ChannelMsg{{
+					ID: id64, ChannelID: msg.ChannelID, Reactions: fresh,
+				}},
+			})
+
+		case "channel_edit":
+			if username == "" || msg.MsgID == "" || msg.Body == "" {
+				continue
+			}
+			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
+			if perr != nil {
+				continue
+			}
+			// Verify ownership.
+			var sender, channelID string
+			if err := s.DB.QueryRow(`SELECT sender, channel_id FROM channel_messages WHERE id=?`, id64).Scan(&sender, &channelID); err != nil {
+				continue
+			}
+			if sender != username {
+				continue
+			}
+			if _, err := s.DB.Exec(`UPDATE channel_messages SET body=?, edited=1 WHERE id=?`, msg.Body, id64); err != nil {
+				continue
+			}
+			var serverID string
+			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
+			s.broadcastChannelMsg(serverID, NexusMessage{
+				Type:      "channel_edit_in",
+				ServerID:  serverID,
+				ChannelID: channelID,
+				MsgID:     msg.MsgID,
+				Body:      msg.Body,
+				Messages: []ChannelMsg{{
+					ID: id64, ChannelID: channelID, Sender: username, Body: msg.Body, Edited: true,
+				}},
+			})
+
+		case "channel_delete":
+			if username == "" || msg.MsgID == "" {
+				continue
+			}
+			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
+			if perr != nil {
+				continue
+			}
+			var sender, channelID string
+			if err := s.DB.QueryRow(`SELECT sender, channel_id FROM channel_messages WHERE id=?`, id64).Scan(&sender, &channelID); err != nil {
+				continue
+			}
+			// Owner or any staff (helper+) can delete.
+			if sender != username && !s.roleAtLeast(username, "helper") {
+				continue
+			}
+			if _, err := s.DB.Exec(`UPDATE channel_messages SET deleted=1, body='' WHERE id=?`, id64); err != nil {
+				continue
+			}
+			var serverID string
+			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
+			s.broadcastChannelMsg(serverID, NexusMessage{
+				Type:      "channel_delete_in",
+				ServerID:  serverID,
+				ChannelID: channelID,
+				MsgID:     msg.MsgID,
+				Messages: []ChannelMsg{{
+					ID: id64, ChannelID: channelID, Sender: sender, Deleted: true,
+				}},
+			})
+
+		case "channel_pin":
+			if username == "" || msg.MsgID == "" {
+				continue
+			}
+			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
+			if perr != nil {
+				continue
+			}
+			var channelID string
+			if err := s.DB.QueryRow(`SELECT channel_id FROM channel_messages WHERE id=?`, id64).Scan(&channelID); err != nil {
+				continue
+			}
+			var serverID string
+			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
+			if !s.userIsServerMember(serverID, username) {
+				continue
+			}
+			// Toggle pin.
+			var cur int
+			s.DB.QueryRow(`SELECT COALESCE(pinned,0) FROM channel_messages WHERE id=?`, id64).Scan(&cur)
+			next := 1 - cur
+			if _, err := s.DB.Exec(`UPDATE channel_messages SET pinned=? WHERE id=?`, next, id64); err != nil {
+				continue
+			}
+			s.broadcastChannelMsg(serverID, NexusMessage{
+				Type:      "channel_pin_in",
+				ServerID:  serverID,
+				ChannelID: channelID,
+				MsgID:     msg.MsgID,
+				Messages: []ChannelMsg{{
+					ID: id64, ChannelID: channelID, Pinned: next == 1,
+				}},
 			})
 
 		case "voice_join":
