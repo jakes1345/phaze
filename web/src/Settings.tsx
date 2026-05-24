@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
-type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger'
+type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications'
 
 interface Session {
   token: string
@@ -50,6 +50,19 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   // Sessions
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionsMsg, setSessionsMsg] = useState('')
+
+  // Phone linking
+  const [phone, setPhone] = useState('')
+  const [phoneCode, setPhoneCode] = useState('')
+  const [phonePending, setPhonePending] = useState(false)
+  const [phoneMsg, setPhoneMsg] = useState('')
+
+  // Push notifications
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushMsg, setPushMsg] = useState('')
+
+  // Privacy extra
+  const [purgeEmailMsg, setPurgeEmailMsg] = useState('')
 
   // Danger
   const [delConfirm, setDelConfirm] = useState('')
@@ -102,6 +115,22 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
           setBlocks((b) => b.filter((x) => x !== msg.recipient))
           setBlockMsg(`Unblocked ${msg.recipient}.`)
         }
+        break
+      case 'phone_link_result':
+        if (msg.status === 'code_sent') {
+          setPhonePending(true)
+          setPhoneMsg('Code sent — enter it below.')
+        } else if (msg.status === 'verified' || msg.status === 'ok') {
+          setPhonePending(false)
+          setPhoneMsg('Phone number linked.')
+          setPhone('')
+          setPhoneCode('')
+        } else {
+          setPhoneMsg(msg.error || 'Error')
+        }
+        break
+      case 'purge_email_result':
+        setPurgeEmailMsg(msg.status === 'ok' ? 'Email removed from account.' : (msg.error || 'Error'))
         break
       case 'invite_result':
         setInviteMsg(msg.status === 'sent' ? 'Invite sent!' : (msg.error || 'Error'))
@@ -176,6 +205,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
     { id: 'profile', label: '👤 Profile' },
     { id: 'security', label: '🔒 Security' },
     { id: 'devices', label: '💾 Backup & Devices' },
+    { id: 'notifications', label: '🔔 Notifications' },
     { id: 'privacy', label: '🛡 Privacy' },
     { id: 'sessions', label: '📱 Sessions' },
     { id: 'danger', label: '⚠ Danger' },
@@ -189,6 +219,10 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [linkCode, setLinkCode] = useState('')
   const [linkPollBusy, setLinkPollBusy] = useState(false)
   const [linkMsg, setLinkMsg] = useState('')
+
+  // QR login (shows a deep link on this device; another device scans/enters it)
+  const [qrToken, setQrToken] = useState('')
+  const [qrMsg, setQrMsg] = useState('')
 
   const handleSetPin = async () => {
     setBackupMsg('')
@@ -223,6 +257,10 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   useEffect(() => {
     if (tab !== 'devices') return
     const unsub = subscribe((m: NexusMessage) => {
+      if (m.type === 'qr_login_result' && m.status === 'pending' && m.qr_token) {
+        setQrToken(m.qr_token)
+        setQrMsg('Show this code to the device you want to sign in, or enter it in the "Sign in with link code" field.')
+      }
       if (m.type === 'link_result' && m.status === 'ok' && m.token) {
         setLinkCode(m.token)
         // Begin polling so we can show "approved" status.
@@ -289,6 +327,31 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
 
               {profileMsg && <p className={`settings-msg ${profileMsg === 'Saved.' ? 'ok' : 'err'}`}>{profileMsg}</p>}
               <button className="settings-btn" onClick={saveProfile}>Save profile</button>
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">Phone number</h3>
+              <p className="settings-empty">Link a phone number for account recovery and two-factor options.</p>
+              {phoneMsg && <p className={`settings-msg ${phoneMsg.includes('linked') || phoneMsg.includes('sent') ? 'ok' : 'err'}`}>{phoneMsg}</p>}
+              {!phonePending ? (
+                <div className="settings-row">
+                  <input className="settings-input" type="tel" placeholder="+1 555 000 0000" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  <button className="settings-btn" style={{ whiteSpace: 'nowrap' }} onClick={() => {
+                    setPhoneMsg('')
+                    if (!phone.trim()) { setPhoneMsg('Enter a phone number'); return }
+                    send({ type: 'request_phone_link', sender: me, phone: phone.trim() })
+                  }}>Link</button>
+                </div>
+              ) : (
+                <div className="settings-row">
+                  <input className="settings-input" type="text" placeholder="Enter SMS code" value={phoneCode} onChange={(e) => setPhoneCode(e.target.value)} inputMode="numeric" maxLength={8} />
+                  <button className="settings-btn" style={{ whiteSpace: 'nowrap' }} onClick={() => {
+                    setPhoneMsg('')
+                    if (!phoneCode.trim()) { setPhoneMsg('Enter the code'); return }
+                    send({ type: 'verify_phone_link', sender: me, phone: phone.trim(), body: phoneCode.trim() })
+                  }}>Verify</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -360,6 +423,75 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
               ) : (
                 <button className="settings-btn" onClick={generateLinkCode}>Generate link code</button>
               )}
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">QR login code</h3>
+              <p className="settings-empty">
+                Generate a one-time QR login code. Enter the token on the new device's "Sign in with link code" screen, or use a QR scanner pointing to the <code>phaze://login?token=…</code> URL.
+              </p>
+              {qrMsg && <p className="settings-msg ok">{qrMsg}</p>}
+              {qrToken ? (
+                <>
+                  <code className="settings-totp-code-block" style={{ fontSize: '1.1rem', letterSpacing: '0.05em', textAlign: 'center', wordBreak: 'break-all' }}>{qrToken}</code>
+                  <p className="settings-empty" style={{ fontSize: '0.75rem' }}>Deep link: <code>phaze://login?token={qrToken}</code></p>
+                  <button className="settings-btn-secondary" onClick={() => { setQrToken(''); setQrMsg('') }}>Clear</button>
+                </>
+              ) : (
+                <button className="settings-btn" onClick={() => {
+                  setQrMsg('')
+                  setQrToken('')
+                  send({ type: 'qr_login_create', sender: me })
+                }}>Show QR login code</button>
+              )}
+            </div>
+          )}
+
+          {/* ── Notifications ────────────────────────────────── */}
+          {tab === 'notifications' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Push notifications</h3>
+              <p className="settings-empty">
+                Get notified of new messages even when Phaze isn't open.
+                Requires your browser to grant notification permission.
+              </p>
+              {pushMsg && <p className={`settings-msg ${pushMsg.startsWith('✓') ? 'ok' : 'err'}`}>{pushMsg}</p>}
+              <div className="settings-row">
+                <label className="settings-label" style={{ marginBottom: 0 }}>Enable push notifications</label>
+                <button
+                  className={`settings-btn${pushEnabled ? '-secondary' : ''}`}
+                  onClick={async () => {
+                    setPushMsg('')
+                    if (pushEnabled) {
+                      setPushEnabled(false)
+                      setPushMsg('Push notifications disabled.')
+                      return
+                    }
+                    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                      setPushMsg('Push notifications are not supported in this browser.')
+                      return
+                    }
+                    try {
+                      const perm = await Notification.requestPermission()
+                      if (perm !== 'granted') { setPushMsg('Notification permission denied.'); return }
+                      const reg = await navigator.serviceWorker.register('/web/sw.js', { scope: '/web/' })
+                      const resp = await fetch('/api/v1/vapid-key')
+                      if (!resp.ok) { setPushMsg('Server does not support push yet.'); return }
+                      const { publicKey } = await resp.json() as { publicKey: string }
+                      if (!publicKey) { setPushMsg('Server does not support push yet.'); return }
+                      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: publicKey })
+                      const json = sub.toJSON()
+                      send({ type: 'subscribe_push', sender: me, body: JSON.stringify({ endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth: json.keys?.auth }) })
+                      setPushEnabled(true)
+                      setPushMsg('✓ Push notifications enabled.')
+                    } catch (e) {
+                      setPushMsg((e as Error).message || 'Failed to enable push notifications')
+                    }
+                  }}
+                >
+                  {pushEnabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -390,6 +522,22 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
                   ))}
                 </ul>
               )}
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">Email privacy</h3>
+              <p className="settings-label" style={{ marginBottom: '0.5rem' }}>
+                Remove your email address from the account. <strong>Warning:</strong> without an email you cannot reset your password if you forget it.
+              </p>
+              {purgeEmailMsg && <p className={`settings-msg ${purgeEmailMsg.includes('removed') ? 'ok' : 'err'}`}>{purgeEmailMsg}</p>}
+              <button
+                className="settings-btn danger"
+                onClick={() => {
+                  if (!confirm('Remove your email? You will lose the ability to reset your password.')) return
+                  setPurgeEmailMsg('')
+                  send({ type: 'purge_email', sender: me })
+                }}
+              >Remove email from account</button>
             </div>
           )}
 

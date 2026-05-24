@@ -10,6 +10,8 @@ import (
 	"image"
 	"io"
 	"log"
+	"mime/multipart"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -118,6 +120,14 @@ type NexusMessage struct {
 	// Per-member ciphertext for group messages (convo_msg). Server forwards
 	// envelopes[recipient] as Body to each member without ever seeing plaintext.
 	Envelopes map[string]string `json:"envelopes,omitempty"`
+
+	// Extended message fields (edit/delete/react/voice/file)
+	MsgID     string              `json:"msg_id,omitempty"`
+	Reaction  string              `json:"reaction,omitempty"`
+	Kind      string              `json:"kind,omitempty"`
+	FileURL   string              `json:"file_url,omitempty"`
+	FileName  string              `json:"file_name,omitempty"`
+	Reactions map[string][]string `json:"reactions,omitempty"`
 }
 
 type authResult struct {
@@ -175,6 +185,7 @@ type PhazeApp struct {
 	HomeView     fyne.CanvasObject
 	ContentStack *fyne.Container
 	MainSplit    *container.Split
+	LiveStreams   []ui.LiveStream
 	P2P          *chat.P2PManager
 
 	// Crypto Identity
@@ -837,6 +848,45 @@ func (s *PhazeApp) SendMessage(msg NexusMessage) {
 	}
 }
 
+// uploadFile uploads data as a multipart form to /api/v1/upload and returns
+// the URL path returned by the server (e.g. "/uploads/abc123.wav").
+func (s *PhazeApp) uploadFile(fileName string, data []byte) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := fw.Write(data); err != nil {
+		return "", fmt.Errorf("write form file: %w", err)
+	}
+	w.Close()
+
+	req, err := http.NewRequest("POST", s.Infra.API+"/api/v1/upload", &buf)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+s.SessionToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode upload response: %w", err)
+	}
+	return result.URL, nil
+}
+
 func (s *PhazeApp) ReadLoop() {
 	for {
 		var msg NexusMessage
@@ -893,6 +943,8 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 				log.Println("[Sovereign] Captured Dynamic Media Token.")
 				s.Calls.SetICEServers(msg.TurnConfig)
 			}
+			// Sync settings from server
+			go s.SendMessage(NexusMessage{Type: "settings_get", Sender: msg.Sender})
 		} else {
 			log.Println("Auth failed:", msg.Error, "status:", msg.Status)
 		}
@@ -978,11 +1030,13 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 		}
 
 	case "block_result":
-		if msg.Error != "" {
-			fyne.Do(func() { dialog.ShowError(fmt.Errorf("%s", msg.Error), s.MainWindow) })
-		} else {
-			log.Printf("[block] %s %s", msg.Status, msg.Recipient)
-		}
+		fyne.Do(func() {
+			if msg.Error != "" {
+				dialog.ShowError(fmt.Errorf("%s", msg.Error), s.MainWindow)
+			} else {
+				dialog.ShowInformation("Phaze", msg.Recipient+" has been blocked.", s.MainWindow)
+			}
+		})
 
 	case "blocks":
 		log.Printf("[block] server reports %d blocks", len(msg.Results))
@@ -1027,8 +1081,25 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 		}
 
 		if logContainer, ok := s.ChatLogs[msg.Sender]; ok {
-			logContainer.Add(ui.NewMessageBubble(msg.Sender, bodyText, false, s.Slicer))
-			logContainer.Refresh()
+			sender := msg.Sender
+			msgID := msg.MsgID
+			fyne.Do(func() {
+				bubble := ui.NewMessageBubbleEx(sender, bodyText, false, s.Slicer, ui.MessageBubbleOpts{
+					Kind:      msg.Kind,
+					Reactions: msg.Reactions,
+					OnReact: func(emoji string) {
+						s.SendMessage(NexusMessage{
+							Type:      "msg_react",
+							Sender:    s.Username,
+							Recipient: sender,
+							MsgID:     msgID,
+							Reaction:  emoji,
+						})
+					},
+				})
+				logContainer.Add(bubble)
+				logContainer.Refresh()
+			})
 		} else {
 			s.UnreadCounts[msg.Sender]++
 		}
@@ -1178,8 +1249,27 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 		s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type)
 			VALUES (?, ?, ?, ?, 61)`, msg.ConvoID, msg.Sender, msg.Body, ts)
 		if logContainer, ok := s.ChatLogs[msg.ConvoID]; ok {
-			logContainer.Add(ui.NewMessageBubble(msg.Sender, msg.Body, false, s.Slicer))
-			logContainer.Refresh()
+			sender := msg.Sender
+			convoID := msg.ConvoID
+			msgID := msg.MsgID
+			bodyText2 := msg.Body
+			fyne.Do(func() {
+				bubble := ui.NewMessageBubbleEx(sender, bodyText2, false, s.Slicer, ui.MessageBubbleOpts{
+					Kind:      msg.Kind,
+					Reactions: msg.Reactions,
+					OnReact: func(emoji string) {
+						s.SendMessage(NexusMessage{
+							Type:      "msg_react",
+							Sender:    s.Username,
+							Recipient: convoID,
+							MsgID:     msgID,
+							Reaction:  emoji,
+						})
+					},
+				})
+				logContainer.Add(bubble)
+				logContainer.Refresh()
+			})
 		} else {
 			s.UnreadCounts[msg.ConvoID]++
 			s.App.SendNotification(fyne.NewNotification(
@@ -1194,6 +1284,47 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			logContainer.Refresh()
 		}
 
+	case "msg_react":
+		// Apply reaction to the message bubble if the chat is open
+		if logContainer, ok := s.ChatLogs[msg.Sender]; ok {
+			fyne.Do(func() {
+				logContainer.Add(ui.NewMessageBubble("", msg.Sender+" reacted "+msg.Reaction, false, s.Slicer))
+				logContainer.Refresh()
+			})
+		} else if logContainer, ok := s.ChatLogs[msg.Recipient]; ok {
+			fyne.Do(func() {
+				logContainer.Add(ui.NewMessageBubble("", msg.Sender+" reacted "+msg.Reaction, false, s.Slicer))
+				logContainer.Refresh()
+			})
+		}
+
+	case "edit_msg":
+		// Update in DB and show edited indicator in the chat log
+		s.DB.Exec(`UPDATE Messages SET body_xml = ? WHERE chatname = ? AND body_xml LIKE ?`,
+			msg.Body+"  (edited)", msg.Sender, "%")
+		chatKey := msg.Sender
+		if msg.ConvoID != "" {
+			chatKey = msg.ConvoID
+		}
+		if logContainer, ok := s.ChatLogs[chatKey]; ok {
+			fyne.Do(func() {
+				logContainer.Add(ui.NewMessageBubble(msg.Sender, "(edited) "+msg.Body, false, s.Slicer))
+				logContainer.Refresh()
+			})
+		}
+
+	case "delete_msg":
+		chatKey := msg.Sender
+		if msg.ConvoID != "" {
+			chatKey = msg.ConvoID
+		}
+		if logContainer, ok := s.ChatLogs[chatKey]; ok {
+			fyne.Do(func() {
+				logContainer.Add(ui.NewMessageBubble(msg.Sender, "(message deleted)", false, s.Slicer))
+				logContainer.Refresh()
+			})
+		}
+
 	case "read_receipt":
 		log.Printf("%s read our message %s", msg.Sender, msg.Body)
 
@@ -1202,6 +1333,38 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			log.Println("Registration failed:", msg.Error)
 		} else {
 			log.Println("Registration successful")
+		}
+
+	case "purge_email_result":
+		fyne.Do(func() {
+			if msg.Error != "" {
+				dialog.ShowError(fmt.Errorf("%s", msg.Error), s.MainWindow)
+			} else {
+				dialog.ShowInformation("Phaze", "Email removed from your account.", s.MainWindow)
+			}
+		})
+
+	case "settings_result":
+		if msg.Body != "" {
+			var prefs map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Body), &prefs); err == nil {
+				if v, ok := prefs["sound_enabled"].(bool); ok {
+					s.SoundEnabled = v
+				}
+				if v, ok := prefs["notifications_enabled"].(bool); ok {
+					s.NotificationsEnabled = v
+				}
+				if v, ok := prefs["compact_mode"].(bool); ok {
+					s.CompactMode = v
+				}
+				log.Printf("[settings] synced from server")
+			}
+		}
+
+	case "stream_list_result":
+		s.LiveStreams = nil
+		for i := 0; i+1 < len(msg.Results); i += 2 {
+			s.LiveStreams = append(s.LiveStreams, ui.LiveStream{Host: msg.Results[i], Title: msg.Results[i+1]})
 		}
 
 	default:
@@ -1640,12 +1803,53 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 		}
 	}
 
+	// Build contacts list for @mention autocomplete
+	var contactNames []string
+	for _, f := range s.Friends {
+		contactNames = append(contactNames, f.Username)
+	}
+
 	chatProps := ui.ChatViewProps{
-		Name:    title,
-		Status:  headerStatus,
-		IsGroup: isGroup,
-		Slicer:  s.Slicer,
-		OnCall:  func() { s.StartCall(name) },
+		Name:     title,
+		Status:   headerStatus,
+		IsGroup:  isGroup,
+		Slicer:   s.Slicer,
+		Contacts: contactNames,
+		OnCall:   func() { s.StartCall(name) },
+		OnBlock: func() {
+			dialog.ShowConfirm("Block User",
+				"Block "+name+"? They won't be able to contact you.",
+				func(ok bool) {
+					if ok {
+						s.SendMessage(NexusMessage{
+							Type:      "block",
+							Sender:    s.Username,
+							Recipient: name,
+						})
+					}
+				}, s.MainWindow)
+		},
+		OnReport: func() {
+			reasonEntry := widget.NewMultiLineEntry()
+			reasonEntry.SetPlaceHolder("Describe the issue...")
+			reasonEntry.SetMinRowsVisible(4)
+			d := dialog.NewCustomConfirm("Report Abuse", "Send Report", "Cancel",
+				container.NewVBox(
+					widget.NewLabel("What's the issue with "+name+"?"),
+					reasonEntry,
+				), func(ok bool) {
+					if ok && strings.TrimSpace(reasonEntry.Text) != "" {
+						s.SendMessage(NexusMessage{
+							Type:      "report_abuse",
+							Sender:    s.Username,
+							Recipient: name,
+							Body:      strings.TrimSpace(reasonEntry.Text),
+						})
+					}
+				}, s.MainWindow)
+			d.Resize(fyne.NewSize(400, 250))
+			d.Show()
+		},
 		OnSend: func(text string) {
 			if strings.TrimSpace(text) == "" {
 				return
@@ -1675,10 +1879,44 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 				ts := time.Now().Unix()
 				s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type)
 					VALUES (?, ?, ?, ?, 61)`, name, s.Username, body, ts)
+				historyContainer.Add(ui.NewMessageBubble(s.Username, body, true, s.Slicer))
 			} else {
-				s.SendMessage(NexusMessage{Type: "msg", Sender: s.Username, Recipient: name, Body: body})
+				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+				s.SendMessage(NexusMessage{Type: "msg", Sender: s.Username, Recipient: name, Body: body, MsgID: msgID})
+				msgIDCopy := msgID
+				bodyCopy := body
+				bubble := ui.NewMessageBubbleEx(s.Username, bodyCopy, true, s.Slicer, ui.MessageBubbleOpts{
+					OnEdit: func() {
+						entry := widget.NewEntry()
+						entry.SetText(bodyCopy)
+						dialog.ShowCustomConfirm("Edit Message", "Save", "Cancel", entry, func(ok bool) {
+							if ok && entry.Text != "" {
+								s.SendMessage(NexusMessage{
+									Type:      "edit_msg",
+									Sender:    s.Username,
+									Recipient: name,
+									MsgID:     msgIDCopy,
+									Body:      entry.Text,
+								})
+							}
+						}, s.MainWindow)
+					},
+					OnDelete: func() {
+						dialog.ShowConfirm("Delete Message", "Delete this message?", func(ok bool) {
+							if ok {
+								s.SendMessage(NexusMessage{
+									Type:      "delete_msg",
+									Sender:    s.Username,
+									Recipient: name,
+									MsgID:     msgIDCopy,
+								})
+							}
+						}, s.MainWindow)
+					},
+				})
+				historyContainer.Add(bubble)
 			}
-			historyContainer.Add(ui.NewMessageBubble(s.Username, body, true, s.Slicer))
+			historyContainer.Refresh()
 			scroll.ScrollToBottom()
 		},
 		OnSendFile: func() {
@@ -1686,13 +1924,94 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 				if err == nil && reader != nil {
 					data, _ := io.ReadAll(reader)
 					fileName := reader.URI().Name()
-					log.Printf("[WebRTC] Sending file %s (%d bytes) to %s", fileName, len(data), name)
-					if err := s.Calls.SendFile(name, fileName, data); err != nil {
-						log.Printf("[WebRTC] SendFile error: %v", err)
-					}
+					go func() {
+						fileURL, err := s.uploadFile(fileName, data)
+						if err != nil {
+							log.Printf("[upload] file upload failed: %v", err)
+							// Fallback to WebRTC data channel for P2P
+							if ferr := s.Calls.SendFile(name, fileName, data); ferr != nil {
+								log.Printf("[WebRTC] SendFile fallback error: %v", ferr)
+							}
+							return
+						}
+						msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+						msg := NexusMessage{
+							Type:      "msg",
+							Sender:    s.Username,
+							Recipient: name,
+							MsgID:     msgID,
+							Kind:      "file",
+							FileURL:   fileURL,
+							FileName:  fileName,
+							Body:      "[File: " + fileName + "]",
+						}
+						s.SendMessage(msg)
+						ts := time.Now().Unix()
+						s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type) VALUES (?, ?, ?, ?, 68)`,
+							name, s.Username, "[File: "+fileName+"]", ts)
+						label := "[File: " + fileName + "]\n" + s.Infra.API + fileURL
+						fyne.Do(func() {
+							historyContainer.Add(ui.NewMessageBubble(s.Username, label, true, s.Slicer))
+							scroll.ScrollToBottom()
+						})
+					}()
 				}
 			}, s.MainWindow)
 			fd.Show()
+		},
+		OnVoiceRecord: func() {
+			go func() {
+				pr := dialog.NewProgressInfinite("Recording", "Recording voice message (tap Stop to finish)...", s.MainWindow)
+				fyne.Do(pr.Show)
+
+				chat.StartVoiceRecord()
+				time.Sleep(200 * time.Millisecond) // let goroutine spin up
+				// Show a stop dialog
+				stopCh := make(chan struct{})
+				fyne.Do(func() {
+					pr.Hide()
+					dialog.ShowConfirm("Voice Message", "Recording... tap Stop when done.",
+						func(stop bool) {
+							close(stopCh)
+						}, s.MainWindow)
+				})
+				<-stopCh
+				filePath, err := chat.StopVoiceRecord()
+				if err != nil {
+					log.Printf("[voice] record error: %v", err)
+					return
+				}
+				data, err := os.ReadFile(filePath)
+				os.Remove(filePath)
+				if err != nil {
+					log.Printf("[voice] read wav: %v", err)
+					return
+				}
+				fileURL, err := s.uploadFile("voice.wav", data)
+				if err != nil {
+					log.Printf("[voice] upload: %v", err)
+					return
+				}
+				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+				msg := NexusMessage{
+					Type:      "msg",
+					Sender:    s.Username,
+					Recipient: name,
+					MsgID:     msgID,
+					Kind:      "voice",
+					FileURL:   fileURL,
+					FileName:  "voice.wav",
+					Body:      "[Voice Message]",
+				}
+				s.SendMessage(msg)
+				ts := time.Now().Unix()
+				s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type) VALUES (?, ?, ?, ?, 61)`,
+					name, s.Username, "[Voice Message]", ts)
+				fyne.Do(func() {
+					historyContainer.Add(ui.NewMessageBubble(s.Username, "[Voice Message]", true, s.Slicer))
+					scroll.ScrollToBottom()
+				})
+			}()
 		},
 		OnTyping: func() {
 			if time.Since(s.LastTypingSent[name]) > 3*time.Second {
@@ -1888,6 +2207,23 @@ func (s *PhazeApp) ShowMainWindow() {
 	toolbar := container.NewHBox(
 		widget.NewButtonWithIcon("", theme.HomeIcon(), func() {
 			s.ContentStack.Objects = []fyne.CanvasObject{s.HomeView}
+			s.ContentStack.Refresh()
+		}),
+		widget.NewButtonWithIcon("Stories", theme.MediaPhotoIcon(), func() {
+			storiesView := ui.NewStoriesView(s.Infra.API, s.SessionToken)
+			s.ContentStack.Objects = []fyne.CanvasObject{storiesView}
+			s.ContentStack.Refresh()
+		}),
+		widget.NewButtonWithIcon("Live", theme.MediaVideoIcon(), func() {
+			s.SendMessage(NexusMessage{Type: "stream_list"})
+			liveView := ui.NewLiveView(ui.LiveViewProps{
+				Streams: s.LiveStreams,
+				WebBase: s.Infra.API,
+				OnRefresh: func() {
+					s.SendMessage(NexusMessage{Type: "stream_list"})
+				},
+			})
+			s.ContentStack.Objects = []fyne.CanvasObject{liveView}
 			s.ContentStack.Refresh()
 		}),
 		layout.NewSpacer(),
@@ -2659,9 +2995,19 @@ func (s *PhazeApp) showEmailVerificationDialog(username string, parent fyne.Wind
 	codeEntry := widget.NewEntry()
 	codeEntry.SetPlaceHolder("6-digit code")
 
+	resendBtn := widget.NewButton("Resend code", func() {
+		s.SendMessage(NexusMessage{
+			Type:   "resend_verification",
+			Sender: username,
+		})
+		dialog.ShowInformation("Phaze", "Verification code resent. Check your email.", parent)
+	})
+	resendBtn.Importance = widget.LowImportance
+
 	d := dialog.NewCustomConfirm("Verify Email", "Verify", "Cancel", container.NewVBox(
-		widget.NewLabel("We sent a code to your email. Enter it below to activate your Phaze identity:"),
+		widget.NewLabel("We sent a verification link to your email. Click it, or enter the code below:"),
 		codeEntry,
+		resendBtn,
 	), func(ok bool) {
 		if ok {
 			s.SendMessage(NexusMessage{
@@ -2800,11 +3146,50 @@ func (s *PhazeApp) showSettingsWindow() {
 		ServerAddr:   s.ServerAddress,
 		SoundEnabled: s.SoundEnabled,
 		Sentinel:     s.Sentinel,
+		OnLinkPhone: func(number string) {
+			s.SendMessage(NexusMessage{
+				Type:   "request_phone_link",
+				Sender: s.Username,
+				Phone:  number,
+			})
+		},
+		OnVerifyPhone: func(number, code string) {
+			s.SendMessage(NexusMessage{
+				Type:   "verify_phone_link",
+				Sender: s.Username,
+				Phone:  number,
+				Body:   code,
+			})
+		},
+		OnPurgeEmail: func() {
+			dialog.ShowConfirm("Remove Email",
+				"Remove your email address? Password recovery via email will no longer work.",
+				func(ok bool) {
+					if ok {
+						s.SendMessage(NexusMessage{
+							Type:   "purge_email",
+							Sender: s.Username,
+						})
+					}
+				}, s.MainWindow)
+		},
 		OnSave: func(newServer string, sound bool) {
 			s.ServerAddress = newServer
 			s.SoundEnabled = sound
 			s.DB.Exec("INSERT OR REPLACE INTO Profile (key, value) VALUES ('server_addr', ?)", newServer)
 			s.DB.Exec("INSERT OR REPLACE INTO Profile (key, value) VALUES ('sound_enabled', ?)", fmt.Sprintf("%v", sound))
+			// Sync settings to server
+			if settingsJSON, err := json.Marshal(map[string]interface{}{
+				"sound_enabled":         sound,
+				"notifications_enabled": s.NotificationsEnabled,
+				"compact_mode":          s.CompactMode,
+			}); err == nil {
+				go s.SendMessage(NexusMessage{
+					Type:   "settings_set",
+					Sender: s.Username,
+					Body:   string(settingsJSON),
+				})
+			}
 			win.Close()
 			dialog.ShowInformation("Settings", "Settings saved successfully.", s.MainWindow)
 		},
