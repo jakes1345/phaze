@@ -372,7 +372,8 @@ export default function App() {
     })
   }
   const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
-  const [mode, setMode] = useState<'login' | 'register' | 'link'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
+  const [mode, setMode] = useState<'login' | 'register' | 'link' | 'forgot'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
+  const [forgotEmail, setForgotEmail] = useState('')
   const [linkInput, setLinkInput] = useState('')
   const [linkBusy, setLinkBusy] = useState(false)
   const [regStep, setRegStep] = useState<'form' | 'verify' | 'done'>('form')
@@ -406,7 +407,10 @@ export default function App() {
   const recStartRef = useRef<number>(0)
   const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const recChunksRef = useRef<Blob[]>([])
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger'>('profile')
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications'>('profile')
+  const [reportTarget, setReportTarget] = useState<string | null>(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSent, setReportSent] = useState(false)
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [pinsOpen, setPinsOpen] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
@@ -417,6 +421,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme)
     document.documentElement.dataset.theme = theme
+    // Sync theme preference to server when logged in.
+    if (meRef.current) {
+      sendRef.current({ type: 'settings_set', sender: meRef.current, body: JSON.stringify({ theme }) })
+    }
   }, [theme])
 
   useEffect(() => {
@@ -726,6 +734,8 @@ export default function App() {
               public_key: encodePublicKeyB64(keysRef.current.publicKey),
             })
             registerPush(sendRef.current)
+            // Load server-side settings to sync preferences across devices.
+            sendRef.current({ type: 'settings_get', sender: msg.sender })
             // On first login of this browser session, ask the server whether
             // this account has a PIN-encrypted key backup waiting. If yes
             // (and we don't already have the same keys), we'll prompt the
@@ -971,6 +981,33 @@ export default function App() {
           } else {
             setErr(msg.error || 'Delete failed')
           }
+          break
+
+        case 'block_result':
+          if (msg.status === 'blocked' && msg.recipient) {
+            setErr(`Blocked ${msg.recipient}.`)
+          }
+          break
+
+        case 'report_result':
+          setReportSent(true)
+          break
+
+        case 'settings_result':
+          // Server-side settings loaded — apply theme if set
+          if (msg.body) {
+            try {
+              const saved = JSON.parse(msg.body) as Record<string, unknown>
+              if (saved.theme === 'dark' || saved.theme === 'light') {
+                setTheme(saved.theme as 'light' | 'dark')
+              }
+            } catch { /* ignore */ }
+          }
+          break
+
+        case 'purge_email_result':
+          if (msg.status === 'ok') setErr('Email removed from your account.')
+          else setErr(msg.error || 'Failed to purge email')
           break
 
         default:
@@ -1556,6 +1593,46 @@ export default function App() {
         />
       )}
 
+      {/* ── Report abuse dialog ──────────────────────────────────── */}
+      {reportTarget && (
+        <div className="restore-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setReportTarget(null); setReportSent(false) } }}>
+          <div className="restore-card">
+            {reportSent ? (
+              <>
+                <h2>Report sent</h2>
+                <p className="muted small">Thanks for letting us know. Our team will review this report.</p>
+                <button type="button" onClick={() => { setReportTarget(null); setReportSent(false) }}>Close</button>
+              </>
+            ) : (
+              <>
+                <h2>Report {reportTarget}</h2>
+                <p className="muted small">Describe what's happening so our team can review it.</p>
+                <textarea
+                  autoFocus
+                  placeholder="Reason for report (e.g. harassment, spam…)"
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  rows={4}
+                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical' }}
+                />
+                <div className="row">
+                  <button
+                    type="button"
+                    disabled={!reportReason.trim()}
+                    onClick={() => {
+                      if (!me || !reportReason.trim()) return
+                      send({ type: 'report_abuse', sender: me, recipient: reportTarget!, body: reportReason.trim() })
+                      setReportSent(true)
+                    }}
+                  >Submit report</button>
+                  <button type="button" className="link-btn" onClick={() => { setReportTarget(null); setReportSent(false) }}>Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Support chat bubble (always available) ───────────────── */}
       <SupportBubble sessionToken={sessionToken} me={me} />
 
@@ -1646,8 +1723,20 @@ export default function App() {
                   <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
                   <button type="submit">Sign in</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
+                  <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr('') }}>Forgot password?</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
                 </form>
+              ) : mode === 'forgot' ? (
+                <div className="form">
+                  <p className="muted small">Enter the email address on your account. We'll send a reset link.</p>
+                  <input type="email" placeholder="Email address" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} autoFocus />
+                  <button type="button" onClick={() => {
+                    if (!forgotEmail.includes('@')) { setErr('Enter a valid email'); return }
+                    send({ type: 'forgot_password', email: forgotEmail })
+                    setErr('If an account matches, a reset link has been sent to your email.')
+                  }}>Send reset link</button>
+                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
+                </div>
               ) : mode === 'link' ? (
                 <div className="form">
                   <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
@@ -1666,19 +1755,20 @@ export default function App() {
               ) : regStep === 'form' ? (
                 <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
                   <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
-                  <input type="email" placeholder="Email (optional — leave blank for anonymous)" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" />
+                  <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" required />
                   <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />
-                  <p className="muted small" style={{ margin: 0 }}>
-                    No email = anonymous account. Can't recover if you lose your password.
-                  </p>
                   <button type="submit">Create account</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
                 </form>
               ) : (
                 <div className="form">
-                  <p className="muted small">We sent a 6-digit code to <strong>{regEmail}</strong>.</p>
+                  <p className="muted small">We sent a verification link to <strong>{regEmail}</strong>. Click it, or enter the code below.</p>
                   <input inputMode="numeric" pattern="\d{6}" maxLength={6} placeholder="123456" value={regCode} onChange={(e) => setRegCode(e.target.value)} />
                   <button type="button" onClick={doVerify}>Verify email</button>
+                  <button type="button" className="link-btn" onClick={() => {
+                    send({ type: 'resend_verification', sender: regUser, email: regEmail })
+                    setErr('Verification code resent. Check your email.')
+                  }}>Resend code</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr(''); setRegStep('form') }}>Cancel</button>
                 </div>
               )
@@ -1786,6 +1876,22 @@ export default function App() {
                           onClick={() => void startCall('video')}
                           disabled={!me}
                         >📹</button>
+                        <button
+                          type="button"
+                          className="chat-call-btn"
+                          title={`Block ${selected}`}
+                          onClick={() => {
+                            if (selected && me && confirm(`Block ${selected}? They won't be able to message you.`)) {
+                              send({ type: 'block', sender: me, recipient: selected })
+                            }
+                          }}
+                        >🚫</button>
+                        <button
+                          type="button"
+                          className="chat-call-btn"
+                          title={`Report ${selected}`}
+                          onClick={() => { setReportTarget(selected); setReportReason(''); setReportSent(false) }}
+                        >⚑</button>
                       </div>
                     </>
                   ) : (

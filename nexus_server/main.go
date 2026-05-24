@@ -715,10 +715,10 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	if !validUsername(username) {
 		return "", errBadUsername
 	}
-	// Email is optional. If empty the account is anonymous and immediately
-	// verified — no email = no verification step needed. If provided, it
-	// must look like a valid address and we issue a verification code.
-	if email != "" && !validEmail(email) {
+	if email == "" {
+		return "", fmt.Errorf("email is required")
+	}
+	if !validEmail(email) {
 		return "", errBadEmail
 	}
 	if len(password) < 8 {
@@ -726,13 +726,6 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return "", err
-	}
-
-	if email == "" {
-		// Anonymous registration: skip the verification flow entirely.
-		_, err = s.DB.Exec("INSERT INTO users (username, email, mood, password_hash, salt, is_verified) VALUES (?, '', ?, ?, '', 1)",
-			username, mood, string(hash))
 		return "", err
 	}
 
@@ -1978,17 +1971,15 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 		case "register":
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
 			if err != nil {
-				client.Send(NexusMessage{Type: "register_result", Error: "Username already taken or database error"})
-			} else if msg.Email == "" {
-				// Anonymous account — no verification step. Auto-join Hub
-				// and tell the client they can sign in immediately.
-				log.Printf("New anonymous user registered: %s", msg.Sender)
-				s.autoJoinGlobalSpace(msg.Sender)
-				client.Send(NexusMessage{Type: "register_result", Status: "ok"})
+				client.Send(NexusMessage{Type: "register_result", Error: err.Error()})
 			} else {
 				log.Printf("New user registered: %s (%s) - Code: %s", msg.Sender, msg.Email, code)
+				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
 				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
-					"<h1>Welcome to Phaze</h1><p>Your activation code is: <b>"+code+"</b></p><p>Enter this in the app to start using the mesh.</p>")
+					"<h1>Welcome to Phaze</h1>"+
+						"<p>Click the button below to verify your account:</p>"+
+						"<p style=\"margin:24px 0\"><a href=\""+verifyLink+"\" style=\"background:#863bff;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:16px\">Verify My Account</a></p>"+
+						"<p style=\"color:#888\">Or enter this code manually in the app: <b>"+code+"</b></p>")
 				client.Send(NexusMessage{Type: "register_result", Status: "pending_verification"})
 			}
 
@@ -4332,8 +4323,21 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[role] %s set %s role to %s", admin, target, reqBody.Role)
+	case "delete":
+		if err := s.deleteAccount(target); err != nil {
+			http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.Mu.Lock()
+		if c, ok := s.Clients[target]; ok {
+			c.Send(NexusMessage{Type: "kicked", Body: "Account deleted by admin"})
+			c.Conn.Close()
+			delete(s.Clients, target)
+		}
+		s.Mu.Unlock()
+		log.Printf("[admin] %s deleted account %s", admin, target)
 	default:
-		http.Error(w, "expected /ban, /unban, or /role", http.StatusBadRequest)
+		http.Error(w, "expected /ban, /unban, /role, or /delete", http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -5058,6 +5062,31 @@ func main() {
 	http.HandleFunc("/"+indexNowKey+".txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, indexNowKey)
+	})
+
+	http.HandleFunc("/verify-email", func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.Query().Get("u")
+		code := r.URL.Query().Get("code")
+		if u == "" || code == "" {
+			http.Error(w, "Missing parameters", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if server.verifyUser(u, code) {
+			server.autoJoinGlobalSpace(u)
+			fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"><title>Verified!</title>
+<style>body{font-family:Inter,system-ui,sans-serif;background:#0b0b0d;color:#fafafa;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
+.card{background:#16161a;border:1px solid #232328;border-radius:16px;padding:48px;text-align:center;max-width:420px}
+h1{color:#86efac;margin:0 0 12px}p{color:#a1a1aa;margin:0 0 24px}
+a{display:inline-block;background:#863bff;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600}</style></head>
+<body><div class="card"><h1>You're verified!</h1><p>Your Phaze account is ready. Sign in and start chatting.</p><a href="/web/">Open Phaze</a></div></body></html>`)
+		} else {
+			fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"><title>Verification Failed</title>
+<style>body{font-family:Inter,system-ui,sans-serif;background:#0b0b0d;color:#fafafa;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
+.card{background:#16161a;border:1px solid #232328;border-radius:16px;padding:48px;text-align:center;max-width:420px}
+h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
+<body><div class="card"><h1>Verification failed</h1><p>The link may have expired or already been used. Try signing in and requesting a new code.</p></div></body></html>`)
+		}
 	})
 
 	http.HandleFunc("/", server.landingHandler)

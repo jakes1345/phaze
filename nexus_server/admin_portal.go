@@ -127,6 +127,12 @@ async function setRole(u, role) {
   await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/role', { role });
   loadUsers();
 }
+async function deleteUser(u) {
+  if (!confirm('PERMANENTLY DELETE ' + u + '? This cannot be undone.')) return;
+  if (prompt('Type the username to confirm:') !== u) return;
+  await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/delete');
+  loadUsers();
+}
 async function resolveReport(id) {
   if (!confirm('Mark report ' + id + ' resolved?')) return;
   await api('POST', '/api/v1/admin/reports/' + id + '/resolve');
@@ -188,12 +194,14 @@ function renderTab() {
           ? '<button data-act="unban" data-u="' + esc(u.username) + '">Unban</button>'
           : '<button class="danger" data-act="ban" data-u="' + esc(u.username) + '">Ban</button>') +
         '<select data-role-u="' + esc(u.username) + '"><option value="">Set role…</option><option value="user">user</option><option value="helper">helper</option><option value="moderator">moderator</option><option value="admin">admin</option></select>' +
+        '<button class="danger" data-act="delete" data-u="' + esc(u.username) + '" style="margin-left:8px">Delete</button>' +
         '</div></td></tr>').join('') + '</tbody></table>';
     main.querySelectorAll('button[data-act]').forEach((b) => b.addEventListener('click', () => {
       const u = b.dataset.u;
       const act = b.dataset.act;
       if (act === 'ban') banUser(u);
       else if (act === 'unban') unbanUser(u);
+      else if (act === 'delete') deleteUser(u);
     }));
     main.querySelectorAll('select[data-role-u]').forEach((sel) => sel.addEventListener('change', (e) => {
       const role = e.target.value;

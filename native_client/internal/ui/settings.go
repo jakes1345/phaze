@@ -13,6 +13,9 @@ type SettingsProps struct {
 	SoundEnabled   bool
 	OnSave         func(server string, sound bool)
 	OnAudioChange  func(deviceName string)
+	OnLinkPhone    func(number string)
+	OnVerifyPhone  func(number, code string)
+	OnPurgeEmail   func()
 	Sentinel       interface {
 		GetDiagnosticSummaries() string
 	}
@@ -53,11 +56,56 @@ func NewSettingsDialog(props SettingsProps) fyne.CanvasObject {
 		widget.NewButtonWithIcon("Test Audio", theme.MediaPlayIcon(), func() {}),
 	)
 
-	// 3. Privacy Tab (P2P Mesh)
+	// 3. Privacy Tab (P2P Mesh + Phone + Email purge)
+	phoneEntry := widget.NewEntry()
+	phoneEntry.SetPlaceHolder("+1 555 000 0000")
+	var pendingPhone string
+	linkPhoneBtn := widget.NewButtonWithIcon("Link Phone", theme.ConfirmIcon(), func() {
+		if phoneEntry.Text == "" {
+			return
+		}
+		pendingPhone = phoneEntry.Text
+		if props.OnLinkPhone != nil {
+			props.OnLinkPhone(pendingPhone)
+		}
+	})
+	linkPhoneBtn.Importance = widget.HighImportance
+
+	codeEntry := widget.NewEntry()
+	codeEntry.SetPlaceHolder("6-digit SMS code")
+	verifyPhoneBtn := widget.NewButtonWithIcon("Verify", theme.ConfirmIcon(), func() {
+		if codeEntry.Text == "" || pendingPhone == "" {
+			return
+		}
+		if props.OnVerifyPhone != nil {
+			props.OnVerifyPhone(pendingPhone, codeEntry.Text)
+		}
+		codeEntry.SetText("")
+	})
+
+	purgeEmailBtn := widget.NewButtonWithIcon("Remove email from account", theme.DeleteIcon(), func() {
+		if props.OnPurgeEmail != nil {
+			props.OnPurgeEmail()
+		}
+	})
+	purgeEmailBtn.Importance = widget.DangerImportance
+
 	privacyTab := container.NewVBox(
 		widget.NewLabelWithStyle("Sovereign Mesh Privacy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		widget.NewCheck("Announce on Public DHT", func(bool) {}),
 		widget.NewCheck("Allow Local mDNS Discovery", func(bool) {}),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Phone Number", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("Link a phone number to your account for account recovery."),
+		widget.NewForm(widget.NewFormItem("Phone", phoneEntry)),
+		linkPhoneBtn,
+		widget.NewLabel("Enter the SMS verification code:"),
+		widget.NewForm(widget.NewFormItem("Code", codeEntry)),
+		verifyPhoneBtn,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Email Privacy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("Warning: removing your email disables password recovery via email."),
+		purgeEmailBtn,
 	)
 
 	// 4. Sentinel Tab (Acting on peer audit)

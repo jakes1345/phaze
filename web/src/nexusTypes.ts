@@ -56,6 +56,9 @@ export interface NexusMessage {
   // Durable DM history response (dm_history).
   dm_history?: DMMessage[]
 
+  // Phone linking
+  phone?: string
+
   // PIN-encrypted NaCl keypair backup blob (key_backup_put / key_backup).
   key_backup?: KeyBackup
 }
