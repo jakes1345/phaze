@@ -1073,7 +1073,7 @@ export default function App() {
   }
 
   const acceptFriend = (from: string) => {
-    send({ type: 'friend_accept', sender: from })
+    send({ type: 'friend_accept', recipient: from })
     setPending((p) => p.filter((x) => x !== from))
   }
 
