@@ -1,0 +1,124 @@
+.stories-bar {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  background: var(--panel, #fff);
+}
+.app.theme-dark .stories-bar { border-bottom-color: rgba(255,255,255,0.06); }
+
+.story-ring {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.story-ring .ring-inner {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #863bff, #ff3b9a);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1.3rem;
+  font-weight: 700;
+  position: relative;
+  padding: 3px;
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  background-origin: border-box;
+}
+.story-ring.add .ring-inner {
+  background: rgba(134, 59, 255, 0.12);
+  border: 2px dashed rgba(134, 59, 255, 0.55);
+  color: #863bff;
+}
+.story-ring.add:hover .ring-inner { background: rgba(134,59,255,0.22); }
+.story-ring.self .ring-inner { background: linear-gradient(135deg, #6f1ee0, #863bff); }
+.story-ring:disabled { opacity: 0.55; cursor: default; }
+.story-label {
+  font-size: 0.72rem;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Viewer overlay */
+.story-viewer {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  cursor: pointer;
+}
+.story-progress {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+}
+.progress-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(255,255,255,0.25);
+  border-radius: 999px;
+}
+.progress-bar.done, .progress-bar.active { background: rgba(255,255,255,0.95); }
+.story-header {
+  position: absolute;
+  top: 28px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #fff;
+}
+.story-author { font-weight: 700; }
+.story-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+.story-media {
+  max-width: min(420px, 92vw);
+  max-height: 72vh;
+  border-radius: 12px;
+  display: block;
+}
+.story-caption {
+  position: absolute;
+  bottom: 70px;
+  left: 16px;
+  right: 16px;
+  text-align: center;
+  color: #fff;
+  font-weight: 500;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+}
+.story-meta {
+  position: absolute;
+  bottom: 24px;
+  left: 16px;
+  right: 16px;
+  text-align: center;
+  color: rgba(255,255,255,0.7);
+  font-size: 0.8rem;
+}
