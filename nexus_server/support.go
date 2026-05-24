@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -77,16 +78,18 @@ type anthropicMessageResp struct {
 	} `json:"error,omitempty"`
 }
 
-// supportChatHandler proxies a chat request to the Anthropic API and returns
-// the assistant's reply.
+// supportChatHandler proxies a chat request to whichever LLM provider has a
+// key configured. Order is Gemini (free tier) → Anthropic. Returns 503 if
+// neither is set.
 func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		http.Error(w, "support bot offline (ANTHROPIC_API_KEY not configured)", http.StatusServiceUnavailable)
+	geminiKey := os.Getenv("GEMINI_API_KEY")
+	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	if geminiKey == "" && anthropicKey == "" {
+		http.Error(w, "support bot offline (no LLM key configured)", http.StatusServiceUnavailable)
 		return
 	}
 	var req supportRequest
@@ -122,49 +125,143 @@ func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Try Gemini first (free tier), fall back to Anthropic only if Gemini
+	// returned an error or wasn't configured. Either provider proxies the
+	// same request shape; whichever responds wins.
+	var reply string
+	var lastErr error
+	if geminiKey != "" {
+		reply, lastErr = callGemini(geminiKey, system, req.Messages)
+	}
+	if reply == "" && anthropicKey != "" {
+		reply, lastErr = callAnthropic(anthropicKey, system, req.Messages)
+	}
+	if reply == "" {
+		if lastErr != nil {
+			log.Printf("[support] all providers failed: %v", lastErr)
+			http.Error(w, "support bot unavailable: "+lastErr.Error(), http.StatusBadGateway)
+		} else {
+			http.Error(w, "support bot returned empty reply", http.StatusBadGateway)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"reply": reply})
+}
+
+// callGemini sends the conversation to Google's Gemini API (free tier
+// 2.0 Flash). Translates our generic message shape into Gemini's
+// "contents" + "system_instruction" structure.
+func callGemini(apiKey, system string, msgs []supportMessage) (string, error) {
+	type part struct {
+		Text string `json:"text"`
+	}
+	type content struct {
+		Role  string `json:"role"`
+		Parts []part `json:"parts"`
+	}
+	type sysInstr struct {
+		Parts []part `json:"parts"`
+	}
+	type genCfg struct {
+		MaxOutputTokens int     `json:"maxOutputTokens"`
+		Temperature     float64 `json:"temperature"`
+	}
+	type geminiReq struct {
+		Contents          []content `json:"contents"`
+		SystemInstruction sysInstr  `json:"system_instruction"`
+		GenerationConfig  genCfg    `json:"generationConfig"`
+	}
+	contents := make([]content, 0, len(msgs))
+	for _, m := range msgs {
+		// Gemini expects role "user" or "model" (not "assistant").
+		role := "user"
+		if m.Role == "assistant" {
+			role = "model"
+		}
+		contents = append(contents, content{Role: role, Parts: []part{{Text: m.Content}}})
+	}
+	payload := geminiReq{
+		Contents:          contents,
+		SystemInstruction: sysInstr{Parts: []part{{Text: system}}},
+		GenerationConfig:  genCfg{MaxOutputTokens: 600, Temperature: 0.4},
+	}
+	buf, _ := json.Marshal(payload)
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey
+	req, err := http.NewRequest("POST", url, bytes.NewReader(buf))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 25 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gemini %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var gr struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(body, &gr); err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	for _, c := range gr.Candidates {
+		for _, p := range c.Content.Parts {
+			out.WriteString(p.Text)
+		}
+	}
+	return out.String(), nil
+}
+
+// callAnthropic posts to the Anthropic Claude API. Used as the fallback
+// when Gemini isn't configured or fails.
+func callAnthropic(apiKey, system string, msgs []supportMessage) (string, error) {
 	payload := anthropicMessageReq{
 		Model:     "claude-haiku-4-5-20251001",
 		System:    system,
 		MaxTokens: 600,
-		Messages:  req.Messages,
+		Messages:  msgs,
 	}
 	buf, _ := json.Marshal(payload)
-	httpReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(buf))
 	if err != nil {
-		http.Error(w, "request build error", http.StatusInternalServerError)
-		return
+		return "", err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
 	client := &http.Client{Timeout: 25 * time.Second}
-	resp, err := client.Do(httpReq)
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[support] anthropic call: %v", err)
-		http.Error(w, "upstream error", http.StatusBadGateway)
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	var ar anthropicMessageResp
 	if err := json.Unmarshal(body, &ar); err != nil {
-		log.Printf("[support] decode anthropic resp: %v body=%q", err, string(body))
-		http.Error(w, "upstream decode error", http.StatusBadGateway)
-		return
+		return "", fmt.Errorf("decode anthropic: %w", err)
 	}
 	if ar.Error != nil {
-		log.Printf("[support] anthropic error: %s — %s", ar.Error.Type, ar.Error.Message)
-		http.Error(w, "anthropic: "+ar.Error.Message, http.StatusBadGateway)
-		return
+		return "", fmt.Errorf("anthropic %s: %s", ar.Error.Type, ar.Error.Message)
 	}
-	var reply strings.Builder
+	var out strings.Builder
 	for _, c := range ar.Content {
 		if c.Type == "text" {
-			reply.WriteString(c.Text)
+			out.WriteString(c.Text)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"reply": reply.String()})
+	return out.String(), nil
 }
 
 // supportEscalateHandler is the "Talk to a human" entrypoint. Counts how many
