@@ -1778,7 +1778,6 @@ export default function App() {
                   <input placeholder="Friend username" value={addFriend} onChange={(e) => setAddFriend(e.target.value)} />
                   <button type="button" onClick={() => { sendFriendRequest(addFriend.trim()); setAddFriend('') }}>Add friend</button>
                 </div>
-                {turn && <p className="muted small">TURN: {turn.url}</p>}
               </>
             )}
           </section>
