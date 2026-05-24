@@ -4656,6 +4656,7 @@ func main() {
 	http.HandleFunc("/version", server.versionHandler)
 	http.HandleFunc("/health", server.healthHandler)
 	http.HandleFunc("/metrics", server.metricsHandler)
+	server.initSupportRoutes()
 	http.HandleFunc("/admin", server.adminPortalHandler)
 	http.HandleFunc("/admin/", server.adminPortalHandler)
 	http.HandleFunc("/api/v1/admin/login", server.adminLoginHandler)
