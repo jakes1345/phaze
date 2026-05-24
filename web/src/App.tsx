@@ -356,6 +356,13 @@ export default function App() {
     try { return localStorage.getItem('phaze_onboarded') !== '1' } catch { return false }
   })
   const [mutedPeers, setMutedPeers] = useState<Set<string>>(() => loadMutedPeers())
+  const [bmcUrl, setBmcUrl] = useState('https://buymeacoffee.com/phazeworld')
+  useEffect(() => {
+    fetch('/api/v1/config')
+      .then((r) => r.ok ? r.json() : null)
+      .then((c: { bmc_url?: string } | null) => { if (c?.bmc_url) setBmcUrl(c.bmc_url) })
+      .catch(() => { /* keep default */ })
+  }, [])
   const togglePeerMute = (peer: string) => {
     setMutedPeers((prev) => {
       const next = new Set(prev)
@@ -2056,7 +2063,7 @@ export default function App() {
         Beta — session and NaCl keys are stored in localStorage. Use HTTPS in production.
         {' · '}
         <a
-          href={import.meta.env.VITE_BMC_URL || 'https://buymeacoffee.com/'}
+          href={bmcUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="bmc-link"
