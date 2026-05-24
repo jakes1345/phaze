@@ -26,6 +26,8 @@ type NexusMessage struct {
 	ConvoID   string `json:"convo_id,omitempty"`
 	ConvoName string `json:"convo_name,omitempty"`
 	QRToken   string `json:"qr_token,omitempty"`
+	ServerID  string `json:"server_id,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
 }
 
 type Memory struct {
@@ -264,6 +266,10 @@ func (k *KaiBot) connect() error {
 	// Set online status
 	k.send(NexusMessage{Type: "status_update", Status: "Online", Body: "here to help ✌️"})
 
+	// Join the global Phaze Hub space so we can respond in channels
+	k.send(NexusMessage{Type: "server_list"})
+
+
 	return nil
 }
 
@@ -295,14 +301,47 @@ func (k *KaiBot) run() {
 			if msg.Sender == k.username || msg.Sender == "" {
 				continue
 			}
-			// Only respond in group chats when mentioned
 			if strings.Contains(strings.ToLower(msg.Body), "@kai") ||
 				strings.Contains(strings.ToLower(msg.Body), "kai") {
 				go k.respond(msg.Sender, msg.Body, false, msg.ConvoID)
 			}
 
+		case "channel_msg":
+			if msg.Sender == k.username || msg.Sender == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(msg.Body), "@kai") ||
+				strings.Contains(strings.ToLower(msg.Body), "kai") {
+				go func(sender, body, serverID, channelID string) {
+					k.lastMsg[sender] = time.Now()
+					userMemory := k.memory.ForUser(sender)
+					memoryContext := ""
+					if userMemory != "" {
+						memoryContext = "\n\nWhat you remember about " + sender + ":\n" + userMemory
+					}
+					prompt := soul + memoryContext + "\n\n" + sender + " says in a group channel: " + body + "\n\nKai:"
+					reply, err := callGemini(k.apiKey, prompt)
+					if err != nil {
+						log.Printf("[kai] gemini error: %v", err)
+						return
+					}
+					reply = strings.TrimPrefix(reply, "Kai: ")
+					reply = strings.TrimPrefix(reply, "kai: ")
+					reply = strings.ReplaceAll(reply, "**", "")
+					if reply == "" {
+						return
+					}
+					delay := time.Duration(len(reply)*30) * time.Millisecond
+					if delay > 3*time.Second {
+						delay = 3 * time.Second
+					}
+					time.Sleep(delay)
+					k.send(NexusMessage{Type: "channel_msg", ServerID: serverID, ChannelID: channelID, Body: reply})
+					k.memory.Add(sender, fmt.Sprintf("asked in channel: %s → replied: %s", truncate(body, 80), truncate(reply, 80)))
+				}(msg.Sender, msg.Body, msg.ServerID, msg.ChannelID)
+			}
+
 		case "friend_request":
-			// Auto-accept friend requests
 			k.send(NexusMessage{Type: "friend_accept", Recipient: msg.Sender})
 			log.Printf("[kai] accepted friend request from %s", msg.Sender)
 		}

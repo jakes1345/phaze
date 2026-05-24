@@ -2709,15 +2709,18 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
-			err := s.acceptFriendRequest(msg.Sender, username)
+			requester := msg.Recipient
+			if requester == "" {
+				requester = msg.Body
+			}
+			err := s.acceptFriendRequest(requester, username)
 			if err != nil {
 				log.Printf("Friend accept error: %v", err)
 				continue
 			}
-			log.Printf("Friend accepted: %s accepted %s", username, msg.Sender)
-			// Notify the requester
+			log.Printf("Friend accepted: %s accepted %s", username, requester)
 			s.Mu.RLock()
-			if requesterClient, ok := s.Clients[msg.Sender]; ok {
+			if requesterClient, ok := s.Clients[requester]; ok {
 				requesterClient.Send(NexusMessage{
 					Type:   "friend_accepted",
 					Sender: username,
