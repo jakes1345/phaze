@@ -1617,3 +1617,10 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
 .user-profile-btn.danger:hover { background: rgba(239,68,68,0.1); }
 .user-profile-btn:disabled { opacity: 0.5; cursor: default; }
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+.bmc-link {
+  color: #ffdd00;
+  text-decoration: none;
+  font-weight: 600;
+}
+.bmc-link:hover { text-decoration: underline; }
