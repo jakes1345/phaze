@@ -567,7 +567,7 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
 /* ── Footer ───────────────────────────────────────────────────── */
 .foot {
   margin-top: auto;
-  padding: 0.5rem 1.5rem 0.75rem;
+  padding: 0.5rem 1.5rem 4.5rem;
   font-size: 0.7rem;
   color: var(--muted);
   border-top: 1px solid var(--separator);
