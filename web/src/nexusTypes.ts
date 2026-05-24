@@ -104,4 +104,8 @@ export interface ChannelMsg {
   sender: string
   body: string
   created_at: string
+  edited?: boolean
+  deleted?: boolean
+  pinned?: boolean
+  reactions?: Record<string, string[]>
 }
