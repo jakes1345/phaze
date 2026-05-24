@@ -5008,7 +5008,7 @@ func main() {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		const base = "https://phazechat.world"
 		today := time.Now().UTC().Format("2006-01-02")
-		paths := []string{"/", "/download", "/features", "/rates", "/about", "/support", "/privacy", "/terms", "/legal", "/web/"}
+		paths := []string{"/", "/download", "/features", "/rates", "/about", "/support", "/privacy", "/terms", "/legal", "/status", "/web/"}
 		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>`)
 		fmt.Fprint(w, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
 		for _, p := range paths {
@@ -5017,14 +5017,11 @@ func main() {
 		fmt.Fprint(w, `</urlset>`)
 	})
 
-	// Google Search Console verification: serve the value of
-	// PHAZE_GSC_VERIFICATION as a meta-tag verification file. After you
-	// claim phazechat.world in Search Console, copy the meta-tag content
-	// value and set: flyctl secrets set PHAZE_GSC_VERIFICATION=...
+	// Search engine verification endpoints.
+	// Google: flyctl secrets set PHAZE_GSC_VERIFICATION=google123abc.html
+	// Bing:   flyctl secrets set PHAZE_BING_VERIFICATION=<xml-code>
+	// Yandex: flyctl secrets set PHAZE_YANDEX_VERIFICATION=<code>
 	http.HandleFunc("/google", func(w http.ResponseWriter, r *http.Request) {
-		// Path: /google<HASH>.html — Search Console asks for a file at
-		// that exact URL. Serve any /google* HTML hit with the stored
-		// hash so a single secret covers any verification token.
 		v := os.Getenv("PHAZE_GSC_VERIFICATION")
 		if v == "" {
 			http.NotFound(w, r)
@@ -5032,6 +5029,35 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, "google-site-verification: "+v)
+	})
+	http.HandleFunc("/BingSiteAuth.xml", func(w http.ResponseWriter, r *http.Request) {
+		v := os.Getenv("PHAZE_BING_VERIFICATION")
+		if v == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		fmt.Fprintf(w, `<?xml version="1.0"?><users><user>%s</user></users>`, v)
+	})
+	http.HandleFunc("/yandex_", func(w http.ResponseWriter, r *http.Request) {
+		v := os.Getenv("PHAZE_YANDEX_VERIFICATION")
+		if v == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<html><head><meta name="yandex-verification" content="%s" /></head></html>`, v)
+	})
+
+	// IndexNow: instant indexing for Bing, Yandex, DuckDuckGo, Seznam, etc.
+	// Key file must be hosted at /<key>.txt for verification.
+	indexNowKey := os.Getenv("INDEXNOW_KEY")
+	if indexNowKey == "" {
+		indexNowKey = "c7b5c55a52c28ecfa0b858dbce7c2a3e"
+	}
+	http.HandleFunc("/"+indexNowKey+".txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, indexNowKey)
 	})
 
 	http.HandleFunc("/", server.landingHandler)
@@ -5050,6 +5076,23 @@ func main() {
 	server.initSupportRoutes()
 	server.initStoriesRoutes()
 	server.startDataRetentionSweepers()
+	server.initStatusPage()
+
+	// Runtime config the SPA can fetch on boot. Anything user-visible
+	// that should be tweakable without a rebuild goes here.
+	http.HandleFunc("/api/v1/config", rateLimit(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		bmc := os.Getenv("BMC_URL")
+		if bmc == "" {
+			bmc = "https://buymeacoffee.com/phazeworld"
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"bmc_url":     bmc,
+			"support_email": os.Getenv("PHAZE_SUPPORT_EMAIL"),
+			"version":     "1.0.0-Phaze",
+		})
+	}))
 	http.HandleFunc("/admin", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/admin/", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))
