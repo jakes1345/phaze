@@ -160,12 +160,28 @@ var globalLimiter = newIPLimiter(rate.Limit(10), 30) // 10 req/s, burst 30 per I
 
 func rateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Defense-in-depth headers on every response that goes through
+		// the limiter. Cheap, applies broadly, and stops a few classes
+		// of attack (MIME sniffing, clickjacking, leaky referrers).
+		writeSecurityHeaders(w)
 		if !globalLimiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		next(w, r)
 	}
+}
+
+// writeSecurityHeaders sets headers that protect every HTTP response.
+// Intentionally conservative: only headers that won't break the React SPA
+// or the existing API. CSP is omitted because the /admin portal uses
+// inline scripts; if you tighten that later, add it here.
+func writeSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "SAMEORIGIN")
+	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 }
 
 // NexusMessage is the wire protocol for Phaze™
@@ -4706,16 +4722,16 @@ func main() {
 	http.HandleFunc("/health", server.healthHandler)
 	http.HandleFunc("/metrics", server.metricsHandler)
 	server.initSupportRoutes()
-	http.HandleFunc("/admin", server.adminPortalHandler)
-	http.HandleFunc("/admin/", server.adminPortalHandler)
-	http.HandleFunc("/api/v1/admin/login", server.adminLoginHandler)
-	http.HandleFunc("/api/v1/admin/users", server.adminUsersHandler)
-	http.HandleFunc("/api/v1/admin/broadcast", server.adminBroadcastHandler)
-	http.HandleFunc("/api/v1/admin/pending-verifications", server.adminPendingVerificationsHandler)
-	http.HandleFunc("/api/v1/admin/reports", server.adminReportsHandler)
-	http.HandleFunc("/api/v1/admin/reports/", server.adminResolveReportHandler) // /{id}/resolve
-	http.HandleFunc("/api/v1/admin/users/", server.adminBanHandler)             // /{username}/(ban|unban)
-	http.HandleFunc("/api/v1/admin/banned", server.adminBannedUsersHandler)
+	http.HandleFunc("/admin", rateLimit(server.adminPortalHandler))
+	http.HandleFunc("/admin/", rateLimit(server.adminPortalHandler))
+	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))
+	http.HandleFunc("/api/v1/admin/users", rateLimit(server.adminUsersHandler))
+	http.HandleFunc("/api/v1/admin/broadcast", rateLimit(server.adminBroadcastHandler))
+	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
+	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
+	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve
+	http.HandleFunc("/api/v1/admin/users/", rateLimit(server.adminBanHandler))             // /{username}/(ban|unban|role)
+	http.HandleFunc("/api/v1/admin/banned", rateLimit(server.adminBannedUsersHandler))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
@@ -4817,7 +4833,14 @@ func (s *NexusServer) avatarHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Username required", 400)
 		return
 	}
-	// Securely serve avatar file
+	// Block path traversal: reject anything that isn't a plain valid
+	// username. validUsername already enforces [a-zA-Z0-9_] and length —
+	// the same regex used at registration — so callers can't sneak ".." or
+	// "/" into the avatar path.
+	if !validUsername(username) {
+		http.ServeFile(w, r, "assets/default_avatar.png")
+		return
+	}
 	path := "avatars/" + username + ".png"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		http.ServeFile(w, r, "assets/default_avatar.png")
@@ -4842,7 +4865,7 @@ func uploadDir() string {
 	if d := os.Getenv("PHAZE_UPLOAD_DIR"); d != "" {
 		return d
 	}
-	return uploadDir()
+	return "public/uploads"
 }
 
 func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
