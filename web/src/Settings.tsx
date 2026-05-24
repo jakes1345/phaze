@@ -371,8 +371,20 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
               {totpMsg && <p className={`settings-msg ${totpMsg.startsWith('2FA') ? 'ok' : 'err'}`}>{totpMsg}</p>}
               {totpUri && (
                 <div className="settings-totp-uri">
-                  <p className="settings-label">Copy this URI into your authenticator:</p>
-                  <code className="settings-totp-code-block">{totpUri}</code>
+                  <p className="settings-label">Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.):</p>
+                  <div style={{ textAlign: 'center', margin: '16px 0' }}>
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(totpUri)}`}
+                      alt="2FA QR Code"
+                      width={200}
+                      height={200}
+                      style={{ borderRadius: 8, border: '2px solid #232328' }}
+                    />
+                  </div>
+                  <details style={{ marginBottom: 12 }}>
+                    <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: '#888' }}>Can't scan? Copy the key manually</summary>
+                    <code className="settings-totp-code-block" style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>{totpUri}</code>
+                  </details>
                   <input className="settings-input" placeholder="Enter 6-digit code to confirm" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} inputMode="numeric" maxLength={6} />
                   <button className="settings-btn" onClick={confirmTotp}>Confirm 2FA</button>
                 </div>
