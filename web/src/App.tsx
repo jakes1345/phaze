@@ -399,6 +399,8 @@ export default function App() {
   const [showBackupNag, setShowBackupNag] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState('')
+  const [globalSearchResults, setGlobalSearchResults] = useState<string[]>([])
+  const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [paletteIdx, setPaletteIdx] = useState(0)
   const [slashIdx, setSlashIdx] = useState(0)
   const [recording, setRecording] = useState(false)
@@ -792,6 +794,9 @@ export default function App() {
           }
           break
 
+        case 'search_results':
+          setGlobalSearchResults(msg.results ?? [])
+          break
         case 'presence': {
           const pk = decodePublicKeyField(msg.public_key as string | number[] | undefined)
           if (msg.sender && pk && pk.length === 32) acceptPeerKey(msg.sender, pk, msg.key_fingerprint || '')
@@ -1210,10 +1215,26 @@ export default function App() {
 
   const paletteMatches = useMemo(() => {
     const q = paletteQuery.trim().toLowerCase()
-    const list = Object.entries(friends)
-    if (!q) return list.slice(0, 12)
-    return list.filter(([u]) => u.toLowerCase().includes(q)).slice(0, 12)
-  }, [paletteQuery, friends])
+    const friendList = Object.entries(friends)
+    const friendMatches = q ? friendList.filter(([u]) => u.toLowerCase().includes(q)) : friendList.slice(0, 12)
+    const friendNames = new Set(friendMatches.map(([u]) => u))
+    const globalExtras: [string, string][] = globalSearchResults
+      .filter((u) => !friendNames.has(u) && u !== me)
+      .map((u) => [u, 'unknown'] as [string, string])
+    return [...friendMatches, ...globalExtras].slice(0, 20)
+  }, [paletteQuery, friends, globalSearchResults, me])
+
+  useEffect(() => {
+    if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current)
+    const q = paletteQuery.trim()
+    if (q.length >= 2) {
+      globalSearchTimer.current = setTimeout(() => {
+        send({ type: 'search', body: q })
+      }, 300)
+    } else {
+      setGlobalSearchResults([])
+    }
+  }, [paletteQuery, send])
 
   const sendFile = useCallback(async (file: File) => {
     if (!selected || !me || !sessionToken) {
@@ -1536,27 +1557,32 @@ export default function App() {
             />
             <div className="palette-list">
               {paletteMatches.length === 0 && (
-                <div className="palette-empty">No friends match.</div>
+                <div className="palette-empty">{paletteQuery.length >= 2 ? 'No users found.' : 'Type to search all Phaze users…'}</div>
               )}
               {paletteMatches.map(([u, st], i) => {
-                const last = lastLineFor(me, u)
+                const isFriend = u in friends
+                const last = isFriend ? lastLineFor(me, u) : null
                 return (
                   <button
                     key={u}
                     type="button"
                     className={`palette-row ${i === paletteIdx ? 'on' : ''}`}
                     onMouseEnter={() => setPaletteIdx(i)}
-                    onClick={() => { openChat(u); setPaletteOpen(false) }}
+                    onClick={() => {
+                      if (isFriend) { openChat(u); setPaletteOpen(false) }
+                      else { sendFriendRequest(u); setPaletteOpen(false); setErr(`Friend request sent to ${u}`) }
+                    }}
                   >
                     <span className="avatar" style={{ background: avatarColor(u) }}>
                       {u[0]?.toUpperCase()}
-                      <span className="avatar-dot" style={{ background: statusColor(st) }} />
+                      <span className="avatar-dot" style={{ background: isFriend ? statusColor(st) : '#555' }} />
                     </span>
                     <span className="palette-meta">
                       <span className="palette-name">{u}</span>
-                      <span className="palette-preview">{last?.text || st}</span>
+                      <span className="palette-preview">{isFriend ? (last?.text || st) : 'Click to send friend request'}</span>
                     </span>
                     {last && <span className="palette-time">{relTime(last.ts)}</span>}
+                    {!isFriend && <span className="palette-time" style={{ color: '#863bff' }}>+ Add</span>}
                   </button>
                 )
               })}
