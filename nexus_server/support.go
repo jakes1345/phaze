@@ -187,7 +187,7 @@ func callGemini(apiKey, system string, msgs []supportMessage) (string, error) {
 		GenerationConfig:  genCfg{MaxOutputTokens: 600, Temperature: 0.4},
 	}
 	buf, _ := json.Marshal(payload)
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey
 	req, err := http.NewRequest("POST", url, bytes.NewReader(buf))
 	if err != nil {
 		return "", err
