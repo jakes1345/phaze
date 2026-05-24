@@ -385,7 +385,7 @@ export default function App() {
   const [view, setView] = useState<'dms' | 'spaces' | 'live'>('dms')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'light')
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'dark')
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [emojiOpen, setEmojiOpen] = useState(false)
   const unreadRef = useRef<Record<string, number>>({})
@@ -1472,15 +1472,7 @@ export default function App() {
       <header className="top">
         <div className="brand">
           <h1>Phaze</h1>
-          <p className="tagline">Stay in phase.</p>
         </div>
-        {me && (
-          <div className="view-switch" role="tablist" aria-label="View">
-            <button type="button" role="tab" aria-selected={view === 'dms'} className={view === 'dms' ? 'on' : ''} onClick={() => setView('dms')}>Chats</button>
-            <button type="button" role="tab" aria-selected={view === 'spaces'} className={view === 'spaces' ? 'on' : ''} onClick={() => setView('spaces')}>Spaces</button>
-            <button type="button" role="tab" aria-selected={view === 'live'} className={view === 'live' ? 'on' : ''} onClick={() => setView('live')}>🔴 Live</button>
-          </div>
-        )}
         {me && (
           <button className="palette-hint" title="Quick switcher (⌘K)" onClick={() => { setPaletteOpen(true); setPaletteQuery(''); setPaletteIdx(0) }}>
             <span>Search friends…</span>
@@ -1498,6 +1490,28 @@ export default function App() {
         )}
         {me && <span className="me">@{me}</span>}
       </header>
+
+      {/* ── Floating bottom nav ─────────────────────────────────── */}
+      {me && (
+        <nav className="floating-nav">
+          <button type="button" className={view === 'dms' ? 'on' : ''} onClick={() => setView('dms')}>
+            <span className="nav-icon">💬</span>
+            <span className="nav-label">Home</span>
+          </button>
+          <button type="button" className={view === 'spaces' ? 'on' : ''} onClick={() => setView('spaces')}>
+            <span className="nav-icon">🌐</span>
+            <span className="nav-label">Spaces</span>
+          </button>
+          <button type="button" className={view === 'live' ? 'on' : ''} onClick={() => setView('live')}>
+            <span className="nav-icon">🔴</span>
+            <span className="nav-label">Live</span>
+          </button>
+          <button type="button" onClick={() => setSettingsOpen(true)}>
+            <span className="nav-icon">👤</span>
+            <span className="nav-label">Profile</span>
+          </button>
+        </nav>
+      )}
 
       {err && <div className="banner">{err}</div>}
 
@@ -1739,457 +1753,464 @@ export default function App() {
         <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
       ) : (
         <>
-        {me && sessionToken && <Stories me={me} sessionToken={sessionToken} />}
-        <main className="grid">
-          {/* ── Panel 1: connect / auth ───────────────────────────── */}
-          <section className="panel">
-            <h2>Connect</h2>
-            {!me ? (
-              mode === 'login' ? (
-                <form className="form" onSubmit={(e) => { e.preventDefault(); doAuth(loginUser.trim(), loginPass, loginTotp.trim()) }}>
-                  <input placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} autoComplete="username" />
-                  <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} autoComplete="current-password" />
-                  <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
-                  <button type="submit">Sign in</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr('') }}>Forgot password?</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
-                </form>
-              ) : mode === 'forgot' ? (
-                <div className="form">
-                  <p className="muted small">Enter the email address on your account. We'll send a reset link.</p>
-                  <input type="email" placeholder="Email address" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} autoFocus />
-                  <button type="button" onClick={() => {
-                    if (!forgotEmail.includes('@')) { setErr('Enter a valid email'); return }
-                    send({ type: 'forgot_password', email: forgotEmail })
-                    setErr('If an account matches, a reset link has been sent to your email.')
-                  }}>Send reset link</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
-                </div>
-              ) : mode === 'link' ? (
-                <div className="form">
-                  <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
-                  <input placeholder="Link code" value={linkInput} onChange={(e) => setLinkInput(e.target.value.trim())} autoFocus maxLength={32} />
-                  <button type="button" disabled={linkBusy || linkInput.length < 8} onClick={() => {
-                    setLinkBusy(true)
-                    setErr('Waiting for approval on your other device…')
-                    const tok = linkInput
-                    // Approval happens on the other device → poll until it lands.
-                    const poll = setInterval(() => sendRef.current({ type: 'link_check', token: tok }), 2500)
-                    sendRef.current({ type: 'link_check', token: tok })
-                    setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
-                  }}>{linkBusy ? 'Waiting…' : 'Sign in with code'}</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
-                </div>
-              ) : regStep === 'form' ? (
-                <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
-                  <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
-                  <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" required />
-                  <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />
-                  <button type="submit">Create account</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
-                </form>
-              ) : (
-                <div className="form">
-                  <p className="muted small">We sent a verification link to <strong>{regEmail}</strong>. Click it, or enter the code below.</p>
-                  <input inputMode="numeric" pattern="\d{6}" maxLength={6} placeholder="123456" value={regCode} onChange={(e) => setRegCode(e.target.value)} />
-                  <button type="button" onClick={doVerify}>Verify email</button>
-                  <button type="button" className="link-btn" onClick={() => {
-                    send({ type: 'resend_verification', sender: regUser, email: regEmail })
-                    setErr('Verification code resent. Check your email.')
-                  }}>Resend code</button>
-                  <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr(''); setRegStep('form') }}>Cancel</button>
-                </div>
-              )
-            ) : (
-              <>
-                <div className="form">
-                  <input placeholder="Friend username" value={addFriend} onChange={(e) => setAddFriend(e.target.value)} />
-                  <button type="button" onClick={() => { sendFriendRequest(addFriend.trim()); setAddFriend('') }}>Add friend</button>
-                </div>
-              </>
-            )}
-          </section>
-
-          {/* ── Panel 2: friends list ─────────────────────────────── */}
-          {me && (
-            <>
+        {/* ── Auth (not logged in) ─────────────────────────────── */}
+        {!me && (
+          <main className="grid">
+            <div className="hub-auth">
               <section className="panel">
-                <h2>Friends</h2>
-                {Object.keys(friends).length === 0 && (
-                  <div className="friends-empty">
-                    <div className="friends-empty-icon">👋</div>
-                    <p><strong>No friends yet.</strong></p>
-                    <p className="muted small">Add someone above by their Phaze username. They get a friend request and once they accept you can chat + call.</p>
+                <h2>Sign in to Phaze</h2>
+                {mode === 'login' ? (
+                  <form className="form" onSubmit={(e) => { e.preventDefault(); doAuth(loginUser.trim(), loginPass, loginTotp.trim()) }}>
+                    <input placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} autoComplete="username" />
+                    <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} autoComplete="current-password" />
+                    <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
+                    <button type="submit">Sign in</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr('') }}>Forgot password?</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
+                  </form>
+                ) : mode === 'forgot' ? (
+                  <div className="form">
+                    <p className="muted small">Enter the email address on your account. We'll send a reset link.</p>
+                    <input type="email" placeholder="Email address" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} autoFocus />
+                    <button type="button" onClick={() => {
+                      if (!forgotEmail.includes('@')) { setErr('Enter a valid email'); return }
+                      send({ type: 'forgot_password', email: forgotEmail })
+                      setErr('If an account matches, a reset link has been sent to your email.')
+                    }}>Send reset link</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
                   </div>
-                )}
-                <ul className="list">
-                  {Object.entries(friends)
-                    .map(([u, st]) => ({ u, st, last: lastLineFor(me, u) }))
-                    .sort((a, b) => (b.last?.ts ?? 0) - (a.last?.ts ?? 0))
-                    .map(({ u, st, last }) => (
-                    <li key={u}>
-                      <button type="button" className={`friend-row ${selected === u ? 'sel' : ''}`} onClick={() => openChat(u)}>
-                        <span className="avatar" style={{ background: avatarColor(u) }}>
-                          {u[0]?.toUpperCase()}
-                          <span className="avatar-dot" style={{ background: statusColor(st) }} />
-                        </span>
-                        <span className="friend-meta">
-                          <span className="friend-line">
-                            <span className="friend-name">{u}</span>
-                            {last && <span className="friend-time">{relTime(last.ts)}</span>}
-                          </span>
-                          <span className="friend-line">
-                            <span className="friend-preview">{last?.text || st}</span>
-                            {unread[u] > 0 && selected !== u && (
-                              <span className="unread-badge">{unread[u] > 99 ? '99+' : unread[u]}</span>
-                            )}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                {pending.length > 0 && (
-                  <>
-                    <h3>Requests</h3>
-                    {pending.map((u) => (
-                      <div key={u} className="row">
-                        <span>{u}</span>
-                        <button type="button" onClick={() => acceptFriend(u)}>Accept</button>
-                      </div>
-                    ))}
-                  </>
+                ) : mode === 'link' ? (
+                  <div className="form">
+                    <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
+                    <input placeholder="Link code" value={linkInput} onChange={(e) => setLinkInput(e.target.value.trim())} autoFocus maxLength={32} />
+                    <button type="button" disabled={linkBusy || linkInput.length < 8} onClick={() => {
+                      setLinkBusy(true)
+                      setErr('Waiting for approval on your other device…')
+                      const tok = linkInput
+                      const poll = setInterval(() => sendRef.current({ type: 'link_check', token: tok }), 2500)
+                      sendRef.current({ type: 'link_check', token: tok })
+                      setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
+                    }}>{linkBusy ? 'Waiting…' : 'Sign in with code'}</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
+                  </div>
+                ) : regStep === 'form' ? (
+                  <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
+                    <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
+                    <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" required />
+                    <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />
+                    <button type="submit">Create account</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
+                  </form>
+                ) : (
+                  <div className="form">
+                    <p className="muted small">We sent a verification link to <strong>{regEmail}</strong>. Click it, or enter the code below.</p>
+                    <input inputMode="numeric" pattern="\d{6}" maxLength={6} placeholder="123456" value={regCode} onChange={(e) => setRegCode(e.target.value)} />
+                    <button type="button" onClick={doVerify}>Verify email</button>
+                    <button type="button" className="link-btn" onClick={() => {
+                      send({ type: 'resend_verification', sender: regUser, email: regEmail })
+                      setErr('Verification code resent. Check your email.')
+                    }}>Resend code</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr(''); setRegStep('form') }}>Cancel</button>
+                  </div>
                 )}
               </section>
+            </div>
+          </main>
+        )}
 
-              {/* ── Panel 3: chat ─────────────────────────────────── */}
-              <section className="panel grow">
-                <div className="chat-header-bar">
-                  {selected ? (
-                    <>
-                      <span className="status-dot" style={{ background: statusColor(friends[selected] ?? 'Offline') }} />
-                      <span className="chat-peer-name clickable" onClick={() => setProfileUser(selected)}>{selected}</span>
-                      <span className="chat-peer-status muted small">{friends[selected] ?? 'Offline'}</span>
-                      <div className="chat-call-btns">
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title={pinnedIds.length > 0 ? `${pinnedIds.length} pinned` : 'No pinned messages'}
-                          onClick={() => setPinsOpen((v) => !v)}
-                        >📌{pinnedIds.length > 0 ? <span className="header-count">{pinnedIds.length}</span> : null}</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title="Search in this chat"
-                          onClick={() => setSearchOpen((v) => !v)}
-                        >🔍</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title={selected && mutedPeers.has(selected) ? 'Unmute notifications' : 'Mute notifications'}
-                          onClick={() => selected && togglePeerMute(selected)}
-                        >{selected && mutedPeers.has(selected) ? '🔕' : '🔔'}</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title="Audio call"
-                          onClick={() => void startCall('audio')}
-                          disabled={!me}
-                        >☎</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title="Video call"
-                          onClick={() => void startCall('video')}
-                          disabled={!me}
-                        >📹</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title={`Block ${selected}`}
-                          onClick={() => {
-                            if (selected && me && confirm(`Block ${selected}? They won't be able to message you.`)) {
-                              send({ type: 'block', sender: me, recipient: selected })
-                            }
-                          }}
-                        >🚫</button>
-                        <button
-                          type="button"
-                          className="chat-call-btn"
-                          title={`Report ${selected}`}
-                          onClick={() => { setReportTarget(selected); setReportReason(''); setReportSent(false) }}
-                        >⚑</button>
-                      </div>
-                    </>
-                  ) : (
-                    <span className="muted small">Select a friend to chat</span>
-                  )}
+        {/* ── Hub view (logged in, DMs) ───────────────────────────── */}
+        {me && sessionToken && <Stories me={me} sessionToken={sessionToken} />}
+        {me && (
+          <main className="grid">
+            <div className={`hub-content ${selected ? 'chat-open' : ''}`}>
+              {/* ── Sidebar: add friend + friends list ────────────── */}
+              <div className="hub-sidebar">
+                <div className="hub-add-friend">
+                  <div className="form">
+                    <input placeholder="Add a friend by username" value={addFriend} onChange={(e) => setAddFriend(e.target.value)} />
+                    <button type="button" onClick={() => { sendFriendRequest(addFriend.trim()); setAddFriend('') }}>Add</button>
+                  </div>
                 </div>
-
-                {selected && searchOpen && (
-                  <div className="search-bar">
-                    <input
-                      autoFocus
-                      placeholder="Find in conversation…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearch('') } }}
-                    />
-                    {search && (
-                      <span className="muted small">{log.filter((l) => !l.deleted && l.text.toLowerCase().includes(search.toLowerCase())).length} matches</span>
-                    )}
-                    <button type="button" className="link-btn" onClick={() => { setSearch(''); setSearchOpen(false) }}>Close</button>
-                  </div>
-                )}
-
-                {selected && pinsOpen && pinnedIds.length > 0 && (
-                  <div className="pinned-strip">
-                    <div className="pinned-title">📌 Pinned</div>
-                    {log.filter((l) => pinnedIds.includes(l.id)).map((l) => (
-                      <button
-                        type="button"
-                        key={l.id}
-                        className="pinned-item"
-                        onClick={() => { scrollToMessage(l.id) }}
-                        title="Jump to message"
-                      >
-                        <span className="muted small">{l.from}:</span>{' '}
-                        <span>{l.file ? `📎 ${l.file.name}` : (l.deleted ? '[deleted]' : l.text.slice(0, 80))}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="chat" ref={chatScrollRef}>
-                  {!selected && (
-                    <div className="chat-empty">
-                      <div className="chat-empty-art">
-                        <img src="/web/favicon.svg" alt="" />
-                      </div>
-                      <h3>Stay in phase.</h3>
-                      <p>
-                        {Object.keys(friends).length === 0
-                          ? 'Pick a username on the left to add your first friend — once they accept, your chat shows up here.'
-                          : 'Pick someone from your friends list to start (or jump in) a conversation.'}
-                      </p>
-                      <p className="chat-empty-hints">
-                        <kbd>⌘K</kbd> quick switcher · <kbd>/</kbd> commands · <kbd>@</kbd> mention
-                      </p>
+                <div className="hub-friends">
+                  {Object.keys(friends).length === 0 && (
+                    <div className="friends-empty">
+                      <div className="friends-empty-icon">👋</div>
+                      <p><strong>No friends yet.</strong></p>
+                      <p className="muted small">Add someone by their Phaze username. They get a friend request and once they accept you can chat + call.</p>
                     </div>
                   )}
-                  {(() => {
-                    const q = search.trim().toLowerCase()
-                    const view = q ? log.filter((l) => !l.deleted && (l.text.toLowerCase().includes(q) || l.from.toLowerCase().includes(q))) : log
-                    return view.map((line, i) => {
-                    const prev = view[i - 1]
-                    const showGap = !prev || (line.ts - prev.ts) > 5 * 60 * 1000 || prev.me !== line.me
-                    const isPinned = pinnedIds.includes(line.id)
-                    const mentionsMe = !!me && containsMention(line.text, me)
-                    return (
-                      <div key={line.id} data-msg-id={line.id} className={`bubble-row ${line.me ? 'me' : ''}`}>
-                        {!line.me && showGap && (
-                          <span className="bubble-avatar" style={{ background: avatarColor(line.from) }}>
-                            {line.from[0]?.toUpperCase()}
+                  <ul className="list">
+                    {Object.entries(friends)
+                      .map(([u, st]) => ({ u, st, last: lastLineFor(me, u) }))
+                      .sort((a, b) => (b.last?.ts ?? 0) - (a.last?.ts ?? 0))
+                      .map(({ u, st, last }) => (
+                      <li key={u}>
+                        <button type="button" className={`friend-row ${selected === u ? 'sel' : ''}`} onClick={() => openChat(u)}>
+                          <span className="avatar" style={{ background: avatarColor(u) }}>
+                            {u[0]?.toUpperCase()}
+                            <span className="avatar-dot" style={{ background: statusColor(st) }} />
                           </span>
-                        )}
-                        {!line.me && !showGap && <span className="bubble-avatar-spacer" />}
-                        <div className={`bubble ${line.me ? 'me' : ''} ${line.deleted ? 'deleted' : ''} ${isPinned ? 'pinned' : ''} ${mentionsMe ? 'mentions-me' : ''}`} title={new Date(line.ts).toLocaleString()}>
-                          {showGap && !line.me && <span className="who clickable" onClick={() => setProfileUser(line.from)}>{line.from}</span>}
-                          {line.deleted ? (
-                            <span className="bubble-text deleted-text">message deleted</span>
-                          ) : line.file ? (
-                            isImage(line.file.mime, line.file.name) ? (
-                              <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
-                                <img src={line.file.url} alt={line.file.name} className="bubble-image" loading="lazy" />
-                              </a>
-                            ) : isVideo(line.file.mime, line.file.name) ? (
-                              <video controls preload="metadata" src={line.file.url} className="bubble-video" />
-                            ) : isAudio(line.file.mime, line.file.name) ? (
-                              <div className="bubble-audio">
-                                <span className="bubble-audio-icon">🎙️</span>
-                                <audio controls preload="metadata" src={line.file.url} />
-                              </div>
-                            ) : (
-                              <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-file">
-                                <span className="bubble-file-icon">📎</span>
-                                <span className="bubble-file-meta">
-                                  <span className="bubble-file-name">{line.file.name}</span>
-                                  <span className="bubble-file-size">{fmtBytes(line.file.size)}</span>
-                                </span>
-                              </a>
-                            )
-                          ) : (
-                            <span className="bubble-text"><RichText text={line.text} me={me} />{line.edited && <span className="edited-tag"> (edited)</span>}</span>
-                          )}
-                          <span className="bubble-ts">{formatTime(line.ts)}</span>
-                          {line.reactions && Object.keys(line.reactions).length > 0 && (
-                            <div className="reactions">
-                              {Object.entries(line.reactions).map(([e, users]) => (
-                                <button
-                                  key={e}
-                                  type="button"
-                                  className={`react-chip ${me && users.includes(me) ? 'mine' : ''}`}
-                                  onClick={() => reactTo(line, e)}
-                                  title={users.join(', ')}
-                                >{e} {users.length}</button>
-                              ))}
-                            </div>
-                          )}
-                          {!line.deleted && (
-                            <div className="bubble-actions">
-                              {REACTION_EMOJIS.map((e) => (
-                                <button key={e} type="button" className="action-btn react" onClick={() => reactTo(line, e)} title={`React ${e}`}>{e}</button>
-                              ))}
-                              <button type="button" className="action-btn" onClick={() => togglePin(line)} title={isPinned ? 'Unpin' : 'Pin'}>{isPinned ? '📍' : '📌'}</button>
-                              {line.me && !line.file && (
-                                <button type="button" className="action-btn" onClick={() => beginEdit(line)} title="Edit">✏️</button>
+                          <span className="friend-meta">
+                            <span className="friend-line">
+                              <span className="friend-name">{u}</span>
+                              {last && <span className="friend-time">{relTime(last.ts)}</span>}
+                            </span>
+                            <span className="friend-line">
+                              <span className="friend-preview">{last?.text || st}</span>
+                              {unread[u] > 0 && selected !== u && (
+                                <span className="unread-badge">{unread[u] > 99 ? '99+' : unread[u]}</span>
                               )}
-                              {line.me && (
-                                <button type="button" className="action-btn" onClick={() => deleteMessage(line)} title="Delete">🗑</button>
-                              )}
-                            </div>
-                          )}
-                          {isPinned && <span className="pin-indicator" title="Pinned">📌</span>}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {pending.length > 0 && (
+                    <>
+                      <h3>Requests</h3>
+                      {pending.map((u) => (
+                        <div key={u} className="row">
+                          <span>{u}</span>
+                          <button type="button" onClick={() => acceptFriend(u)}>Accept</button>
                         </div>
-                      </div>
-                    )
-                  })
-                  })()}
-                  {selected && typingPeers.has(selected) && (
-                    <div className="typing-indicator">
-                      <span>{selected} is typing</span>
-                      <span className="typing-dots"><span /><span /><span /></span>
-                    </div>
+                      ))}
+                    </>
                   )}
                 </div>
+              </div>
 
-                {selected && editingId && (
-                  <div className="edit-banner">
-                    <span>Editing message</span>
-                    <button type="button" className="link-btn" onClick={cancelEdit}>Cancel</button>
+              {/* ── Chat view ─────────────────────────────────────── */}
+              <div className="hub-chat-view">
+                <section className="panel grow">
+                  <div className="chat-header-bar">
+                    {selected ? (
+                      <>
+                        <button type="button" className="chat-back-btn" onClick={() => setSelected(null)} title="Back to hub">
+                          ← Back
+                        </button>
+                        <span className="status-dot" style={{ background: statusColor(friends[selected] ?? 'Offline') }} />
+                        <span className="chat-peer-name clickable" onClick={() => setProfileUser(selected)}>{selected}</span>
+                        <span className="chat-peer-status muted small">{friends[selected] ?? 'Offline'}</span>
+                        <div className="chat-call-btns">
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title={pinnedIds.length > 0 ? `${pinnedIds.length} pinned` : 'No pinned messages'}
+                            onClick={() => setPinsOpen((v) => !v)}
+                          >📌{pinnedIds.length > 0 ? <span className="header-count">{pinnedIds.length}</span> : null}</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title="Search in this chat"
+                            onClick={() => setSearchOpen((v) => !v)}
+                          >🔍</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title={selected && mutedPeers.has(selected) ? 'Unmute notifications' : 'Mute notifications'}
+                            onClick={() => selected && togglePeerMute(selected)}
+                          >{selected && mutedPeers.has(selected) ? '🔕' : '🔔'}</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title="Audio call"
+                            onClick={() => void startCall('audio')}
+                            disabled={!me}
+                          >☎</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title="Video call"
+                            onClick={() => void startCall('video')}
+                            disabled={!me}
+                          >📹</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title={`Block ${selected}`}
+                            onClick={() => {
+                              if (selected && me && confirm(`Block ${selected}? They won't be able to message you.`)) {
+                                send({ type: 'block', sender: me, recipient: selected })
+                              }
+                            }}
+                          >🚫</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
+                            title={`Report ${selected}`}
+                            onClick={() => { setReportTarget(selected); setReportReason(''); setReportSent(false) }}
+                          >⚑</button>
+                        </div>
+                      </>
+                    ) : (
+                      <span className="muted small">Select a friend to chat</span>
+                    )}
                   </div>
-                )}
 
-                {selected && recording && (
-                  <div className="edit-banner rec-banner">
-                    <span><span className="rec-dot" /> Recording {fmtDuration(recDuration)} — press ⏹ to send, ✕ to cancel</span>
+                  {selected && searchOpen && (
+                    <div className="search-bar">
+                      <input
+                        autoFocus
+                        placeholder="Find in conversation…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearch('') } }}
+                      />
+                      {search && (
+                        <span className="muted small">{log.filter((l) => !l.deleted && l.text.toLowerCase().includes(search.toLowerCase())).length} matches</span>
+                      )}
+                      <button type="button" className="link-btn" onClick={() => { setSearch(''); setSearchOpen(false) }}>Close</button>
+                    </div>
+                  )}
+
+                  {selected && pinsOpen && pinnedIds.length > 0 && (
+                    <div className="pinned-strip">
+                      <div className="pinned-title">📌 Pinned</div>
+                      {log.filter((l) => pinnedIds.includes(l.id)).map((l) => (
+                        <button
+                          type="button"
+                          key={l.id}
+                          className="pinned-item"
+                          onClick={() => { scrollToMessage(l.id) }}
+                          title="Jump to message"
+                        >
+                          <span className="muted small">{l.from}:</span>{' '}
+                          <span>{l.file ? `📎 ${l.file.name}` : (l.deleted ? '[deleted]' : l.text.slice(0, 80))}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="chat" ref={chatScrollRef}>
+                    {!selected && (
+                      <div className="chat-empty">
+                        <div className="chat-empty-art">
+                          <img src="/web/favicon.svg" alt="" />
+                        </div>
+                        <h3>Stay in phase.</h3>
+                        <p>
+                          {Object.keys(friends).length === 0
+                            ? 'Add a friend by username to get started — once they accept, your conversation appears here.'
+                            : 'Pick someone from your friends list to start a conversation.'}
+                        </p>
+                        <p className="chat-empty-hints">
+                          <kbd>⌘K</kbd> quick switcher · <kbd>/</kbd> commands · <kbd>@</kbd> mention
+                        </p>
+                      </div>
+                    )}
+                    {(() => {
+                      const q = search.trim().toLowerCase()
+                      const view = q ? log.filter((l) => !l.deleted && (l.text.toLowerCase().includes(q) || l.from.toLowerCase().includes(q))) : log
+                      return view.map((line, i) => {
+                      const prev = view[i - 1]
+                      const showGap = !prev || (line.ts - prev.ts) > 5 * 60 * 1000 || prev.me !== line.me
+                      const isPinned = pinnedIds.includes(line.id)
+                      const mentionsMe = !!me && containsMention(line.text, me)
+                      return (
+                        <div key={line.id} data-msg-id={line.id} className={`bubble-row ${line.me ? 'me' : ''}`}>
+                          {!line.me && showGap && (
+                            <span className="bubble-avatar" style={{ background: avatarColor(line.from) }}>
+                              {line.from[0]?.toUpperCase()}
+                            </span>
+                          )}
+                          {!line.me && !showGap && <span className="bubble-avatar-spacer" />}
+                          <div className={`bubble ${line.me ? 'me' : ''} ${line.deleted ? 'deleted' : ''} ${isPinned ? 'pinned' : ''} ${mentionsMe ? 'mentions-me' : ''}`} title={new Date(line.ts).toLocaleString()}>
+                            {showGap && !line.me && <span className="who clickable" onClick={() => setProfileUser(line.from)}>{line.from}</span>}
+                            {line.deleted ? (
+                              <span className="bubble-text deleted-text">message deleted</span>
+                            ) : line.file ? (
+                              isImage(line.file.mime, line.file.name) ? (
+                                <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-image-link">
+                                  <img src={line.file.url} alt={line.file.name} className="bubble-image" loading="lazy" />
+                                </a>
+                              ) : isVideo(line.file.mime, line.file.name) ? (
+                                <video controls preload="metadata" src={line.file.url} className="bubble-video" />
+                              ) : isAudio(line.file.mime, line.file.name) ? (
+                                <div className="bubble-audio">
+                                  <span className="bubble-audio-icon">🎙️</span>
+                                  <audio controls preload="metadata" src={line.file.url} />
+                                </div>
+                              ) : (
+                                <a href={line.file.url} target="_blank" rel="noopener noreferrer" className="bubble-file">
+                                  <span className="bubble-file-icon">📎</span>
+                                  <span className="bubble-file-meta">
+                                    <span className="bubble-file-name">{line.file.name}</span>
+                                    <span className="bubble-file-size">{fmtBytes(line.file.size)}</span>
+                                  </span>
+                                </a>
+                              )
+                            ) : (
+                              <span className="bubble-text"><RichText text={line.text} me={me} />{line.edited && <span className="edited-tag"> (edited)</span>}</span>
+                            )}
+                            <span className="bubble-ts">{formatTime(line.ts)}</span>
+                            {line.reactions && Object.keys(line.reactions).length > 0 && (
+                              <div className="reactions">
+                                {Object.entries(line.reactions).map(([e, users]) => (
+                                  <button
+                                    key={e}
+                                    type="button"
+                                    className={`react-chip ${me && users.includes(me) ? 'mine' : ''}`}
+                                    onClick={() => reactTo(line, e)}
+                                    title={users.join(', ')}
+                                  >{e} {users.length}</button>
+                                ))}
+                              </div>
+                            )}
+                            {!line.deleted && (
+                              <div className="bubble-actions">
+                                {REACTION_EMOJIS.map((e) => (
+                                  <button key={e} type="button" className="action-btn react" onClick={() => reactTo(line, e)} title={`React ${e}`}>{e}</button>
+                                ))}
+                                <button type="button" className="action-btn" onClick={() => togglePin(line)} title={isPinned ? 'Unpin' : 'Pin'}>{isPinned ? '📍' : '📌'}</button>
+                                {line.me && !line.file && (
+                                  <button type="button" className="action-btn" onClick={() => beginEdit(line)} title="Edit">✏️</button>
+                                )}
+                                {line.me && (
+                                  <button type="button" className="action-btn" onClick={() => deleteMessage(line)} title="Delete">🗑</button>
+                                )}
+                              </div>
+                            )}
+                            {isPinned && <span className="pin-indicator" title="Pinned">📌</span>}
+                          </div>
+                        </div>
+                      )
+                    })
+                    })()}
+                    {selected && typingPeers.has(selected) && (
+                      <div className="typing-indicator">
+                        <span>{selected} is typing</span>
+                        <span className="typing-dots"><span /><span /><span /></span>
+                      </div>
+                    )}
                   </div>
-                )}
 
-                {selected && (
-                  <div className="row send">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0]
-                        if (f) void sendFile(f)
-                        e.target.value = ''
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="emoji-btn"
-                      title="Attach file"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={!!editingId || recording}
-                    >📎</button>
-                    <button
-                      type="button"
-                      className={`emoji-btn mic-btn ${recording ? 'recording' : ''}`}
-                      title={recording ? `Stop & send (${fmtDuration(recDuration)})` : 'Record voice message'}
-                      onClick={() => void startRecording()}
-                      disabled={!!editingId}
-                    >{recording ? '⏹' : '🎙️'}</button>
-                    {recording && (
+                  {selected && editingId && (
+                    <div className="edit-banner">
+                      <span>Editing message</span>
+                      <button type="button" className="link-btn" onClick={cancelEdit}>Cancel</button>
+                    </div>
+                  )}
+
+                  {selected && recording && (
+                    <div className="edit-banner rec-banner">
+                      <span><span className="rec-dot" /> Recording {fmtDuration(recDuration)} — press ⏹ to send, ✕ to cancel</span>
+                    </div>
+                  )}
+
+                  {selected && (
+                    <div className="row send">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0]
+                          if (f) void sendFile(f)
+                          e.target.value = ''
+                        }}
+                      />
                       <button
                         type="button"
                         className="emoji-btn"
-                        title="Cancel"
-                        onClick={() => stopRecording(true)}
-                      >✕</button>
-                    )}
-                    <div className="emoji-wrap">
-                      <button type="button" className="emoji-btn" title="Emoji" onClick={() => setEmojiOpen((v) => !v)}>😊</button>
-                      {emojiOpen && (
-                        <div className="emoji-picker" role="dialog" aria-label="Emoji picker">
-                          {EMOJIS.map((e) => (
-                            <button
-                              key={e}
-                              type="button"
-                              className="emoji-cell"
-                              onClick={() => { setDraft((d) => d + e); setEmojiOpen(false) }}
-                            >{e}</button>
-                          ))}
-                        </div>
+                        title="Attach file"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={!!editingId || recording}
+                      >📎</button>
+                      <button
+                        type="button"
+                        className={`emoji-btn mic-btn ${recording ? 'recording' : ''}`}
+                        title={recording ? `Stop & send (${fmtDuration(recDuration)})` : 'Record voice message'}
+                        onClick={() => void startRecording()}
+                        disabled={!!editingId}
+                      >{recording ? '⏹' : '🎙️'}</button>
+                      {recording && (
+                        <button
+                          type="button"
+                          className="emoji-btn"
+                          title="Cancel"
+                          onClick={() => stopRecording(true)}
+                        >✕</button>
                       )}
+                      <div className="emoji-wrap">
+                        <button type="button" className="emoji-btn" title="Emoji" onClick={() => setEmojiOpen((v) => !v)}>😊</button>
+                        {emojiOpen && (
+                          <div className="emoji-picker" role="dialog" aria-label="Emoji picker">
+                            {EMOJIS.map((e) => (
+                              <button
+                                key={e}
+                                type="button"
+                                className="emoji-cell"
+                                onClick={() => { setDraft((d) => d + e); setEmojiOpen(false) }}
+                              >{e}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="draft-wrap">
+                        <input
+                          ref={draftInputRef}
+                          value={draft}
+                          onChange={handleDraftChange}
+                          onKeyDown={(e) => {
+                            if (slashMatches.length > 0) {
+                              if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashMatches.length); return }
+                              if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashMatches.length) % slashMatches.length); return }
+                              if (e.key === 'Tab') { e.preventDefault(); setDraft(slashMatches[slashIdx].cmd + ' '); setSlashIdx(0); return }
+                            }
+                            if (mentionMatches.length > 0 && mentionQuery !== null) {
+                              if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionMatches.length); return }
+                              if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return }
+                              if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); completeMention(mentionMatches[mentionIdx]); return }
+                              if (e.key === 'Escape') { setMentionQuery(null); return }
+                            }
+                            if (e.key === 'Enter') sendChat()
+                            else if (e.key === 'Escape' && editingId) cancelEdit()
+                          }}
+                          placeholder={editingId ? 'Edit message…' : (e2eReady ? 'Message  ·  / for commands  ·  @ to mention' : 'Message')}
+                        />
+                        {slashMatches.length > 0 && (
+                          <div className="mention-pop slash-pop" role="dialog" aria-label="Slash commands">
+                            {slashMatches.map((c, i) => (
+                              <button
+                                key={c.cmd}
+                                type="button"
+                                className={`mention-row ${i === slashIdx ? 'on' : ''}`}
+                                onMouseDown={(e) => { e.preventDefault(); setDraft(c.cmd + ' '); setSlashIdx(0); draftInputRef.current?.focus() }}
+                                onMouseEnter={() => setSlashIdx(i)}
+                              >
+                                <span className="slash-cmd mono">{c.cmd}</span>
+                                <span className="slash-desc">{c.desc}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {mentionMatches.length > 0 && mentionQuery !== null && (
+                          <div className="mention-pop">
+                            {mentionMatches.map((u, i) => (
+                              <button
+                                type="button"
+                                key={u}
+                                className={`mention-row ${i === mentionIdx ? 'on' : ''}`}
+                                onMouseDown={(e) => { e.preventDefault(); completeMention(u) }}
+                                onMouseEnter={() => setMentionIdx(i)}
+                              >
+                                <span className="avatar small" style={{ background: avatarColor(u) }}>{u[0]?.toUpperCase()}</span>
+                                <span>{u}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button type="button" onClick={sendChat}>{editingId ? 'Save' : 'Send'}</button>
                     </div>
-                    <div className="draft-wrap">
-                      <input
-                        ref={draftInputRef}
-                        value={draft}
-                        onChange={handleDraftChange}
-                        onKeyDown={(e) => {
-                          if (slashMatches.length > 0) {
-                            if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashMatches.length); return }
-                            if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashMatches.length) % slashMatches.length); return }
-                            if (e.key === 'Tab') { e.preventDefault(); setDraft(slashMatches[slashIdx].cmd + ' '); setSlashIdx(0); return }
-                          }
-                          if (mentionMatches.length > 0 && mentionQuery !== null) {
-                            if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionMatches.length); return }
-                            if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return }
-                            if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); completeMention(mentionMatches[mentionIdx]); return }
-                            if (e.key === 'Escape') { setMentionQuery(null); return }
-                          }
-                          if (e.key === 'Enter') sendChat()
-                          else if (e.key === 'Escape' && editingId) cancelEdit()
-                        }}
-                        placeholder={editingId ? 'Edit message…' : (e2eReady ? 'Message  ·  / for commands  ·  @ to mention' : 'Message')}
-                      />
-                      {slashMatches.length > 0 && (
-                        <div className="mention-pop slash-pop" role="dialog" aria-label="Slash commands">
-                          {slashMatches.map((c, i) => (
-                            <button
-                              key={c.cmd}
-                              type="button"
-                              className={`mention-row ${i === slashIdx ? 'on' : ''}`}
-                              onMouseDown={(e) => { e.preventDefault(); setDraft(c.cmd + ' '); setSlashIdx(0); draftInputRef.current?.focus() }}
-                              onMouseEnter={() => setSlashIdx(i)}
-                            >
-                              <span className="slash-cmd mono">{c.cmd}</span>
-                              <span className="slash-desc">{c.desc}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {mentionMatches.length > 0 && mentionQuery !== null && (
-                        <div className="mention-pop">
-                          {mentionMatches.map((u, i) => (
-                            <button
-                              type="button"
-                              key={u}
-                              className={`mention-row ${i === mentionIdx ? 'on' : ''}`}
-                              onMouseDown={(e) => { e.preventDefault(); completeMention(u) }}
-                              onMouseEnter={() => setMentionIdx(i)}
-                            >
-                              <span className="avatar small" style={{ background: avatarColor(u) }}>{u[0]?.toUpperCase()}</span>
-                              <span>{u}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button type="button" onClick={sendChat}>{editingId ? 'Save' : 'Send'}</button>
-                  </div>
-                )}
-              </section>
-
-              {/* Panel 4 removed — account management is in ⚙ Settings */}
-            </>
-          )}
-        </main>
+                  )}
+                </section>
+              </div>
+            </div>
+          </main>
+        )}
         </>
       )}
 
