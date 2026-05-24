@@ -931,10 +931,57 @@ func (s *NexusServer) verifyUser(username, code string) bool {
 }
 
 func (s *NexusServer) sendEmail(to, subject, body string) error {
+	// Preference order: Resend (no IP allowlist) → Brevo → SMTP. Each one
+	// is opt-in via its env var; users can run with whichever they have.
+	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
+		return sendEmailResend(apiKey, to, subject, body)
+	}
 	if apiKey := os.Getenv("BREVO_API_KEY"); apiKey != "" {
 		return sendEmailBrevo(apiKey, to, subject, body)
 	}
 	return sendEmailSMTP(to, subject, body)
+}
+
+// sendEmailResend posts to Resend's HTTP API. No IP allowlist, no SMTP
+// fragility — just an API key. Free tier covers 100 emails/day, plenty
+// for verification flows. https://resend.com/docs/api-reference/emails/send-email
+func sendEmailResend(apiKey, to, subject, body string) error {
+	from := os.Getenv("RESEND_SENDER")
+	if from == "" {
+		// Resend requires the sender to be from a verified domain. Default
+		// to onboarding@resend.dev (Resend's built-in sandbox sender) so
+		// the first run works without any DNS setup; users override with
+		// RESEND_SENDER="Phaze <noreply@phazechat.world>" once their
+		// custom domain is verified in the Resend dashboard.
+		from = "Phaze <onboarding@resend.dev>"
+	}
+	payload := map[string]any{
+		"from":    from,
+		"to":      []string{to},
+		"subject": subject,
+		"html":    body,
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	return fmt.Errorf("resend api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 }
 
 // sendEmailBrevo posts to Brevo's transactional API. Preferred over SMTP — auth
@@ -3427,8 +3474,9 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	turnOK := TurnSecret != "" && TurnURL != ""
 	turnFallback := !turnOK // we still serve openrelay public TURN as fallback
+	resendOK := os.Getenv("RESEND_API_KEY") != ""
 	brevoOK := os.Getenv("BREVO_API_KEY") != ""
-	smtpOK := brevoOK || (os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_USER") != "")
+	smtpOK := resendOK || brevoOK || (os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_USER") != "")
 	pushOK := os.Getenv("VAPID_PUBLIC_KEY") != "" && os.Getenv("VAPID_PRIVATE_KEY") != ""
 	fcmOK := s.fcmClient != nil
 	sentryOK := os.Getenv("SENTRY_DSN") != ""
@@ -3454,6 +3502,7 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"turn_public_fallback":  turnFallback, // openrelay.metered.ca in use
 		"smtp_configured":       smtpOK,
 		"brevo_configured":      brevoOK,
+		"resend_configured":     resendOK,
 		"webpush_configured":    pushOK,
 		"fcm_configured":        fcmOK,
 		"sentry_configured":     sentryOK,
