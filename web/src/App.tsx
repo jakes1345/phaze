@@ -16,11 +16,27 @@ import LivePage from './LivePage'
 import UserProfile from './UserProfile'
 import SupportBubble from './SupportBubble'
 import Stories from './Stories'
+import Onboarding from './Onboarding'
 import Settings from './Settings'
 import './App.css'
 
 const SESSION_KEY = 'phaze_session_token_v1'
 const KEYS_KEY = 'phaze_nacl_keys_v1'
+const MUTED_PEERS_KEY = 'phaze_muted_peers_v1'
+
+function loadMutedPeers(): Set<string> {
+  try {
+    const raw = localStorage.getItem(MUTED_PEERS_KEY)
+    if (raw) return new Set(JSON.parse(raw) as string[])
+  } catch { /* ignore */ }
+  return new Set()
+}
+function saveMutedPeers(s: Set<string>) {
+  try { localStorage.setItem(MUTED_PEERS_KEY, JSON.stringify([...s])) } catch { /* ignore */ }
+}
+function isPeerMuted(peer: string): boolean {
+  return loadMutedPeers().has(peer)
+}
 const THEME_KEY = 'phaze_theme_v1'
 const BACKUP_NAG_KEY = 'phaze_backup_nag_dismissed_at_v1'
 const BACKUP_NAG_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
@@ -336,6 +352,18 @@ export default function App() {
   const [loginTotp, setLoginTotp] = useState('')
   const [addFriend, setAddFriend] = useState('')
   const [profileUser, setProfileUser] = useState<string | null>(null)
+  const [onboardingOpen, setOnboardingOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('phaze_onboarded') !== '1' } catch { return false }
+  })
+  const [mutedPeers, setMutedPeers] = useState<Set<string>>(() => loadMutedPeers())
+  const togglePeerMute = (peer: string) => {
+    setMutedPeers((prev) => {
+      const next = new Set(prev)
+      if (next.has(peer)) next.delete(peer); else next.add(peer)
+      saveMutedPeers(next)
+      return next
+    })
+  }
   const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
   const [mode, setMode] = useState<'login' | 'register' | 'link'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
   const [linkInput, setLinkInput] = useState('')
@@ -723,7 +751,13 @@ export default function App() {
           break
 
         case 'register_result':
-          if (msg.status === 'ok' || msg.status === 'verification_sent') {
+          if (msg.status === 'ok') {
+            // Anonymous registration — no email, no verify step. Sign in straight away.
+            setErr('Account created. Sign in below.')
+            setRegStep('done')
+            setMode('login')
+            setLoginUser(regUser)
+          } else if (msg.status === 'pending_verification' || msg.status === 'verification_sent') {
             setErr('Account created. Check your email for a 6-digit code, enter it below.')
             setRegStep('verify')
           } else {
@@ -777,7 +811,9 @@ export default function App() {
               if (peer && loadHistory(my!, peer).some((l) => l.id === incomingId)) break
             }
             appendLog(msg.sender, msg.body || '[empty]', msg.sender === my, { id: incomingId })
-            if (msg.sender !== my) playPhazeSound('MessageReceived.wav')
+            // Suppress notification sound + browser notification for muted peers.
+            const senderIsMuted = msg.sender ? isPeerMuted(msg.sender) : false
+            if (msg.sender !== my && !senderIsMuted) playPhazeSound('MessageReceived.wav')
           }
           break
 
@@ -1502,6 +1538,17 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Onboarding (first sign-in only) ─────────────────────── */}
+      {me && sessionToken && onboardingOpen && (
+        <Onboarding
+          me={me}
+          sessionToken={sessionToken}
+          onAddFriend={(name) => sendFriendRequest(name)}
+          onJump={(v) => setView(v)}
+          onClose={() => setOnboardingOpen(false)}
+        />
+      )}
+
       {/* ── Support chat bubble (always available) ───────────────── */}
       <SupportBubble sessionToken={sessionToken} me={me} />
 
@@ -1612,8 +1659,11 @@ export default function App() {
               ) : regStep === 'form' ? (
                 <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
                   <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
-                  <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" />
+                  <input type="email" placeholder="Email (optional — leave blank for anonymous)" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" />
                   <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />
+                  <p className="muted small" style={{ margin: 0 }}>
+                    No email = anonymous account. Can't recover if you lose your password.
+                  </p>
                   <button type="submit">Create account</button>
                   <button type="button" className="link-btn" onClick={() => { setMode('login'); setErr('') }}>Back to sign in</button>
                 </form>
@@ -1709,6 +1759,12 @@ export default function App() {
                           title="Search in this chat"
                           onClick={() => setSearchOpen((v) => !v)}
                         >🔍</button>
+                        <button
+                          type="button"
+                          className="chat-call-btn"
+                          title={selected && mutedPeers.has(selected) ? 'Unmute notifications' : 'Mute notifications'}
+                          onClick={() => selected && togglePeerMute(selected)}
+                        >{selected && mutedPeers.has(selected) ? '🔕' : '🔔'}</button>
                         <button
                           type="button"
                           className="chat-call-btn"

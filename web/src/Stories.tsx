@@ -26,6 +26,8 @@ export default function Stories({ me, sessionToken }: Props) {
   const [viewing, setViewing] = useState<string | null>(null) // username
   const [openIndex, setOpenIndex] = useState(0)
   const [uploading, setUploading] = useState(false)
+  const [replyDraft, setReplyDraft] = useState('')
+  const [replyOk, setReplyOk] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
   const refresh = useMemo(() => async () => {
@@ -84,11 +86,11 @@ export default function Stories({ me, sessionToken }: Props) {
   }
 
   const open = (author: string) => {
+    const list = byAuthor.get(author) ?? []
+    if (list.length === 0) return // nothing to show
     setViewing(author)
     setOpenIndex(0)
-    // Mark first as viewed.
-    const list = byAuthor.get(author) ?? []
-    if (list[0]) void fetch(`/api/v1/stories/${list[0].id}/view`, {
+    void fetch(`/api/v1/stories/${list[0].id}/view`, {
       method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
     })
   }
@@ -141,9 +143,10 @@ export default function Stories({ me, sessionToken }: Props) {
         const list = byAuthor.get(viewing) ?? []
         const s = list[openIndex]
         if (!s) return null
+        const isMine = s.author === me
         return (
-          <div className="story-viewer" onClick={advance} role="presentation">
-            <div className="story-progress">
+          <div className="story-viewer" role="presentation">
+            <div className="story-progress" onClick={advance}>
               {list.map((_, i) => (
                 <span key={i} className={`progress-bar ${i < openIndex ? 'done' : i === openIndex ? 'active' : ''}`} />
               ))}
@@ -157,14 +160,43 @@ export default function Stories({ me, sessionToken }: Props) {
                 aria-label="Close"
               >×</button>
             </div>
-            {s.media_kind === 'image' ? (
-              <img className="story-media" src={s.media_url} alt="" />
-            ) : (
-              <video className="story-media" src={s.media_url} autoPlay playsInline controls />
-            )}
+            <div className="story-stage" onClick={advance}>
+              {s.media_kind === 'image' ? (
+                <img className="story-media" src={s.media_url} alt="" />
+              ) : (
+                <video className="story-media" src={s.media_url} autoPlay playsInline controls />
+              )}
+            </div>
             {s.caption && <div className="story-caption">{s.caption}</div>}
-            {s.author === me && (
+            {isMine ? (
               <div className="story-meta">{s.views ?? 0} view{(s.views ?? 0) === 1 ? '' : 's'}</div>
+            ) : (
+              <form
+                className="story-reply"
+                onClick={(e) => e.stopPropagation()}
+                onSubmit={async (e) => {
+                  e.preventDefault()
+                  const text = replyDraft.trim()
+                  if (!text) return
+                  await fetch(`/api/v1/stories/${s.id}/reply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+                    body: JSON.stringify({ body: text }),
+                  })
+                  setReplyDraft('')
+                  setReplyOk(true)
+                  setTimeout(() => setReplyOk(false), 1800)
+                }}
+              >
+                <input
+                  type="text"
+                  placeholder={`Reply to ${viewing}…`}
+                  value={replyDraft}
+                  onChange={(e) => setReplyDraft(e.target.value)}
+                />
+                <button type="submit" disabled={!replyDraft.trim()}>➤</button>
+                {replyOk && <span className="story-reply-ok">Sent</span>}
+              </form>
             )}
           </div>
         )

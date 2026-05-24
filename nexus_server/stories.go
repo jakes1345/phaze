@@ -148,6 +148,45 @@ func (s *NexusServer) storiesItemHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// /api/v1/stories/{id}/reply → POST body {body}: sends as DM to author,
+	// prefixed so the recipient sees it's a story reply. Skips the E2EE
+	// pipeline (server-side relay).
+	if len(parts) >= 2 && parts[1] == "reply" && r.Method == http.MethodPost {
+		id, perr := strconv.ParseInt(parts[0], 10, 64)
+		if perr != nil {
+			http.Error(w, "bad id", http.StatusBadRequest)
+			return
+		}
+		var body struct{ Body string `json:"body"` }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(body.Body) == "" {
+			http.Error(w, "empty reply", http.StatusBadRequest)
+			return
+		}
+		var author string
+		if err := s.DB.QueryRow(`SELECT author FROM stories WHERE id = ?`, id).Scan(&author); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		// Relay as a regular DM. Author sees it as a normal incoming msg
+		// with the body prefixed so they know which story it references.
+		s.Mu.RLock()
+		c, ok := s.Clients[author]
+		s.Mu.RUnlock()
+		text := "↩ reply to your story: " + strings.TrimSpace(body.Body)
+		if ok {
+			c.Send(NexusMessage{
+				Type: "msg", Sender: user, Recipient: author, Body: text,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true,"delivered":` + map[bool]string{true: "true", false: "false"}[ok] + `}`))
+		return
+	}
+
 	// /api/v1/stories/{id} → DELETE: author-only
 	if r.Method == http.MethodDelete && len(parts) == 1 {
 		id, perr := strconv.ParseInt(parts[0], 10, 64)

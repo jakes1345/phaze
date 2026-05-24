@@ -552,6 +552,16 @@ func (s *NexusServer) initDB() {
 			viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (story_id, viewer)
 		)`,
+		// Per-user key/value preferences (muted peers, onboarding flag, theme,
+		// notification settings, anything that was previously local-only).
+		// Value is JSON-encoded so callers can store strings, lists, objects.
+		`CREATE TABLE IF NOT EXISTS user_settings (
+			username TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (username, key)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(username)`,
 		`CREATE INDEX IF NOT EXISTS idx_servers_invite ON servers(invite_code)`,
 		`CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -705,7 +715,10 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	if !validUsername(username) {
 		return "", errBadUsername
 	}
-	if !validEmail(email) {
+	// Email is optional. If empty the account is anonymous and immediately
+	// verified — no email = no verification step needed. If provided, it
+	// must look like a valid address and we issue a verification code.
+	if email != "" && !validEmail(email) {
 		return "", errBadEmail
 	}
 	if len(password) < 8 {
@@ -713,6 +726,13 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
+		return "", err
+	}
+
+	if email == "" {
+		// Anonymous registration: skip the verification flow entirely.
+		_, err = s.DB.Exec("INSERT INTO users (username, email, mood, password_hash, salt, is_verified) VALUES (?, '', ?, ?, '', 1)",
+			username, mood, string(hash))
 		return "", err
 	}
 
@@ -1959,6 +1979,12 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
 			if err != nil {
 				client.Send(NexusMessage{Type: "register_result", Error: "Username already taken or database error"})
+			} else if msg.Email == "" {
+				// Anonymous account — no verification step. Auto-join Hub
+				// and tell the client they can sign in immediately.
+				log.Printf("New anonymous user registered: %s", msg.Sender)
+				s.autoJoinGlobalSpace(msg.Sender)
+				client.Send(NexusMessage{Type: "register_result", Status: "ok"})
 			} else {
 				log.Printf("New user registered: %s (%s) - Code: %s", msg.Sender, msg.Email, code)
 				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
@@ -3297,6 +3323,67 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 					ID: id64, ChannelID: channelID, Pinned: next == 1,
 				}},
 			})
+
+		case "purge_email":
+			// User-initiated: drop the stored email address from this account.
+			// Loses email-based recovery; relies entirely on Recovery PIN +
+			// session tokens going forward. Idempotent.
+			if username == "" {
+				continue
+			}
+			if _, err := s.DB.Exec(`UPDATE users SET email = '' WHERE username = ?`, username); err != nil {
+				client.Send(NexusMessage{Type: "purge_email_result", Error: "db: " + err.Error()})
+				continue
+			}
+			log.Printf("[privacy] %s purged email", username)
+			client.Send(NexusMessage{Type: "purge_email_result", Status: "ok"})
+
+		case "settings_get":
+			// Return all per-user settings for the authenticated user.
+			if username == "" {
+				continue
+			}
+			rows, err := s.DB.Query(`SELECT key, value FROM user_settings WHERE username = ?`, username)
+			if err != nil {
+				client.Send(NexusMessage{Type: "settings_result", Error: "db: " + err.Error()})
+				continue
+			}
+			settings := map[string]string{}
+			for rows.Next() {
+				var k, v string
+				if err := rows.Scan(&k, &v); err == nil {
+					settings[k] = v
+				}
+			}
+			rows.Close()
+			// Reuse Envelopes (already a string-keyed map) for transport.
+			client.Send(NexusMessage{
+				Type:      "settings_result",
+				Status:    "ok",
+				Envelopes: settings,
+			})
+
+		case "settings_set":
+			// Body is JSON: {"key":"...","value":"..."}. Value is opaque; client
+			// owns the schema.
+			if username == "" || msg.Body == "" {
+				continue
+			}
+			var kv struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			}
+			if err := json.Unmarshal([]byte(msg.Body), &kv); err != nil || kv.Key == "" {
+				continue
+			}
+			if len(kv.Key) > 64 || len(kv.Value) > 64*1024 {
+				continue
+			}
+			s.DB.Exec(
+				`INSERT INTO user_settings (username, key, value, updated_at)
+				 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+				 ON CONFLICT(username, key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`,
+				username, kv.Key, kv.Value)
 
 		case "voice_join":
 			if username == "" || msg.ChannelID == "" {
@@ -4962,6 +5049,7 @@ func main() {
 	http.HandleFunc("/metrics", server.metricsHandler)
 	server.initSupportRoutes()
 	server.initStoriesRoutes()
+	server.startDataRetentionSweepers()
 	http.HandleFunc("/admin", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/admin/", rateLimit(server.adminPortalHandler))
 	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))
