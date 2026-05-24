@@ -2979,6 +2979,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 					Channels:   channels,
 				})
 				log.Printf("[server] %s created server %q (%s)", username, name, id)
+				if visibility == "public" {
+					if bot := os.Getenv("KAI_USERNAME"); bot != "" {
+						s.DB.Exec(`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`, id, bot)
+					}
+				}
 			}()
 
 		case "server_list":
@@ -3680,6 +3685,24 @@ func (s *NexusServer) autoJoinGlobalSpace(username string) {
 	); err != nil {
 		log.Printf("[hub] auto-join %s: %v", username, err)
 	}
+}
+
+// autoJoinPublicSpaces adds a bot user to every public space. Called on boot.
+func (s *NexusServer) autoJoinPublicSpaces(botUsername string) {
+	rows, err := s.DB.Query(`SELECT id FROM servers WHERE visibility = 'public'`)
+	if err != nil {
+		log.Printf("[bot] public spaces query: %v", err)
+		return
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		s.DB.Exec(`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`, id, botUsername)
+		count++
+	}
+	log.Printf("[bot] %s joined %d public spaces", botUsername, count)
 }
 
 // ---------- Voice rooms ----------
@@ -4951,6 +4974,9 @@ func main() {
 	server.initDB()
 	server.initFCM()
 	server.ensureGlobalSpace()
+	if bot := os.Getenv("KAI_USERNAME"); bot != "" {
+		server.autoJoinPublicSpaces(bot)
+	}
 
 	http.HandleFunc("/ws", rateLimit(server.handleConnections))
 	http.HandleFunc("/api/v1/version", rateLimit(server.versionHandler))
