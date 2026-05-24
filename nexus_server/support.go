@@ -98,6 +98,21 @@ func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "no messages", http.StatusBadRequest)
 		return
 	}
+	// Hard cap on conversation length: stops a malicious client from
+	// shipping a huge transcript every turn and draining the API budget.
+	if len(req.Messages) > 30 {
+		req.Messages = req.Messages[len(req.Messages)-30:]
+	}
+	// Cap per-message size — protects against megabyte payloads.
+	for i := range req.Messages {
+		if len(req.Messages[i].Content) > 4000 {
+			req.Messages[i].Content = req.Messages[i].Content[:4000]
+		}
+		// Anthropic rejects unknown roles. Coerce anything we don't know to "user".
+		if req.Messages[i].Role != "user" && req.Messages[i].Role != "assistant" {
+			req.Messages[i].Role = "user"
+		}
+	}
 	// Optional caller identity (Bearer token); include in system prompt if known.
 	system := supportSystemPrompt
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
@@ -210,8 +225,10 @@ func (s *NexusServer) supportEscalateHandler(w http.ResponseWriter, r *http.Requ
 }
 
 // init wires routes. Called from main.go after the rest of the routes.
+// Both endpoints go through the IP rate limiter — the chat endpoint hits
+// a paid LLM API on every call, so we cannot leave it bare.
 func (s *NexusServer) initSupportRoutes() {
-	http.HandleFunc("/api/v1/support/chat", s.supportChatHandler)
-	http.HandleFunc("/api/v1/support/escalate", s.supportEscalateHandler)
+	http.HandleFunc("/api/v1/support/chat", rateLimit(s.supportChatHandler))
+	http.HandleFunc("/api/v1/support/escalate", rateLimit(s.supportEscalateHandler))
 }
 
