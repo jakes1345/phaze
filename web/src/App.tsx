@@ -334,6 +334,8 @@ function statusColor(st: string): string {
 export default function App() {
   const wsUrl = useMemo(() => defaultWsUrl(), [])
   const [conn, setConn] = useState<'off' | 'connecting' | 'open'>('off')
+  const [wsRetry, setWsRetry] = useState(0)
+  const wsRetryDelay = useRef(1000)
   const [me, setMe] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const [log, setLog] = useState<ChatLine[]>([])
@@ -863,17 +865,7 @@ export default function App() {
           // Surface restore prompt only when a backup exists AND the user
           // doesn't already appear to have any peer keys / chat history
           // for the current device — otherwise just ignore.
-          if (msg.status === 'ok' && msg.key_backup) {
-            const haveExistingKeys = !!localStorage.getItem(KEYS_KEY)
-            // Treat the backup as "needed" if we just generated fresh keys
-            // (i.e. localStorage was empty before this session). The
-            // simplest signal: never auto-prompt if the user already has
-            // any pinned peer keys — then nothing's wrong.
-            const pins = (() => { try { return Object.keys(loadPins()) } catch { return [] as string[] } })()
-            if (haveExistingKeys && pins.length === 0) {
-              setRestoreBackup(msg.key_backup)
-            }
-          } else if (msg.status === 'not_found') {
+          if (msg.status === 'not_found') {
             // User has no Recovery PIN backup — nag them to set one so they
             // can sign in on other devices / browsers later. Respect a
             // 7-day cooldown if they've dismissed it before.
@@ -1038,6 +1030,7 @@ export default function App() {
 
     w.onopen = () => {
       setConn('open')
+      wsRetryDelay.current = 1000
       const tok = localStorage.getItem(SESSION_KEY)
       const host = window.location.hostname
       if (tok) {
@@ -1054,15 +1047,18 @@ export default function App() {
     w.onclose = () => {
       setConn('off')
       wsRef.current = null
+      const delay = Math.min(wsRetryDelay.current, 30000)
+      wsRetryDelay.current = Math.min(delay * 2, 30000)
+      setTimeout(() => setWsRetry((n) => n + 1), delay)
     }
 
-    w.onerror = () => setErr('WebSocket error')
+    w.onerror = () => {}
 
     return () => {
       w.close()
       wsRef.current = null
     }
-  }, [wsUrl])
+  }, [wsUrl, wsRetry])
 
   const send = useCallback((m: NexusMessage) => { sendRef.current(m) }, [])
 
@@ -1516,25 +1512,19 @@ export default function App() {
       {err && <div className="banner">{err}</div>}
 
       {restoreBackup && (
-        <div className="restore-overlay">
-          <div className="restore-card">
-            <h2>Restore your chat history</h2>
-            <p className="muted small">
-              We found a Recovery PIN backup on the server (created {restoreBackup.created_at}).
-              Enter your PIN to restore your encryption keys so you can read messages from your other devices.
-            </p>
-            <input
-              type="password"
-              autoFocus
-              placeholder="Recovery PIN"
-              value={restorePin}
-              onChange={(e) => setRestorePin(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void doRestore() }}
-            />
-            <div className="row">
-              <button type="button" onClick={() => void doRestore()} disabled={restoreBusy}>{restoreBusy ? 'Restoring…' : 'Restore'}</button>
-              <button type="button" className="link-btn" onClick={() => { setRestoreBackup(null); setRestorePin('') }}>Skip — use new keys</button>
-            </div>
+        <div className="banner" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: 'var(--panel)', border: '1px solid var(--brand)', borderRadius: 10, padding: '10px 16px', margin: '8px 16px' }}>
+          <span style={{ fontSize: '0.85rem' }}>🔑 Recovery backup found.</span>
+          <input
+            type="password"
+            placeholder="PIN"
+            value={restorePin}
+            onChange={(e) => setRestorePin(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void doRestore() }}
+            style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: '0.85rem' }}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={() => void doRestore()} disabled={restoreBusy} style={{ padding: '4px 12px', borderRadius: 6, background: 'var(--brand)', color: '#fff', border: 'none', fontSize: '0.8rem', cursor: 'pointer' }}>{restoreBusy ? '...' : 'Restore'}</button>
+            <button type="button" onClick={() => { setRestoreBackup(null); setRestorePin('') }} style={{ padding: '4px 12px', borderRadius: 6, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--input-border)', fontSize: '0.8rem', cursor: 'pointer' }}>Skip</button>
           </div>
         </div>
       )}
