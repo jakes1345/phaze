@@ -2151,6 +2151,26 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.broadcastPresence(username, "Online")
 			s.deliverOfflineMessages(username)
 
+			// Send friends list with online status (same as auth path).
+			for _, f := range s.getFriends(username) {
+				status := "Offline"
+				s.Mu.RLock()
+				if c, ok := s.Clients[f]; ok {
+					status = c.Status
+				}
+				s.Mu.RUnlock()
+				client.Send(NexusMessage{Type: "friend_status", Sender: f, Status: status})
+			}
+			// Send pending friend requests.
+			if pending := s.getPendingRequests(username); len(pending) > 0 {
+				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
+			}
+			// Send conversations.
+			for _, cm := range s.userConversations(username) {
+				cm.Type = "convo_info"
+				client.Send(cm)
+			}
+
 		case "revoke_session":
 			if username == "" || msg.QRToken == "" {
 				continue
