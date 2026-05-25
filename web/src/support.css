@@ -1,6 +1,6 @@
 .support-fab {
   position: fixed;
-  right: 18px;
+  left: 18px;
   bottom: 18px;
   z-index: 300;
   width: 56px;
@@ -19,7 +19,7 @@
 
 .support-window {
   position: fixed;
-  right: 18px;
+  left: 18px;
   bottom: 86px;
   z-index: 300;
   width: 340px;
