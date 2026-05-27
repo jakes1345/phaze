@@ -64,6 +64,13 @@ research_files/
 # Dev tooling (vault packer is local-only, ignored from source)
 native_client/vault_lock.go
 
+# Android
+android/app/google-services.json
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+
 # System
 .DS_Store
 
