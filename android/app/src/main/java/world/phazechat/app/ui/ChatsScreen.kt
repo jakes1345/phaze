@@ -25,9 +25,13 @@ fun ChatsScreen(
     friends: Map<String, FriendInfo>,
     pending: List<String>,
     unread: Map<String, Int>,
+    stories: List<Story> = emptyList(),
+    me: String = "",
     onSelectChat: (String) -> Unit,
     onAddFriend: (String) -> Unit,
     onAcceptFriend: (String) -> Unit,
+    onViewStory: (String) -> Unit = {},
+    onAddStory: () -> Unit = {},
 ) {
     var addDialogOpen by remember { mutableStateOf(false) }
     var addName by remember { mutableStateOf("") }
@@ -44,6 +48,13 @@ fun ChatsScreen(
             IconButton(onClick = { addDialogOpen = true }) {
                 Icon(Icons.Default.Add, contentDescription = "Add friend")
             }
+        }
+
+        // Stories
+        if (stories.isNotEmpty() || me.isNotEmpty()) {
+            StoriesRow(stories = stories, me = me, onViewStory = onViewStory, onAddStory = onAddStory)
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
         }
 
         // Pending requests
