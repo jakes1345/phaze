@@ -2,8 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    // Uncomment when google-services.json is added:
-    // id("com.google.gms.google-services")
+    id("com.google.gms.google-services")
 }
 
 android {
