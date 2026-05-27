@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -94,8 +95,12 @@ func (s *NexusServer) startStatusProber() {
 }
 
 func (s *NexusServer) probeSelf() bool {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:8080/health")
+	resp, err := client.Get("http://127.0.0.1:" + port + "/health")
 	if err != nil || resp == nil {
 		return false
 	}
