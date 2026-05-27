@@ -5166,7 +5166,7 @@ func (s *NexusServer) sendFCMPush(recipient, sender, preview string) {
 				Priority: "high",
 				Notification: &messaging.AndroidNotification{
 					Sound:       "default",
-					ClickAction: "FLUTTER_NOTIFICATION_CLICK",
+					ClickAction: "world.phazechat.app.OPEN",
 				},
 			},
 		})
