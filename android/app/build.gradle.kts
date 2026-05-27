@@ -17,11 +17,21 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("phaze-release.keystore")
+            storePassword = "phazekey123"
+            keyAlias = "phaze"
+            keyPassword = "phazekey123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
