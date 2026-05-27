@@ -21,32 +21,32 @@
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #863bff;
-            --skype-dark: #6f1ee0;
+            --brand: #863bff;
+            --brand-dark: #6f1ee0;
             --text-dark: #0a0a0a;
             --text-light: #6b6b75;
             --bg-light: #fafafa;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; color: var(--text-dark); background: #fff; line-height: 1.6; }
-        a { color: var(--skype-blue); text-decoration: none; }
+        a { color: var(--brand); text-decoration: none; }
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
         .navbar { background: #fff; border-bottom: 1px solid #e8e8e8; height: 60px; display: flex; align-items: center; }
         .navbar .container { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-        .nav-brand { font-size: 1.4rem; font-weight: 700; color: var(--skype-blue); display: flex; align-items: center; gap: 8px; }
+        .nav-brand { font-size: 1.4rem; font-weight: 700; color: var(--brand); display: flex; align-items: center; gap: 8px; }
 
         .hero { background: #863bff; color: #fff; padding: 60px 0; text-align: center; }
         .hero h1 { font-size: 2.5rem; font-weight: 300; }
 
         .feature-grid { padding: 80px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 60px; }
         .feature-item { display: flex; gap: 24px; }
-        .feature-icon { font-size: 3rem; color: var(--skype-blue); flex-shrink: 0; }
+        .feature-icon { font-size: 3rem; color: var(--brand); flex-shrink: 0; }
         .feature-text h3 { font-size: 1.4rem; margin-bottom: 12px; }
         .feature-text p { color: var(--text-light); }
 
         .cta-section { background: var(--bg-light); padding: 60px 0; text-align: center; }
-        .btn { display: inline-block; background: var(--skype-blue); color: #fff; padding: 12px 30px; border-radius: 4px; font-weight: 700; margin-top: 20px; }
+        .btn { display: inline-block; background: var(--brand); color: #fff; padding: 12px 30px; border-radius: 4px; font-weight: 700; margin-top: 20px; }
 
         .footer { background: #1a1a1a; color: #999; padding: 40px 0; text-align: center; }
     </style>
@@ -120,6 +120,41 @@
                 </div>
             </div>
             <div class="feature-item">
+                <span class="feature-icon">🖥</span>
+                <div class="feature-text">
+                    <h3>Screen sharing</h3>
+                    <p>Share your screen in any call or voice channel. Present, collaborate, or just show your friends what you're working on.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🌐</span>
+                <div class="feature-text">
+                    <h3>Spaces</h3>
+                    <p>Public or private community servers with text and voice channels. @mentions, search, pinned messages, inline editing — like Discord but encrypted.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">📸</span>
+                <div class="feature-text">
+                    <h3>Stories</h3>
+                    <p>Share photos and short videos that disappear after 24 hours. Your friends see them in a ring at the top of the chat list.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🔴</span>
+                <div class="feature-text">
+                    <h3>Livestreaming</h3>
+                    <p>Go live with your camera or share your screen to anyone on Phaze. Viewers join with one click — no accounts required to watch.</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🖱️</span>
+                <div class="feature-text">
+                    <h3>Remote control</h3>
+                    <p>Share your screen and let a friend take control — encrypted, peer-to-peer, built right in. Like TeamViewer but no extra app needed.</p>
+                </div>
+            </div>
+            <div class="feature-item">
                 <span class="feature-icon">🛠️</span>
                 <div class="feature-text">
                     <h3>Self-hostable</h3>
@@ -139,7 +174,7 @@
     <section class="cta-section">
         <div class="container">
             <h2>Ready to start talking?</h2>
-            <a href="/download" class="btn">Get Phaze for Desktop</a>
+            <a href="/download" class="btn">Get Phaze — Web, Android, Desktop</a>
         </div>
     </section>
 

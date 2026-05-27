@@ -35,26 +35,26 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #863bff;
-            --skype-dark: #6f1ee0;
+            --brand: #863bff;
+            --brand-dark: #6f1ee0;
             --text-dark: #0a0a0a;
             --text-light: #6b6b75;
             --bg-light: #fafafa;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; color: var(--text-dark); background: #fff; }
-        a { color: var(--skype-blue); text-decoration: none; }
+        a { color: var(--brand); text-decoration: none; }
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
         .navbar { background: #fff; border-bottom: 1px solid #e8e8e8; position: sticky; top: 0; z-index: 1000; }
         .navbar .container { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-        .nav-brand { display: flex; align-items: center; gap: 8px; font-size: 1.4rem; font-weight: 700; color: var(--skype-blue); }
+        .nav-brand { display: flex; align-items: center; gap: 8px; font-size: 1.4rem; font-weight: 700; color: var(--brand); }
         .nav-brand svg { width: 32px; height: 32px; }
         .nav-links { display: flex; list-style: none; height: 100%; }
         .nav-links a { display: flex; align-items: center; height: 100%; padding: 0 18px; color: var(--text-dark); font-size: 0.9rem; border-bottom: 3px solid transparent; transition: all 0.2s; }
-        .nav-links a:hover, .nav-links a.active { color: var(--skype-blue); border-bottom-color: var(--skype-blue); }
+        .nav-links a:hover, .nav-links a.active { color: var(--brand); border-bottom-color: var(--brand); }
         .nav-right { display: flex; align-items: center; gap: 16px; }
-        .nav-get-btn { background: var(--skype-blue); color: #fff !important; padding: 8px 24px; border-radius: 4px; font-weight: 600; }
+        .nav-get-btn { background: var(--brand); color: #fff !important; padding: 8px 24px; border-radius: 4px; font-weight: 600; }
 
         .dl-hero {
             background: #863bff;
@@ -74,20 +74,20 @@
             background: #fff; border: 2px solid #e8e8e8; border-radius: 16px; padding: 40px 30px;
             text-align: center; transition: all 0.3s;
         }
-        .platform-card:hover { border-color: var(--skype-blue); box-shadow: 0 10px 40px rgba(0,175,240,0.15); transform: translateY(-4px); }
-        .platform-card.recommended { border-color: var(--skype-blue); position: relative; }
+        .platform-card:hover { border-color: var(--brand); box-shadow: 0 10px 40px rgba(0,175,240,0.15); transform: translateY(-4px); }
+        .platform-card.recommended { border-color: var(--brand); position: relative; }
         .platform-card.recommended::before {
             content: 'Recommended'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-            background: var(--skype-blue); color: #fff; padding: 4px 16px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;
+            background: var(--brand); color: #fff; padding: 4px 16px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;
         }
         .platform-icon { font-size: 3rem; margin-bottom: 16px; display: block; }
         .platform-name { font-size: 1.3rem; font-weight: 700; margin-bottom: 4px; }
         .platform-detail { color: var(--text-light); font-size: 0.85rem; margin-bottom: 24px; }
         .platform-btn {
-            display: inline-block; background: var(--skype-blue); color: #fff; padding: 12px 32px;
+            display: inline-block; background: var(--brand); color: #fff; padding: 12px 32px;
             border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: all 0.2s;
         }
-        .platform-btn:hover { background: var(--skype-dark); transform: translateY(-1px); }
+        .platform-btn:hover { background: var(--brand-dark); transform: translateY(-1px); }
         .platform-btn.disabled { background: #bbb; pointer-events: none; cursor: not-allowed; }
         .platform-card.soon { opacity: 0.7; }
         .platform-card.soon::after {
@@ -104,13 +104,13 @@
         .verify-section { padding: 60px 0; border-top: 1px solid #eee; background: #fff; }
         .verify-section h3 { text-align: center; margin-bottom: 20px; font-weight: 300; }
         .verify-grid { max-width: 800px; margin: 0 auto; display: grid; gap: 20px; }
-        .verify-item { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid var(--skype-blue); }
+        .verify-item { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid var(--brand); }
         .verify-item strong { display: block; margin-bottom: 5px; font-size: 0.9rem; }
         .verify-item code { display: block; background: #eee; padding: 10px; border-radius: 4px; font-size: 0.85rem; word-break: break-all; }
         .req-card h4 { font-size: 0.95rem; margin-bottom: 12px; color: var(--text-dark); }
         .req-card ul { list-style: none; }
         .req-card li { font-size: 0.85rem; color: var(--text-light); margin-bottom: 6px; padding-left: 16px; position: relative; }
-        .req-card li::before { content: '•'; position: absolute; left: 0; color: var(--skype-blue); }
+        .req-card li::before { content: '•'; position: absolute; left: 0; color: var(--brand); }
 
         .footer { background: #1a1a1a; color: #999; padding: 30px 0; text-align: center; font-size: 0.8rem; }
         .footer a { color: #bbb; }
@@ -260,7 +260,7 @@
                 <strong>Run anyway</strong>. Confirm the SHA-256 below matches your download before running.
                 Checksums are how you verify; signatures are how Microsoft charges $200/year for a green badge.
             </div>
-            <div style="background:#f0f7ff;border-left:4px solid var(--skype-blue);padding:16px 20px;border-radius:4px;margin:0 0 30px;font-size:0.9rem;color:#333;">
+            <div style="background:#f0f7ff;border-left:4px solid var(--brand);padding:16px 20px;border-radius:4px;margin:0 0 30px;font-size:0.9rem;color:#333;">
                 <strong>How to verify the hash:</strong><br>
                 Windows (PowerShell): <code>Get-FileHash Phaze.exe -Algorithm SHA256</code><br>
                 Linux / macOS: <code>sha256sum Phaze.linux</code> or <code>shasum -a 256 Phaze.apk</code>
