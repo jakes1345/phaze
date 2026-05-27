@@ -32,14 +32,20 @@ type SidebarProps struct {
 	OnSettings      func()
 	OnProfile       func()
 	OnDialCall      func(number string)
-	PSTNDialEnabled bool // Twilio PSTN tab; off by default (WebRTC in chat)
+	PSTNDialEnabled bool
 	OnStatusChange  func(status string)
 	RecentChats     []FriendInfo
 	CompactMode     bool
 }
 
 func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
-	// 1. Profile Area
+	if IsMobile() {
+		return newMobileSidebar(props)
+	}
+	return newDesktopSidebar(props)
+}
+
+func newDesktopSidebar(props SidebarProps) fyne.CanvasObject {
 	avatarSize := float32(48)
 	if props.CompactMode {
 		avatarSize = 32
@@ -47,7 +53,6 @@ func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
 	avatar := NewAvatarWithStatus(avatarSize, props.Status, props.AvatarPath)
 	nameLabel := widget.NewLabelWithStyle(props.Username, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	// Real click handler on avatar area
 	avatarBtn := widget.NewButton("", props.OnProfile)
 	avatarBtn.Importance = widget.LowImportance
 
@@ -67,11 +72,8 @@ func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
 
 	profileBg := canvas.NewRectangle(PhazeBlue)
 	profileContainer := container.NewStack(profileBg, container.NewPadded(profileHeader))
-
-	// Use Border to keep header at top without stretching
 	sidebarHeader := container.NewVBox(profileContainer)
 
-	// 2. Search & Buttons
 	search := widget.NewEntry()
 	search.SetPlaceHolder("Search...")
 
@@ -83,7 +85,6 @@ func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
 
 	search.OnSubmitted = props.OnSearch
 
-	// 3. Main List
 	list := widget.NewList(
 		func() int { return len(props.RecentChats) },
 		func() fyne.CanvasObject {
@@ -124,10 +125,9 @@ func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
 		}
 		lastID = id
 		lastTime = now
-		list.Unselect(id) // Prevent persistent highlight blocking re-clicks
+		list.Unselect(id)
 	}
 
-	// 4. Tabs — PSTN dial pad only when PHAZE_ENABLE_PSTN=true; otherwise steer users to WebRTC in chat.
 	var dialTab *container.TabItem
 	if props.PSTNDialEnabled && props.OnDialCall != nil {
 		dialTab = container.NewTabItem("Dial", NewPhazeDialpad(DialpadProps{OnCall: props.OnDialCall}))
@@ -153,4 +153,79 @@ func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
 	bg := canvas.NewRectangle(PhazeShell)
 
 	return container.NewStack(bg, container.NewPadded(sidebarContent))
+}
+
+// newMobileSidebar builds a full-screen contact list optimized for touch.
+func newMobileSidebar(props SidebarProps) fyne.CanvasObject {
+	avatar := NewAvatarWithStatus(40, props.Status, props.AvatarPath)
+	nameLabel := widget.NewLabelWithStyle(props.Username, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	avatarBtn := widget.NewButton("", props.OnProfile)
+	avatarBtn.Importance = widget.LowImportance
+
+	settingsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), props.OnSettings)
+	settingsBtn.Importance = widget.LowImportance
+
+	profileRow := container.NewBorder(
+		nil, nil,
+		container.NewStack(container.NewPadded(avatar), avatarBtn),
+		settingsBtn,
+		nameLabel,
+	)
+
+	profileBg := canvas.NewRectangle(PhazeBlue)
+	header := container.NewStack(profileBg, container.NewPadded(profileRow))
+
+	search := widget.NewEntry()
+	search.SetPlaceHolder("Search...")
+	search.OnSubmitted = props.OnSearch
+
+	actionRow := container.NewGridWithColumns(2,
+		widget.NewButtonWithIcon("Add Friend", theme.ContentAddIcon(), props.OnAddFriend),
+		widget.NewButtonWithIcon("New Group", theme.ContentAddIcon(), props.OnNewGroup),
+	)
+
+	list := widget.NewList(
+		func() int { return len(props.RecentChats) },
+		func() fyne.CanvasObject {
+			return container.NewBorder(
+				nil, nil,
+				container.NewMax(NewAvatarWithStatus(44, "Offline", "")),
+				nil,
+				container.NewVBox(
+					widget.NewLabel("Contact Name"),
+					widget.NewLabelWithStyle("mood", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+				),
+			)
+		},
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			friend := props.RecentChats[i]
+			border := o.(*fyne.Container)
+			avatarWrap := border.Objects[2].(*fyne.Container)
+			avatarWrap.Objects = []fyne.CanvasObject{NewAvatarWithStatus(44, friend.Status, friend.Avatar)}
+			avatarWrap.Refresh()
+
+			infoBox := border.Objects[0].(*fyne.Container)
+			infoBox.Objects[0].(*widget.Label).SetText(friend.Username)
+			mood := friend.Mood
+			if mood == "" {
+				mood = friend.Status
+			}
+			infoBox.Objects[1].(*widget.Label).SetText(mood)
+		},
+	)
+
+	list.OnSelected = func(id widget.ListItemID) {
+		props.OnChatOpen(props.RecentChats[id].Username)
+		list.Unselect(id)
+	}
+
+	content := container.NewBorder(
+		container.NewVBox(header, container.NewPadded(search), actionRow, widget.NewSeparator()),
+		nil, nil, nil,
+		list,
+	)
+
+	bg := canvas.NewRectangle(PhazeShell)
+	return container.NewStack(bg, content)
 }

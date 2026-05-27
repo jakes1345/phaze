@@ -13,12 +13,11 @@ import (
 //
 //	Web (CSS)                        Fyne (Go)
 //	--brand              #863bff     PhazeBrand
-//	--text               #0a0a0a     PhazeText (light)
+//	--text               #1a1a1a     PhazeText (light)
 //	--panel              #ffffff     PhazePanel (light)
-//	--panel-edge         #ececef     PhazeSeparator
-//	--list-hover         #f4f4f7     PhazeHover
-//	--shell              #fafafa     PhazeShell
-//	(dark mode mirrors  #fafafa/#0b0b0d swapped)
+//	--panel-edge         #e5e5ea     PhazeSeparator
+//	--shell              #f5f5f7     PhazeShell
+//	(dark: shell #000000, panel #111111)
 //
 // Brand color names PhazeBlue/PhazeLightBlue/etc. are kept as aliases for
 // existing call sites elsewhere in the package, but every alias now points
@@ -28,17 +27,17 @@ type Phaze7Theme struct{}
 
 // --- Light palette ----------------------------------------------------------
 var (
-	PhazeBrand      = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0xFF} // indigo, web --brand
+	PhazeBrand      = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0xFF}
 	PhazeBrandHover = color.NRGBA{R: 0x6F, G: 0x1E, B: 0xE0, A: 0xFF}
-	PhazeBrandSoft  = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0x22} // 0.13 alpha tint
+	PhazeBrandSoft  = color.NRGBA{R: 0x86, G: 0x3B, B: 0xFF, A: 0x1A}
 
-	PhazeShell     = color.NRGBA{R: 0xFA, G: 0xFA, B: 0xFA, A: 0xFF}
+	PhazeShell     = color.NRGBA{R: 0xF5, G: 0xF5, B: 0xF7, A: 0xFF}
 	PhazePanel     = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-	PhazeText      = color.NRGBA{R: 0x0A, G: 0x0A, B: 0x0A, A: 0xFF}
-	PhazeMuted     = color.NRGBA{R: 0x6B, G: 0x6B, B: 0x75, A: 0xFF}
-	PhazeSeparator = color.NRGBA{R: 0xEC, G: 0xEC, B: 0xEF, A: 0xFF}
-	PhazeHover     = color.NRGBA{R: 0xF4, G: 0xF4, B: 0xF7, A: 0xFF}
-	PhazeBubbleIn  = color.NRGBA{R: 0xF4, G: 0xF4, B: 0xF7, A: 0xFF}
+	PhazeText      = color.NRGBA{R: 0x1A, G: 0x1A, B: 0x1A, A: 0xFF}
+	PhazeMuted     = color.NRGBA{R: 0x8E, G: 0x8E, B: 0x93, A: 0xFF}
+	PhazeSeparator = color.NRGBA{R: 0xE5, G: 0xE5, B: 0xEA, A: 0xFF}
+	PhazeHover     = color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0x0A}
+	PhazeBubbleIn  = color.NRGBA{R: 0xE9, G: 0xE9, B: 0xEB, A: 0xFF}
 
 	// Legacy aliases mapped to the modern palette so existing code keeps working.
 	PhazeBlue      = PhazeBrand
@@ -47,19 +46,19 @@ var (
 	PhazeDarkText  = PhazeText
 )
 
-// --- Dark palette -----------------------------------------------------------
+// --- Dark palette (true-black shell for OLED) -------------------------------
 var (
 	PhazeBrandDark      = color.NRGBA{R: 0xA6, G: 0x77, B: 0xFF, A: 0xFF}
-	PhazeBrandHoverDark = color.NRGBA{R: 0x9A, G: 0x5C, B: 0xFF, A: 0xFF}
-	PhazeBrandSoftDark  = color.NRGBA{R: 0xA6, G: 0x77, B: 0xFF, A: 0x33}
+	PhazeBrandHoverDark = color.NRGBA{R: 0xB8, G: 0x8E, B: 0xFF, A: 0xFF}
+	PhazeBrandSoftDark  = color.NRGBA{R: 0xA6, G: 0x77, B: 0xFF, A: 0x1E}
 
-	PhazeShellDark     = color.NRGBA{R: 0x0B, G: 0x0B, B: 0x0D, A: 0xFF}
-	PhazePanelDark     = color.NRGBA{R: 0x16, G: 0x16, B: 0x1A, A: 0xFF}
-	PhazeTextDark      = color.NRGBA{R: 0xFA, G: 0xFA, B: 0xFA, A: 0xFF}
-	PhazeMutedDark     = color.NRGBA{R: 0xA1, G: 0xA1, B: 0xAA, A: 0xFF}
-	PhazeSeparatorDark = color.NRGBA{R: 0x23, G: 0x23, B: 0x28, A: 0xFF}
-	PhazeHoverDark     = color.NRGBA{R: 0x1E, G: 0x1E, B: 0x23, A: 0xFF}
-	PhazeBubbleInDark  = color.NRGBA{R: 0x1E, G: 0x1E, B: 0x23, A: 0xFF}
+	PhazeShellDark     = color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xFF}
+	PhazePanelDark     = color.NRGBA{R: 0x11, G: 0x11, B: 0x11, A: 0xFF}
+	PhazeTextDark      = color.NRGBA{R: 0xF5, G: 0xF5, B: 0xF7, A: 0xFF}
+	PhazeMutedDark     = color.NRGBA{R: 0x63, G: 0x63, B: 0x66, A: 0xFF}
+	PhazeSeparatorDark = color.NRGBA{R: 0x1C, G: 0x1C, B: 0x1E, A: 0xFF}
+	PhazeHoverDark     = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x0D}
+	PhazeBubbleInDark  = color.NRGBA{R: 0x1C, G: 0x1C, B: 0x1E, A: 0xFF}
 )
 
 func (m Phaze7Theme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
@@ -184,28 +183,53 @@ func (m Phaze7Theme) Font(style fyne.TextStyle) fyne.Resource {
 }
 
 func (m Phaze7Theme) Size(name fyne.ThemeSizeName) float32 {
+	mobile := IsMobile()
 	switch name {
 	case theme.SizeNamePadding:
-		return 10 // was 8 — modern apps breathe more
+		if mobile {
+			return 12
+		}
+		return 10
 	case theme.SizeNameInnerPadding:
+		if mobile {
+			return 10
+		}
 		return 8
 	case theme.SizeNameText:
+		if mobile {
+			return 16
+		}
 		return 14
 	case theme.SizeNameHeadingText:
+		if mobile {
+			return 22
+		}
 		return 20
 	case theme.SizeNameSubHeadingText:
+		if mobile {
+			return 18
+		}
 		return 16
 	case theme.SizeNameInputBorder:
 		return 1
 	case theme.SizeNameInputRadius:
-		return 8 // rounded inputs (Fyne >=2.4)
+		return 8
 	case theme.SizeNameSelectionRadius:
 		return 8
 	case theme.SizeNameCaptionText:
+		if mobile {
+			return 13
+		}
 		return 11
 	case theme.SizeNameInlineIcon:
+		if mobile {
+			return 22
+		}
 		return 18
 	case theme.SizeNameScrollBar:
+		if mobile {
+			return 6
+		}
 		return 10
 	case theme.SizeNameSeparatorThickness:
 		return 1

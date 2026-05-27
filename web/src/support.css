@@ -14,6 +14,9 @@
   box-shadow: 0 10px 24px rgba(134, 59, 255, 0.45);
   transition: transform 0.15s ease, background 0.15s ease;
 }
+@media (max-width: 720px) {
+  .support-fab { width: 44px; height: 44px; font-size: 1.2rem; left: 12px; bottom: 80px; }
+}
 .support-fab:hover { background: #6f1ee0; transform: scale(1.05); }
 .support-fab.on { background: #1f2937; }
 

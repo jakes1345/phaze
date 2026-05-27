@@ -13,11 +13,13 @@ import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup 
 import { playPhazeSound } from './phazeSounds'
 import Spaces from './Spaces'
 import LivePage from './LivePage'
+import VoiceRoom from './VoiceRoom'
 import UserProfile from './UserProfile'
 import SupportBubble from './SupportBubble'
 import Stories from './Stories'
 import Onboarding from './Onboarding'
 import Settings from './Settings'
+import RemoteControl from './RemoteControl'
 import './App.css'
 
 const SESSION_KEY = 'phaze_session_token_v1'
@@ -386,6 +388,22 @@ export default function App() {
 
   const [view, setView] = useState<'dms' | 'spaces' | 'live'>('dms')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [remoteOpen, setRemoteOpen] = useState(false)
+  const [groupCallRoom, setGroupCallRoom] = useState<string | null>(null)
+  const [groupCallInvite, setGroupCallInvite] = useState<{ from: string; room: string } | null>(null)
+  const [globalNotice, setGlobalNotice] = useState<{ from: string; msg: string } | null>(null)
+  const [changelogSeen, setChangelogSeen] = useState(() => localStorage.getItem('phaze_changelog_v') === '2025-05-25')
+  const [changelogOpen, setChangelogOpen] = useState(false)
+  const [changelogSlide, setChangelogSlide] = useState(0)
+  const changelogFeatures = [
+    { icon: '🖥', title: 'Remote Control', desc: 'Share your screen and let friends take control — like TeamViewer, but encrypted and built right into Phaze. No extra apps needed.', color: '#7c3aed' },
+    { icon: '👥', title: 'Group Calls', desc: 'Start a group voice or video call with multiple friends at once. Just click the group call button in any chat.', color: '#2563eb' },
+    { icon: '🌐', title: 'Spaces Upgrade', desc: '@mentions with autocomplete, in-channel search, pinned messages, and inline editing. Spaces just got serious.', color: '#059669' },
+    { icon: '🔴', title: 'Live Streaming', desc: 'Go live with your camera or broadcast your screen. Anyone on Phaze can tune in and watch.', color: '#dc2626' },
+    { icon: '🎁', title: 'Invite Friends', desc: 'Share your personal invite link or send branded email invitations. The more friends you bring, the better Phaze gets.', color: '#d97706' },
+    { icon: '📞', title: 'Better Calls', desc: 'Screen sharing in any call, self-hosted TURN server for reliable connections, and improved audio quality.', color: '#0891b2' },
+    { icon: '✨', title: 'Redesigned', desc: 'True-black dark mode, premium glass effects, and a brand-new landing page. Phaze looks like it feels — premium.', color: '#a855f7' },
+  ]
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'dark')
   const [unread, setUnread] = useState<Record<string, number>>({})
@@ -602,12 +620,12 @@ export default function App() {
   const toggleScreenShare = useCallback(async () => {
     const pc = pcRef.current
     if (!pc) return
-    const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
-    if (!videoSender) return
 
     if (screenStreamRef.current) {
+      const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
       const cam = cameraTrackRef.current
-      if (cam) await videoSender.replaceTrack(cam)
+      if (videoSender && cam) await videoSender.replaceTrack(cam)
+      else if (videoSender) pc.removeTrack(videoSender)
       screenStreamRef.current.getTracks().forEach((t) => t.stop())
       screenStreamRef.current = null
       if (localVideoRef.current && localStreamRef.current) {
@@ -625,8 +643,15 @@ export default function App() {
     }
     const screenTrack = display.getVideoTracks()[0]
     if (!screenTrack) return
-    cameraTrackRef.current = videoSender.track ?? null
-    await videoSender.replaceTrack(screenTrack)
+
+    let videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+    if (videoSender) {
+      cameraTrackRef.current = videoSender.track ?? null
+      await videoSender.replaceTrack(screenTrack)
+    } else {
+      cameraTrackRef.current = null
+      pc.addTrack(screenTrack, display)
+    }
     screenStreamRef.current = display
     if (localVideoRef.current) localVideoRef.current.srcObject = display
     screenTrack.onended = () => { toggleScreenShareRef.current() }
@@ -666,7 +691,7 @@ export default function App() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' })
     } catch {
-      setErr('Microphone/camera access denied. Check browser permissions.')
+      setErr('Microphone/camera access denied — click the lock icon in the address bar, reset the permission, and try again.')
       return
     }
     const pc = makePC(recipient)
@@ -688,7 +713,7 @@ export default function App() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: cs.type === 'video' })
     } catch {
-      setErr('Microphone/camera access denied. Check browser permissions.')
+      setErr('Microphone/camera access denied — click the lock icon in the address bar, reset the permission, and try again.')
       hangUp()
       return
     }
@@ -947,6 +972,18 @@ export default function App() {
         case 'call_reject':
         case 'call_end':
           tearDownCall()
+          break
+
+        case 'call_invite':
+          if (msg.sender && msg.channel_id) {
+            setGroupCallInvite({ from: msg.sender, room: msg.channel_id })
+          }
+          break
+
+        case 'global_notice':
+          if (msg.body) {
+            setGlobalNotice({ from: msg.sender || 'Phaze', msg: msg.body })
+          }
           break
 
         case 'kicked':
@@ -1482,6 +1519,9 @@ export default function App() {
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >{theme === 'dark' ? '☀' : '🌙'}</button>
         {me && (
+          <button className="settings-gear" title="Remote Control" onClick={() => setRemoteOpen(true)}>🖥</button>
+        )}
+        {me && (
           <button className="settings-gear" title="Settings" onClick={() => setSettingsOpen(true)}>⚙</button>
         )}
         {me && <span className="me">@{me}</span>}
@@ -1536,12 +1576,32 @@ export default function App() {
           send={send}
           subscribe={subscribe}
           onClose={() => { setSettingsOpen(false); setSettingsInitialTab('profile') }}
+          onSignOut={() => {
+            localStorage.removeItem(SESSION_KEY)
+            setSessionToken(null)
+            setMe(null)
+            setSettingsOpen(false)
+            setSelected(null)
+            setFriends({})
+            setPending([])
+            setView('dms')
+          }}
           initialTab={settingsInitialTab}
           onSetBackupPin={async (pin: string) => {
             const blob = await encryptKeyBackup(keysRef.current.publicKey, keysRef.current.secretKey, pin)
             send({ type: 'key_backup_put', key_backup: blob })
           }}
           onDeleteBackup={() => send({ type: 'key_backup_delete' })}
+        />
+      )}
+
+      {me && remoteOpen && (
+        <RemoteControl
+          me={me}
+          send={send}
+          subscribe={subscribe}
+          turn={turn}
+          onClose={() => setRemoteOpen(false)}
         />
       )}
 
@@ -1706,7 +1766,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  {callState.type === 'video' && callState.status === 'active' && (
+                  {callState.status === 'active' && (
                     <button className="call-btn-share" onClick={() => void toggleScreenShare()} title={sharingScreen ? 'Stop sharing' : 'Share screen'}>
                       {sharingScreen ? '🛑 Stop sharing' : '🖥 Share screen'}
                     </button>
@@ -1716,6 +1776,97 @@ export default function App() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Global notice popup ────────────────────────────────── */}
+      {globalNotice && (
+        <div className="restore-overlay" onClick={() => setGlobalNotice(null)}>
+          <div className="restore-card" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <h2 style={{ color: 'var(--brand)', fontSize: '1.2rem' }}>Notice from {globalNotice.from}</h2>
+            <p style={{ margin: '1rem 0', fontSize: '0.95rem', lineHeight: 1.6 }}>{globalNotice.msg}</p>
+            <button type="button" onClick={() => setGlobalNotice(null)} style={{ padding: '0.6rem 2rem', borderRadius: 10, background: 'var(--brand)', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }}>Got it</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── What's New changelog popup ────────────────────────── */}
+      {/* ── What's New — feature showcase carousel ────────────── */}
+      {me && !changelogSeen && !changelogOpen && (
+        <div className="wn-banner" onClick={() => setChangelogOpen(true)}>
+          <span className="wn-banner-icon">🎉</span>
+          <span className="wn-banner-text"><strong>New features dropped!</strong> Tap to see what's new.</span>
+          <button type="button" className="wn-banner-dismiss" onClick={(e) => { e.stopPropagation(); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') }}>✕</button>
+        </div>
+      )}
+
+      {changelogOpen && (
+        <div className="wn-overlay">
+          <div className="wn-modal">
+            <button type="button" className="wn-close" onClick={() => { setChangelogOpen(false); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') }}>✕</button>
+            <div className="wn-header">
+              <img src="/web/favicon.svg" alt="" className="wn-logo" />
+              <h2>What's New</h2>
+              <p>Here's everything we shipped this week.</p>
+            </div>
+            <div className="wn-card" style={{ borderColor: changelogFeatures[changelogSlide].color + '33' }}>
+              <div className="wn-card-icon" style={{ background: changelogFeatures[changelogSlide].color + '18', color: changelogFeatures[changelogSlide].color }}>
+                {changelogFeatures[changelogSlide].icon}
+              </div>
+              <h3 className="wn-card-title">{changelogFeatures[changelogSlide].title}</h3>
+              <p className="wn-card-desc">{changelogFeatures[changelogSlide].desc}</p>
+            </div>
+            <div className="wn-dots">
+              {changelogFeatures.map((_, i) => (
+                <button key={i} type="button" className={`wn-dot ${i === changelogSlide ? 'on' : ''}`} onClick={() => setChangelogSlide(i)} style={i === changelogSlide ? { background: changelogFeatures[i].color } : {}} />
+              ))}
+            </div>
+            <div className="wn-nav">
+              {changelogSlide > 0 && (
+                <button type="button" className="wn-btn secondary" onClick={() => setChangelogSlide((s) => s - 1)}>Back</button>
+              )}
+              <div style={{ flex: 1 }} />
+              {changelogSlide < changelogFeatures.length - 1 ? (
+                <button type="button" className="wn-btn primary" onClick={() => setChangelogSlide((s) => s + 1)}>Next</button>
+              ) : (
+                <button type="button" className="wn-btn primary" onClick={() => { setChangelogOpen(false); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') }}>Let's go</button>
+              )}
+            </div>
+            <div className="wn-counter">{changelogSlide + 1} / {changelogFeatures.length}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Group call invite banner ─────────────────────────── */}
+      {groupCallInvite && (
+        <div className="banner" style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+          <span>👥 <strong>{groupCallInvite.from}</strong> invited you to a group call</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" style={{ padding: '4px 12px', borderRadius: 6, background: 'var(--brand)', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }} onClick={() => { setGroupCallRoom(groupCallInvite.room); setGroupCallInvite(null) }}>Join</button>
+            <button type="button" style={{ padding: '4px 12px', borderRadius: 6, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--input-border)', cursor: 'pointer' }} onClick={() => setGroupCallInvite(null)}>Decline</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Group call overlay ────────────────────────────────── */}
+      {me && groupCallRoom && (
+        <div className="call-overlay" style={{ flexDirection: 'column', gap: '1rem', padding: '2rem' }}>
+          <VoiceRoom
+            me={me}
+            channelId={groupCallRoom}
+            channelName="Group Call"
+            send={send}
+            subscribe={subscribe}
+            turn={turn}
+          />
+          <button
+            type="button"
+            className="call-btn-end"
+            onClick={() => {
+              send({ type: 'voice_leave', channel_id: groupCallRoom })
+              setGroupCallRoom(null)
+            }}
+          >Leave group call</button>
         </div>
       )}
 
@@ -1747,6 +1898,29 @@ export default function App() {
         {!me && (
           <main className="grid">
             <div className="hub-auth">
+              <div className="auth-hero">
+                <img src="/web/favicon.svg" alt="Phaze" className="auth-hero-logo" />
+                <h2 className="auth-hero-title">Phaze</h2>
+                <p className="auth-hero-sub">Encrypted chat for everyone. Private by default.</p>
+                <div className="auth-features">
+                  <div className="auth-feature">
+                    <span className="auth-feature-icon">🔒</span>
+                    <span className="auth-feature-label">End-to-end encrypted</span>
+                  </div>
+                  <div className="auth-feature">
+                    <span className="auth-feature-icon">📞</span>
+                    <span className="auth-feature-label">Voice & video calls</span>
+                  </div>
+                  <div className="auth-feature">
+                    <span className="auth-feature-icon">🌐</span>
+                    <span className="auth-feature-label">Public Spaces</span>
+                  </div>
+                  <div className="auth-feature">
+                    <span className="auth-feature-icon">🎙️</span>
+                    <span className="auth-feature-label">Voice messages</span>
+                  </div>
+                </div>
+              </div>
               <section className="panel">
                 <h2>Sign in to Phaze</h2>
                 {mode === 'login' ? (
@@ -1818,7 +1992,7 @@ export default function App() {
               <div className="hub-sidebar">
                 <div className="hub-add-friend">
                   <div className="form">
-                    <input placeholder="Add a friend by username" value={addFriend} onChange={(e) => setAddFriend(e.target.value)} />
+                    <input placeholder="Add friend by username…" value={addFriend} onChange={(e) => setAddFriend(e.target.value)} />
                     <button type="button" onClick={() => { sendFriendRequest(addFriend.trim()); setAddFriend('') }}>Add</button>
                   </div>
                 </div>
@@ -1826,10 +2000,11 @@ export default function App() {
                   {Object.keys(friends).length === 0 && (
                     <div className="friends-empty">
                       <div className="friends-empty-icon">👋</div>
-                      <p><strong>No friends yet.</strong></p>
-                      <p className="muted small">Add someone by their Phaze username. They get a friend request and once they accept you can chat + call.</p>
+                      <p><strong>No friends yet</strong></p>
+                      <p className="muted small">Add someone by their username above. Once they accept, you can chat, call, and share.</p>
                     </div>
                   )}
+                  {Object.keys(friends).length > 0 && <div className="sidebar-section-label">Messages</div>}
                   <ul className="list">
                     {Object.entries(friends)
                       .map(([u, st]) => ({ u, st, last: lastLineFor(me, u) }))
@@ -1919,6 +2094,19 @@ export default function App() {
                           <button
                             type="button"
                             className="chat-call-btn"
+                            title="Group call"
+                            onClick={() => {
+                              const room = `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+                              setGroupCallRoom(room)
+                              if (selected) {
+                                send({ type: 'call_invite', recipient: selected, channel_id: room })
+                              }
+                            }}
+                            disabled={!me}
+                          >👥</button>
+                          <button
+                            type="button"
+                            className="chat-call-btn"
                             title={`Block ${selected}`}
                             onClick={() => {
                               if (selected && me && confirm(`Block ${selected}? They won't be able to message you.`)) {
@@ -1983,10 +2171,12 @@ export default function App() {
                         <p>
                           {Object.keys(friends).length === 0
                             ? 'Add a friend by username to get started — once they accept, your conversation appears here.'
-                            : 'Pick someone from your friends list to start a conversation.'}
+                            : 'Pick someone from your friends list to start chatting.'}
                         </p>
                         <p className="chat-empty-hints">
-                          <kbd>⌘K</kbd> quick switcher · <kbd>/</kbd> commands · <kbd>@</kbd> mention
+                          <span><kbd>⌘K</kbd> quick switcher</span>
+                          <span><kbd>/</kbd> commands</span>
+                          <span><kbd>@</kbd> mention</span>
                         </p>
                       </div>
                     )}
@@ -2204,13 +2394,23 @@ export default function App() {
         </>
       )}
 
-      <footer className="foot muted small">
-        <a
-          href={bmcUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="bmc-link"
-        >☕ Support Phaze</a>
+      <footer className="foot">
+        <div className="foot-inner">
+          <a
+            href={bmcUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="foot-cta"
+          >☕ Support Phaze</a>
+          <div className="foot-links">
+            <a href="https://twitter.com/PhazeChatWorld" target="_blank" rel="noopener noreferrer">Twitter</a>
+            <span className="foot-dot" />
+            <a href="https://instagram.com/phazechat.world" target="_blank" rel="noopener noreferrer">Instagram</a>
+            <span className="foot-dot" />
+            <a href="https://github.com/nickshouse/Phaze" target="_blank" rel="noopener noreferrer">GitHub</a>
+          </div>
+          <span className="foot-copy">Phaze — encrypted chat for everyone</span>
+        </div>
       </footer>
     </div>
   )

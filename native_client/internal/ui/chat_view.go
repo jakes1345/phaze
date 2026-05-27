@@ -24,8 +24,8 @@ type ChatViewProps struct {
 	OnSendFile    func()
 	OnVoiceRecord func()
 	OnTyping      func()
-	// Contacts list for @mention dropdown
-	Contacts []string
+	OnBack        func()
+	Contacts      []string
 }
 
 type ChatView struct {
@@ -34,23 +34,25 @@ type ChatView struct {
 }
 
 func NewChatView(props ChatViewProps) *ChatView {
+	if IsMobile() {
+		return newMobileChatView(props)
+	}
+	return newDesktopChatView(props)
+}
+
+func newDesktopChatView(props ChatViewProps) *ChatView {
 	pulsar := NewPhazePulsar()
-	// 1. Header
 	icon := canvas.NewCircle(color.NRGBA{G: 200, B: 0, A: 255})
 	if props.Slicer != nil {
-		// Use the real status dot
-		res := props.Slicer.GetStatusIcon(props.Status)
-		iconImg := canvas.NewImageFromResource(res)
-		iconImg.Resize(fyne.NewSize(12, 12))
-		icon = canvas.NewCircle(color.Transparent) // Placeholder to keep logic simple for now
+		icon = canvas.NewCircle(color.Transparent)
 	}
 	icon.Resize(fyne.NewSize(12, 12))
-	
+
 	nameLabel := widget.NewLabelWithStyle(props.Name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	statusLabel := widget.NewLabelWithStyle(props.Status, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-	
+
 	headerInfo := container.NewVBox(nameLabel, statusLabel)
-	
+
 	blockBtn := widget.NewButtonWithIcon("Block", theme.CancelIcon(), func() {
 		if props.OnBlock != nil {
 			props.OnBlock()
@@ -72,26 +74,23 @@ func NewChatView(props ChatViewProps) *ChatView {
 		reportBtn,
 		widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {}),
 	)
-	
+
 	header := container.NewBorder(nil, nil, icon, headerActions, headerInfo)
 	headerBg := canvas.NewRectangle(PhazePanel)
 	headerContainer := container.NewStack(headerBg, container.NewPadded(header))
 
-	// 2. Message Area
 	msgPlaceholder := widget.NewLabel("No messages yet.")
 
-	// 3. Input Area
 	input := widget.NewMultiLineEntry()
 	input.SetPlaceHolder("Type a message here...")
 
 	emojiBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
-		// Use the correct popup with slicer
 		win := fyne.CurrentApp().Driver().AllWindows()[0]
 		ShowEmoticonPopup(win.Canvas(), props.Slicer, fyne.NewPos(100, 300), func(s string) {
 			input.SetText(input.Text + s)
 		})
 	})
-	
+
 	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), props.OnSendFile)
 
 	micBtn := widget.NewButtonWithIcon("", theme.MediaRecordIcon(), func() {
@@ -107,13 +106,101 @@ func NewChatView(props ChatViewProps) *ChatView {
 		}
 	})
 
-	// @mention autocomplete: show dropdown when user types @
-	var mentionPopup *widget.PopUp
+	input.OnChanged = buildMentionHandler(input, props)
+
+	leftActions := container.NewHBox(emojiBtn, fileBtn, micBtn)
+	inputArea := container.NewBorder(nil, nil, leftActions, sendBtn, container.NewPadded(input))
+
+	main := container.NewBorder(
+		headerContainer,
+		container.NewVBox(
+			container.NewHBox(layout.NewSpacer(), pulsar.Container, layout.NewSpacer()),
+			widget.NewSeparator(),
+			container.NewPadded(inputArea),
+		),
+		nil, nil,
+		container.NewPadded(msgPlaceholder),
+	)
+	return &ChatView{Container: main, Pulsar: pulsar}
+}
+
+func newMobileChatView(props ChatViewProps) *ChatView {
+	pulsar := NewPhazePulsar()
+
+	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+		if props.OnBack != nil {
+			props.OnBack()
+		}
+	})
+	backBtn.Importance = widget.LowImportance
+
+	nameLabel := widget.NewLabelWithStyle(props.Name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	statusLabel := widget.NewLabelWithStyle(props.Status, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+
+	callBtn := widget.NewButtonWithIcon("", theme.ConfirmIcon(), props.OnCall)
+	callBtn.Importance = widget.LowImportance
+
+	moreBtn := widget.NewButtonWithIcon("", theme.MoreVerticalIcon(), func() {})
+	moreBtn.Importance = widget.LowImportance
+
+	header := container.NewBorder(
+		nil, nil,
+		backBtn,
+		container.NewHBox(callBtn, moreBtn),
+		container.NewVBox(nameLabel, statusLabel),
+	)
+	headerBg := canvas.NewRectangle(PhazePanel)
+	headerContainer := container.NewStack(headerBg, container.NewPadded(header))
+
+	msgPlaceholder := widget.NewLabel("No messages yet.")
+
+	input := widget.NewEntry()
+	input.SetPlaceHolder("Message...")
+
+	micBtn := widget.NewButtonWithIcon("", theme.MediaRecordIcon(), func() {
+		if props.OnVoiceRecord != nil {
+			props.OnVoiceRecord()
+		}
+	})
+
+	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), props.OnSendFile)
+
+	sendBtn := widget.NewButtonWithIcon("", theme.MailSendIcon(), func() {
+		if input.Text != "" {
+			props.OnSend(input.Text)
+			input.SetText("")
+		}
+	})
+
+	input.OnSubmitted = func(text string) {
+		if text != "" {
+			props.OnSend(text)
+			input.SetText("")
+		}
+	}
 	input.OnChanged = func(s string) {
-		if s != "" {
+		if s != "" && props.OnTyping != nil {
 			props.OnTyping()
 		}
-		// Detect @ trigger
+	}
+
+	inputRow := container.NewBorder(nil, nil, container.NewHBox(fileBtn, micBtn), sendBtn, input)
+
+	main := container.NewBorder(
+		headerContainer,
+		container.NewVBox(widget.NewSeparator(), container.NewPadded(inputRow)),
+		nil, nil,
+		container.NewPadded(msgPlaceholder),
+	)
+	return &ChatView{Container: main, Pulsar: pulsar}
+}
+
+func buildMentionHandler(input *widget.Entry, props ChatViewProps) func(string) {
+	var mentionPopup *widget.PopUp
+	return func(s string) {
+		if s != "" && props.OnTyping != nil {
+			props.OnTyping()
+		}
 		if mentionPopup != nil {
 			mentionPopup.Hide()
 			mentionPopup = nil
@@ -145,7 +232,6 @@ func NewChatView(props ChatViewProps) *ChatView {
 		for i, m := range matches {
 			m := m
 			btn := widget.NewButton("@"+m, func() {
-				// Replace the @query with the chosen mention
 				newText := s[:atIdx+1] + m + " "
 				input.SetText(newText)
 				if mentionPopup != nil {
@@ -159,20 +245,4 @@ func NewChatView(props ChatViewProps) *ChatView {
 		mentionPopup = widget.NewPopUp(container.NewVBox(items...), win.Canvas())
 		mentionPopup.ShowAtPosition(fyne.NewPos(100, 400))
 	}
-
-	leftActions := container.NewHBox(emojiBtn, fileBtn, micBtn)
-	inputArea := container.NewBorder(nil, nil, leftActions, sendBtn, container.NewPadded(input))
-	
-	// Final Layout
-	main := container.NewBorder(
-		headerContainer,
-		container.NewVBox(
-			container.NewHBox(layout.NewSpacer(), pulsar.Container, layout.NewSpacer()),
-			widget.NewSeparator(), 
-			container.NewPadded(inputArea),
-		),
-		nil, nil,
-		container.NewPadded(msgPlaceholder),
-	)
-	return &ChatView{Container: main, Pulsar: pulsar}
 }

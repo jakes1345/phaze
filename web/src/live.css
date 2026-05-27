@@ -28,6 +28,10 @@
   font-size: 0.95rem;
 }
 .app.theme-dark .live-golive input { background: #1a1a1f; color: #fafafa; border-color: rgba(255,255,255,0.1); }
+.live-golive-btns {
+  display: flex;
+  gap: 0.5rem;
+}
 .live-golive-btn {
   padding: 0.55rem 1.25rem;
   border-radius: 8px;
@@ -36,8 +40,20 @@
   color: #fff;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
 }
 .live-golive-btn:hover { background: #6f1ee0; }
+.live-golive-btn.screen {
+  background: transparent;
+  border: 1px solid var(--brand, #863bff);
+  color: var(--brand, #863bff);
+}
+.live-golive-btn.screen:hover { background: rgba(134,59,255,0.08); }
+@media (max-width: 600px) {
+  .live-golive { flex-direction: column; }
+  .live-golive-btns { width: 100%; }
+  .live-golive-btn { flex: 1; text-align: center; }
+}
 
 /* Grid of live cards */
 .live-grid {

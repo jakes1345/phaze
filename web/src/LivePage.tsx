@@ -113,19 +113,35 @@ export default function LivePage({ me, send, subscribe, turn }: Props) {
     if (v) { v.pc.close(); viewersRef.current.delete(viewer); setViewerCount(viewersRef.current.size) }
   }
 
-  const goLive = async () => {
+  const goLive = async (mode: 'camera' | 'screen') => {
     setErr('')
     let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-    } catch {
-      setErr('Camera/microphone permission denied')
-      return
+    if (mode === 'screen') {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+      } catch {
+        setErr('Screen share cancelled or denied.')
+        return
+      }
+    } else {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        } catch {
+          setErr('Mic denied — in Firefox: click the lock icon → "Connection Secure" → clear camera/mic permission → reload the page.')
+          return
+        }
+      }
     }
     localStreamRef.current = stream
     setLocalStream(stream)
     setBroadcasting(true)
     send({ type: 'stream_start', body: streamTitle.trim() || `${me}'s stream` })
+    stream.getTracks().forEach((t) => {
+      t.onended = () => { if (localStreamRef.current === stream) stopLive() }
+    })
   }
 
   const stopLive = () => {
@@ -215,7 +231,7 @@ export default function LivePage({ me, send, subscribe, turn }: Props) {
     <div className="live-page">
       <header className="live-head">
         <h1>🔴 Live</h1>
-        <p className="muted small">Go live to broadcast your camera + mic. Click a stream to watch.</p>
+        <p className="muted small">Broadcast your camera or share your screen. Click a stream to watch.</p>
       </header>
 
       {/* ── Viewer mode ────────────────────────────────── */}
@@ -261,7 +277,10 @@ export default function LivePage({ me, send, subscribe, turn }: Props) {
               onChange={(e) => setStreamTitle(e.target.value)}
               maxLength={80}
             />
-            <button type="button" className="live-golive-btn" onClick={() => void goLive()}>📹 Go Live</button>
+            <div className="live-golive-btns">
+              <button type="button" className="live-golive-btn" onClick={() => void goLive('camera')}>📹 Go Live</button>
+              <button type="button" className="live-golive-btn screen" onClick={() => void goLive('screen')}>🖥 Share Screen</button>
+            </div>
           </div>
 
           <h2 className="live-section">Currently live</h2>
