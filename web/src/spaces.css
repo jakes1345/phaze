@@ -1103,3 +1103,58 @@
   align-items: center;
   justify-content: center;
 }
+
+/* ── Members sidebar ──────────────────────────────────────── */
+.members-sidebar {
+  width: 220px;
+  min-width: 180px;
+  max-width: 280px;
+  background: var(--panel, #fff);
+  border-left: 1px solid var(--panel-edge, #e5e5ea);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.members-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #8e8e93);
+  padding: 0.75rem 0.85rem 0.4rem;
+  margin: 0;
+}
+.members-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.4rem;
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.member-row:hover {
+  background: var(--list-hover, rgba(0,0,0,0.04));
+}
+.member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member-empty {
+  padding: 0.75rem;
+  color: var(--muted, #8e8e93);
+  font-size: 0.82rem;
+}
+.chat-head-btn.active {
+  color: var(--brand, #863bff);
+  background: var(--brand-soft, rgba(134,59,255,0.1));
+}
+@media (max-width: 820px) {
+  .members-sidebar { display: none; }
+}
