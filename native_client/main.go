@@ -674,10 +674,16 @@ func (s *PhazeApp) connect(password, totpCode, sessionToken string) (authResult,
 			return s.ConnectToServer(pass)
 		})
 
-		// Register FCM push token (Android only; no-op on desktop)
-		if tok := readFCMToken(); tok != "" {
-			go s.SendMessage(NexusMessage{Type: "register_fcm_token", Body: tok})
-		}
+		// Register FCM push token (Android only; no-op on desktop).
+		// Re-check every 30 minutes in case the token refreshes.
+		go func() {
+			for {
+				if tok := readFCMToken(); tok != "" {
+					s.SendMessage(NexusMessage{Type: "register_fcm_token", Body: tok})
+				}
+				time.Sleep(30 * time.Minute)
+			}
+		}()
 
 		// Check for Sovereign Updates
 		go s.CheckForUpdates()
@@ -1957,58 +1963,7 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 			fd.Show()
 		},
 		OnVoiceRecord: func() {
-			go func() {
-				pr := dialog.NewProgressInfinite("Recording", "Recording voice message (tap Stop to finish)...", s.MainWindow)
-				fyne.Do(pr.Show)
-
-				chat.StartVoiceRecord()
-				time.Sleep(200 * time.Millisecond) // let goroutine spin up
-				// Show a stop dialog
-				stopCh := make(chan struct{})
-				fyne.Do(func() {
-					pr.Hide()
-					dialog.ShowConfirm("Voice Message", "Recording... tap Stop when done.",
-						func(stop bool) {
-							close(stopCh)
-						}, s.MainWindow)
-				})
-				<-stopCh
-				filePath, err := chat.StopVoiceRecord()
-				if err != nil {
-					log.Printf("[voice] record error: %v", err)
-					return
-				}
-				data, err := os.ReadFile(filePath)
-				os.Remove(filePath)
-				if err != nil {
-					log.Printf("[voice] read wav: %v", err)
-					return
-				}
-				fileURL, err := s.uploadFile("voice.wav", data)
-				if err != nil {
-					log.Printf("[voice] upload: %v", err)
-					return
-				}
-				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
-				msg := NexusMessage{
-					Type:      "msg",
-					Sender:    s.Username,
-					Recipient: name,
-					MsgID:     msgID,
-					Kind:      "voice",
-					FileURL:   fileURL,
-					FileName:  "voice.wav",
-					Body:      "[Voice Message]",
-				}
-				s.SendMessage(msg)
-				ts := time.Now().Unix()
-				s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type) VALUES (?, ?, ?, ?, 61)`,
-					name, s.Username, "[Voice Message]", ts)
-				fyne.Do(func() {
-					historyContainer.Add(ui.NewMessageBubble(s.Username, "[Voice Message]", true, s.Slicer))
-					scroll.ScrollToBottom()
-				})
-			}()
+			s.startVoiceRecording(name, historyContainer, scroll)
 		},
 		OnTyping: func() {
 			if time.Since(s.LastTypingSent[name]) > 3*time.Second {
@@ -2182,39 +2137,7 @@ func (s *PhazeApp) OpenChatMobile(name string) fyne.CanvasObject {
 			fd.Show()
 		},
 		OnVoiceRecord: func() {
-			go func() {
-				chat.StartVoiceRecord()
-				time.Sleep(200 * time.Millisecond)
-				stopCh := make(chan struct{})
-				fyne.Do(func() {
-					dialog.ShowConfirm("Voice", "Recording... tap Stop when done.",
-						func(_ bool) { close(stopCh) }, s.MainWindow)
-				})
-				<-stopCh
-				filePath, err := chat.StopVoiceRecord()
-				if err != nil {
-					return
-				}
-				data, err := os.ReadFile(filePath)
-				os.Remove(filePath)
-				if err != nil {
-					return
-				}
-				fileURL, err := s.uploadFile("voice.wav", data)
-				if err != nil {
-					return
-				}
-				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
-				s.SendMessage(NexusMessage{
-					Type: "msg", Sender: s.Username, Recipient: name,
-					MsgID: msgID, Kind: "voice", FileURL: fileURL, FileName: "voice.wav",
-					Body: "[Voice Message]",
-				})
-				fyne.Do(func() {
-					historyContainer.Add(ui.NewMessageBubble(s.Username, "[Voice Message]", true, s.Slicer))
-					scroll.ScrollToBottom()
-				})
-			}()
+			s.startVoiceRecording(name, historyContainer, scroll)
 		},
 		OnTyping: func() {
 			if time.Since(s.LastTypingSent[name]) > 3*time.Second {
@@ -2228,6 +2151,58 @@ func (s *PhazeApp) OpenChatMobile(name string) fyne.CanvasObject {
 	chatView.Container.Objects[2] = container.NewBorder(nil, typingLabel, nil, nil, scroll)
 
 	return chatView.Container
+}
+
+func (s *PhazeApp) startVoiceRecording(name string, historyContainer *fyne.Container, scroll *container.Scroll) {
+	chat.StartVoiceRecord()
+
+	rec := ui.NewVoiceRecorder(
+		func() {
+			go func() {
+				filePath, err := chat.StopVoiceRecord()
+				if err != nil {
+					log.Printf("[voice] record error: %v", err)
+					return
+				}
+				data, err := os.ReadFile(filePath)
+				os.Remove(filePath)
+				if err != nil {
+					log.Printf("[voice] read wav: %v", err)
+					return
+				}
+				fileURL, err := s.uploadFile("voice.wav", data)
+				if err != nil {
+					log.Printf("[voice] upload: %v", err)
+					return
+				}
+				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+				s.SendMessage(NexusMessage{
+					Type: "msg", Sender: s.Username, Recipient: name,
+					MsgID: msgID, Kind: "voice", FileURL: fileURL, FileName: "voice.wav",
+					Body: "[Voice Message]",
+				})
+				ts := time.Now().Unix()
+				s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type) VALUES (?, ?, ?, ?, 61)`,
+					name, s.Username, "[Voice Message]", ts)
+				fyne.Do(func() {
+					historyContainer.Add(ui.NewMessageBubble(s.Username, "[Voice Message]", true, s.Slicer))
+					scroll.ScrollToBottom()
+				})
+			}()
+		},
+		func() {
+			go func() {
+				chat.StopVoiceRecord()
+			}()
+		},
+	)
+	rec.Start()
+
+	fyne.Do(func() {
+		historyContainer.Add(rec.Container)
+		historyContainer.Refresh()
+		scroll.ScrollToBottom()
+	})
 }
 
 func (s *PhazeApp) CreateHomeView() fyne.CanvasObject {
