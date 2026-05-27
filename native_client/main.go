@@ -1188,13 +1188,8 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 	case "call_offer":
 		s.PlaySound("CallIncoming.wav")
 
-		// Forensic ICE Server Matrix (Acting on developer audit)
 		iceConfig := webrtc.Configuration{
-			ICEServers: []webrtc.ICEServer{
-				{URLs: []string{"stun:stun.l.google.com:19302"}},
-				{URLs: []string{"stun:stun1.l.google.com:19302"}},
-				{URLs: []string{"stun:stun2.l.google.com:19302"}},
-			},
+			ICEServers: s.Calls.ICEServers,
 		}
 
 		s.showIncomingCallDialog(msg.Sender, iceConfig, msg.SDP)
@@ -1555,11 +1550,7 @@ func (s *PhazeApp) StartCall(name string) {
 	}
 
 	iceConfig := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{URLs: []string{"stun:stun.l.google.com:19302"}},
-			{URLs: []string{"stun:stun1.l.google.com:19302"}},
-			{URLs: []string{"stun:stun2.l.google.com:19302"}},
-		},
+		ICEServers: s.Calls.ICEServers,
 	}
 
 	_, offerSDP, err := s.Calls.CreateOffer(name, iceConfig, func(c *webrtc.ICECandidate) {
@@ -1791,12 +1782,7 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 
 	scroll := container.NewVScroll(historyContainer)
 
-	// Status indicator
-	serverStatus := "Phaze Unified Mesh"
-	if strings.Contains(s.ServerAddress, "localhost") {
-		serverStatus = "Phaze: Local Node"
-	}
-	statusLabel := widget.NewLabelWithStyle(serverStatus, fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+	statusLabel := widget.NewLabelWithStyle("Phaze Encrypted Mesh", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
 
 	// Typing indicator
 	typingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
