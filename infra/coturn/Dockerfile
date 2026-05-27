@@ -1,16 +1,13 @@
-# Phaze TURN/STUN server — coturn, configured for time-limited credentials
-# (HMAC-SHA1 over expiry+username) so clients never see a long-lived secret.
-# Listens on 3478/UDP+TCP for STUN/TURN and 5349/TCP for TURN-over-TLS.
+# Phaze TURN/STUN server — coturn on Alpine, configured for time-limited
+# credentials (HMAC-SHA1) so clients never see a long-lived secret.
 
-FROM coturn/coturn:4.7-alpine
+FROM alpine:3.20
 
-# Run as the non-root user the upstream image creates.
-USER turnserver
+RUN apk add --no-cache coturn
 
-# Config is supplied via env vars at boot, see entrypoint.
 COPY --chown=turnserver:turnserver entrypoint.sh /entrypoint.sh
-USER root
 RUN chmod +x /entrypoint.sh
+
 USER turnserver
 
 EXPOSE 3478/udp 3478/tcp 5349/tcp 49160-49200/udp

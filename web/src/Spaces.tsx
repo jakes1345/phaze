@@ -57,13 +57,37 @@ interface Toast {
 
 let toastSeq = 0
 
+function containsMention(text: string, username: string): boolean {
+  return new RegExp(`@${username}\\b`, 'i').test(text)
+}
+
+function RichText({ text, me }: { text: string; me: string }) {
+  const parts = text.split(/(@\w+)/g)
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (p.startsWith('@')) {
+          const name = p.slice(1)
+          const isMe = name.toLowerCase() === me.toLowerCase()
+          return <span key={i} className={`msg-mention ${isMe ? 'me' : ''}`}>{p}</span>
+        }
+        const urlRe = /(https?:\/\/[^\s]+)/g
+        const segs = p.split(urlRe)
+        return segs.map((s, j) =>
+          urlRe.test(s) ? <a key={`${i}-${j}`} href={s} target="_blank" rel="noopener noreferrer" className="msg-link">{s}</a> : <span key={`${i}-${j}`}>{s}</span>
+        )
+      })}
+    </>
+  )
+}
+
 export default function Spaces({ me, send, subscribe, turn = null, onUserClick, uploadAttachment }: Props) {
   const [servers, setServers] = useState<ServerSummary[]>([])
   const [activeServer, setActiveServer] = useState<string | null>(null)
   const [channelsByServer, setChannelsByServer] = useState<Record<string, ChannelInfo[]>>({})
   const [activeChannel, setActiveChannel] = useState<string | null>(null)
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, ChannelMsg[]>>({})
-  const [, setMemberCountByServer] = useState<Record<string, number>>({})
+  const [membersByServer, setMembersByServer] = useState<Record<string, string[]>>({})
   const [draft, setDraft] = useState('')
   const [composerOpen, setComposerOpen] = useState<null | 'create' | 'join'>(null)
   const [newName, setNewName] = useState('')
@@ -75,7 +99,58 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
   const [toasts, setToasts] = useState<Toast[]>([])
   const chatBottomRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [pinsOpen, setPinsOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionIdx, setMentionIdx] = useState(0)
+
+  const members = activeServer ? (membersByServer[activeServer] ?? []) : []
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) return []
+    const q = mentionQuery.toLowerCase()
+    return members.filter((u) => u.toLowerCase().includes(q) && u !== me).slice(0, 8)
+  }, [mentionQuery, members, me])
+
+  const completeMention = (name: string) => {
+    if (mentionQuery === null) return
+    const atPos = draft.lastIndexOf('@')
+    if (atPos < 0) return
+    setDraft(draft.slice(0, atPos) + '@' + name + ' ')
+    setMentionQuery(null)
+    setMentionIdx(0)
+    draftInputRef.current?.focus()
+  }
+
+  const handleDraftChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value
+    setDraft(val)
+    const cursor = e.target.selectionStart ?? val.length
+    const before = val.slice(0, cursor)
+    const atMatch = before.match(/@(\w*)$/)
+    if (atMatch) {
+      setMentionQuery(atMatch[1])
+      setMentionIdx(0)
+    } else {
+      setMentionQuery(null)
+    }
+  }
+
+  const beginEdit = (msg: ChannelMsg) => {
+    setEditingId(String(msg.id))
+    setEditDraft(msg.body)
+  }
+  const cancelEdit = () => { setEditingId(null); setEditDraft('') }
+  const saveEdit = () => {
+    if (!editingId || !activeChannel) return
+    const body = editDraft.trim()
+    if (body) send({ type: 'channel_edit', channel_id: activeChannel, msg_id: editingId, body })
+    cancelEdit()
+  }
 
   const toast = (body: string, tone: Toast['tone'] = 'info') => {
     const id = ++toastSeq
@@ -147,7 +222,7 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
         case 'server_info_result':
           if (m.status === 'ok' && m.server_id) {
             if (m.channels) setChannelsByServer((c) => ({ ...c, [m.server_id!]: m.channels! }))
-            if (m.members) setMemberCountByServer((mc) => ({ ...mc, [m.server_id!]: m.members!.length }))
+            if (m.members) setMembersByServer((mc) => ({ ...mc, [m.server_id!]: m.members! }))
           }
           break
         case 'server_channels_updated':
@@ -445,15 +520,64 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                 {activeChannelInfo.name}
               </h2>
               {activeChannelInfo.topic && <p className="chat-topic">{activeChannelInfo.topic}</p>}
+              <div className="chat-head-actions">
+                <button type="button" className="chat-head-btn" title="Search" onClick={() => setSearchOpen((v) => !v)}>🔍</button>
+                <button type="button" className="chat-head-btn" title="Pinned messages" onClick={() => setPinsOpen((v) => !v)}>
+                  📌{(() => { const pins = (messagesByChannel[activeChannel!] ?? []).filter((m) => m.pinned); return pins.length > 0 ? <span className="head-badge">{pins.length}</span> : null })()}
+                </button>
+              </div>
             </header>
+
+            {searchOpen && (
+              <div className="spaces-search-bar">
+                <input
+                  autoFocus
+                  placeholder="Search in channel…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearch('') } }}
+                />
+                {search && (
+                  <span className="muted small">{(messagesByChannel[activeChannel!] ?? []).filter((m) => !m.deleted && m.body.toLowerCase().includes(search.toLowerCase())).length} matches</span>
+                )}
+                <button type="button" className="ghost-btn" onClick={() => { setSearch(''); setSearchOpen(false) }}>Close</button>
+              </div>
+            )}
+
+            {pinsOpen && (() => {
+              const pins = (messagesByChannel[activeChannel!] ?? []).filter((m) => m.pinned)
+              return pins.length > 0 ? (
+                <div className="spaces-pin-strip">
+                  <div className="pin-strip-title">📌 Pinned</div>
+                  {pins.map((m) => (
+                    <div key={m.id} className="pin-strip-item">
+                      <span className="muted small">{m.sender}:</span> {decodeFile(m.body) ? `📎 ${decodeFile(m.body)!.name}` : m.body.slice(0, 100)}
+                    </div>
+                  ))}
+                </div>
+              ) : null
+            })()}
+
+            {editingId && (
+              <div className="spaces-edit-banner">
+                <span>Editing message</span>
+                <button type="button" className="ghost-btn" onClick={cancelEdit}>Cancel</button>
+              </div>
+            )}
+
             <div className="chat-stream">
-              {(messagesByChannel[activeChannel!] ?? []).map((m, idx, arr) => {
+              {(() => {
+                const allMsgs = messagesByChannel[activeChannel!] ?? []
+                const q = search.trim().toLowerCase()
+                const view = q ? allMsgs.filter((m) => !m.deleted && m.body.toLowerCase().includes(q)) : allMsgs
+                return view.map((m, idx, arr) => {
                 const prev = idx > 0 ? arr[idx - 1] : null
                 const groupHead = !prev || prev.sender !== m.sender || gapMins(prev.created_at, m.created_at) > 5
+                const mentionsMe = containsMention(m.body, me)
                 return (
                   <div
                     key={m.id}
-                    className={`chat-msg ${m.sender === me ? 'me' : ''} ${groupHead ? 'head' : 'cont'}`}
+                    className={`chat-msg ${m.sender === me ? 'me' : ''} ${groupHead ? 'head' : 'cont'} ${mentionsMe ? 'mentions-me' : ''}`}
                   >
                     {groupHead && (
                       <div className="chat-msg-meta">
@@ -475,7 +599,7 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                         <span className="msg-deleted">message deleted</span>
                       ) : (() => {
                         const f = decodeFile(m.body)
-                        if (!f) return <>{m.body}{m.edited && <span className="edited-tag"> (edited)</span>}</>
+                        if (!f) return <><RichText text={m.body} me={me} />{m.edited && <span className="edited-tag"> (edited)</span>}</>
                         if (isImage(f.mime, f.name)) {
                           return (
                             <a href={f.url} target="_blank" rel="noopener noreferrer">
@@ -518,12 +642,7 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                           title={m.pinned ? 'Unpin' : 'Pin'}>{m.pinned ? '📍' : '📌'}</button>
                         {m.sender === me && !decodeFile(m.body) && (
                           <button type="button" className="msg-act"
-                            onClick={() => {
-                              const next = prompt('Edit message', m.body)
-                              if (next && next.trim() && next !== m.body) {
-                                send({ type: 'channel_edit', channel_id: activeChannel!, msg_id: String(m.id), body: next.trim() })
-                              }
-                            }}
+                            onClick={() => beginEdit(m)}
                             title="Edit">✏️</button>
                         )}
                         {m.sender === me && (
@@ -539,7 +658,8 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                     )}
                   </div>
                 )
-              })}
+              })
+              })()}
               <div ref={chatBottomRef} />
             </div>
             <footer className="chat-composer">
@@ -583,26 +703,56 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                   ))}
                 </div>
               )}
-              <textarea
-                placeholder={`Message #${activeChannelInfo.name}`}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    submitMessage()
-                  }
-                }}
-                rows={1}
-              />
+              <div className="composer-wrap">
+                <textarea
+                  ref={draftInputRef}
+                  placeholder={editingId ? 'Edit message…' : `Message #${activeChannelInfo.name}  ·  @ to mention`}
+                  value={editingId ? editDraft : draft}
+                  onChange={(e) => {
+                    if (editingId) setEditDraft(e.target.value)
+                    else handleDraftChange(e)
+                  }}
+                  onKeyDown={(e) => {
+                    if (mentionMatches.length > 0 && mentionQuery !== null) {
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionMatches.length); return }
+                      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return }
+                      if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); completeMention(mentionMatches[mentionIdx]); return }
+                      if (e.key === 'Escape') { setMentionQuery(null); return }
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      if (editingId) saveEdit()
+                      else submitMessage()
+                    }
+                    if (e.key === 'Escape' && editingId) cancelEdit()
+                  }}
+                  rows={1}
+                />
+                {mentionMatches.length > 0 && mentionQuery !== null && (
+                  <div className="mention-pop">
+                    {mentionMatches.map((u, i) => (
+                      <button
+                        type="button"
+                        key={u}
+                        className={`mention-row ${i === mentionIdx ? 'on' : ''}`}
+                        onMouseDown={(e) => { e.preventDefault(); completeMention(u) }}
+                        onMouseEnter={() => setMentionIdx(i)}
+                      >
+                        <span className="avatar small" data-initial={u[0]?.toUpperCase()} />
+                        <span>{u}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={submitMessage}
-                disabled={!draft.trim()}
+                onClick={() => { if (editingId) saveEdit(); else submitMessage() }}
+                disabled={editingId ? !editDraft.trim() : !draft.trim()}
                 className="send-btn"
-                aria-label="Send"
+                aria-label={editingId ? 'Save' : 'Send'}
               >
-                ➤
+                {editingId ? '✓' : '➤'}
               </button>
             </footer>
           </>

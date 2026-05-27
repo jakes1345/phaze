@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
-type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications'
+type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications' | 'invite'
 
 interface Session {
   token: string
@@ -17,12 +17,13 @@ interface Props {
   send: (m: NexusMessage) => void
   subscribe: (handler: (m: NexusMessage) => void) => () => void
   onClose: () => void
+  onSignOut: () => void
   onSetBackupPin: (pin: string) => Promise<void>
   onDeleteBackup: () => void
   initialTab?: Tab
 }
 
-export default function Settings({ me, sessionToken, send, subscribe, onClose, onSetBackupPin, onDeleteBackup, initialTab }: Props) {
+export default function Settings({ me, sessionToken, send, subscribe, onClose, onSignOut, onSetBackupPin, onDeleteBackup, initialTab }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab ?? 'profile')
 
   // Profile
@@ -68,6 +69,8 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [delConfirm, setDelConfirm] = useState('')
   const [delPw, setDelPw] = useState('')
   const [delMsg, setDelMsg] = useState('')
+
+  const inviteLink = `https://phazechat.world/web?ref=${encodeURIComponent(me)}`
 
   useEffect(() => {
     send({ type: 'list_blocks' })
@@ -146,6 +149,10 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
       case 'delete_account_result':
         if (msg.status !== 'ok') setDelMsg(msg.error || 'Error')
         break
+      case 'invite_result':
+        if (msg.status === 'sent') { setInviteMsg('Invite sent!'); setInviteEmail('') }
+        else setInviteMsg(msg.error || 'Failed to send')
+        break
     }
   }, [send])
 
@@ -202,6 +209,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   }
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: 'invite', label: '🎁 Invite Friends' },
     { id: 'profile', label: '👤 Profile' },
     { id: 'security', label: '🔒 Security' },
     { id: 'devices', label: '💾 Backup & Devices' },
@@ -308,6 +316,40 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
         </nav>
 
         <div className="settings-body">
+          {/* ── Invite Friends ─────────────────────────────────── */}
+          {tab === 'invite' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Share Phaze</h3>
+              <p className="settings-label">Every person you bring to Phaze makes the network stronger. Share your personal link or send an email invite.</p>
+
+              <div className="invite-link-box">
+                <input className="settings-input" readOnly value={inviteLink} onClick={(e) => (e.target as HTMLInputElement).select()} />
+                <button className="settings-btn" onClick={async () => {
+                  try {
+                    if (typeof navigator.share === 'function') {
+                      await navigator.share({ title: 'Join me on Phaze', text: 'Encrypted chat, calls, and more — join me on Phaze!', url: inviteLink })
+                    } else {
+                      await navigator.clipboard.writeText(inviteLink)
+                      setInviteMsg('Link copied!')
+                    }
+                  } catch { setInviteMsg('Link copied!'); void navigator.clipboard.writeText(inviteLink).catch(() => {}) }
+                }}>{typeof navigator.share === 'function' ? 'Share' : 'Copy link'}</button>
+              </div>
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">Email invite</h3>
+              <p className="settings-label">We'll send them an invite with your name on it.</p>
+              <div className="invite-link-box">
+                <input className="settings-input" type="email" placeholder="friend@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                <button className="settings-btn" disabled={!inviteEmail.includes('@')} onClick={() => {
+                  send({ type: 'invite_email', email: inviteEmail })
+                }}>Send invite</button>
+              </div>
+              {inviteMsg && <p className={`settings-msg ${inviteMsg.includes('!') ? 'ok' : 'err'}`}>{inviteMsg}</p>}
+            </div>
+          )}
+
           {/* ── Profile ──────────────────────────────────────── */}
           {tab === 'profile' && (
             <div className="settings-section">
@@ -579,6 +621,12 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
           {/* ── Danger ───────────────────────────────────────── */}
           {tab === 'danger' && (
             <div className="settings-section">
+              <h3 className="settings-section-title">Sign out</h3>
+              <p className="settings-label" style={{ marginBottom: '0.5rem' }}>Sign out of Phaze on this device. Your encryption keys and chat history will stay in this browser.</p>
+              <button className="settings-btn" onClick={onSignOut}>Sign out</button>
+
+              <hr className="settings-divider" />
+
               <h3 className="settings-section-title">Export your data</h3>
               <p className="settings-label" style={{ marginBottom: '0.5rem' }}>Download a copy of your profile, friends, and queued messages (GDPR Article 20).</p>
               <button className="settings-btn" onClick={exportData}>Download my data</button>
