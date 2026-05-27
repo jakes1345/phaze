@@ -59,8 +59,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --skype-blue: #863bff;
-            --skype-dark: #6f1ee0;
+            --brand: #863bff;
+            --brand-dark: #6f1ee0;
             --brand: #863bff;
             --brand-hover: #6f1ee0;
             --brand-soft: rgba(134,59,255,0.10);
@@ -85,7 +85,7 @@
         }
 
         .container { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
-        a { color: var(--skype-blue); text-decoration: none; }
+        a { color: var(--brand); text-decoration: none; }
         a:hover { text-decoration: underline; }
 
         /* Navigation */
@@ -113,7 +113,7 @@
             gap: 10px;
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--skype-blue);
+            color: var(--brand);
         }
         .nav-brand svg { width: 32px; height: 32px; }
         .nav-links { display: flex; list-style: none; gap: 0; height: 100%; }
@@ -128,8 +128,8 @@
             transition: 0.2s;
         }
         .nav-links a:hover, .nav-links a.active {
-            color: var(--skype-blue);
-            border-bottom-color: var(--skype-blue);
+            color: var(--brand);
+            border-bottom-color: var(--brand);
             text-decoration: none;
         }
         .nav-get {
@@ -231,11 +231,11 @@
         .section-row.reverse { flex-direction: row-reverse; }
         .section-content { flex: 1; }
         .section-visual { flex: 1; }
-        .section-label { color: var(--skype-blue); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 2px; margin-bottom: 15px; }
+        .section-label { color: var(--brand); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 2px; margin-bottom: 15px; }
         .section h2 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 18px; line-height: 1.15; }
         .section h2 strong { font-weight: 700; }
         .section p { font-size: 1.1rem; color: var(--text-light); margin-bottom: 30px; }
-        .section-link { font-weight: 700; color: var(--skype-blue); font-size: 1rem; }
+        .section-link { font-weight: 700; color: var(--brand); font-size: 1rem; }
 
         .visual-box {
             background: #fff;
@@ -250,7 +250,7 @@
         .stats { background: #f0f4f8; padding: 40px 0; text-align: center; border-top: 1px solid #e0e6ed; }
         .stats-grid { display: flex; justify-content: center; gap: 80px; }
         .stat-item { text-align: center; }
-        .stat-val { font-size: 2rem; font-weight: 700; color: var(--skype-blue); display: block; }
+        .stat-val { font-size: 2rem; font-weight: 700; color: var(--brand); display: block; }
         .stat-label { font-size: 0.85rem; color: var(--text-light); text-transform: uppercase; }
 
         /* Footer */
@@ -298,7 +298,7 @@
             <p>End-to-end encrypted chat &amp; calls. No ads, no tracking, no sold data. Open source and self-hostable — your conversations belong to you.</p>
             <p style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:20px;">
                 <a href="/web/" class="hero-btn">Open Phaze Web</a>
-                <a href="/download" class="hero-btn" style="background:#fff;color:var(--skype-blue);border:2px solid var(--skype-blue);">Download apps</a>
+                <a href="/download" class="hero-btn" style="background:#fff;color:var(--brand);border:2px solid var(--brand);">Download apps</a>
             </p>
         </div>
     </section>
@@ -335,6 +335,14 @@
                     <span class="strip-label">Voice + video</span>
                 </div>
                 <div class="strip-item">
+                    <span class="strip-icon">🖥</span>
+                    <span class="strip-label">Screen share</span>
+                </div>
+                <div class="strip-item">
+                    <span class="strip-icon">🌐</span>
+                    <span class="strip-label">Spaces</span>
+                </div>
+                <div class="strip-item">
                     <span class="strip-icon">🎙️</span>
                     <span class="strip-label">Voice notes</span>
                 </div>
@@ -343,8 +351,16 @@
                     <span class="strip-label">File sharing</span>
                 </div>
                 <div class="strip-item">
-                    <span class="strip-icon">💾</span>
-                    <span class="strip-label">Cross-device</span>
+                    <span class="strip-icon">📸</span>
+                    <span class="strip-label">Stories</span>
+                </div>
+                <div class="strip-item">
+                    <span class="strip-icon">🔴</span>
+                    <span class="strip-label">Go live</span>
+                </div>
+                <div class="strip-item">
+                    <span class="strip-icon">📱</span>
+                    <span class="strip-label">Android app</span>
                 </div>
                 <div class="strip-item">
                     <span class="strip-icon">🛠️</span>
