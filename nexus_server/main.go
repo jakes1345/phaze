@@ -156,7 +156,56 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-var globalLimiter = newIPLimiter(rate.Limit(10), 30) // 10 req/s, burst 30 per IP
+var globalLimiter = newIPLimiter(rate.Limit(10), 30)      // 10 req/s, burst 30 per IP
+var adminLimiter = newIPLimiter(rate.Limit(0.05), 3)     // 3 attempts per minute per IP
+
+// adminIPGate restricts admin endpoints to allowed IPs when PHAZE_ADMIN_IPS
+// is set (comma-separated CIDRs or IPs). If unset, all IPs are allowed.
+func adminIPGate(next http.HandlerFunc) http.HandlerFunc {
+	raw := strings.TrimSpace(os.Getenv("PHAZE_ADMIN_IPS"))
+	if raw == "" {
+		return next
+	}
+	allowed := strings.Split(raw, ",")
+	for i := range allowed {
+		allowed[i] = strings.TrimSpace(allowed[i])
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		ok := false
+		for _, a := range allowed {
+			if a == ip || a == "0.0.0.0" {
+				ok = true
+				break
+			}
+			if strings.Contains(a, "/") {
+				_, cidr, err := net.ParseCIDR(a)
+				if err == nil && cidr.Contains(net.ParseIP(ip)) {
+					ok = true
+					break
+				}
+			}
+		}
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// adminLoginLimit is a tighter rate limiter specifically for admin login —
+// 3 attempts per minute per IP to prevent brute-force.
+func adminLoginLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeSecurityHeaders(w)
+		if !adminLimiter.allow(clientIP(r)) {
+			http.Error(w, "too many login attempts — try again in a minute", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
 
 func rateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -813,6 +862,19 @@ func (s *NexusServer) issueSessionToken(username, device string) (string, error)
 	_, err = s.DB.Exec(
 		"INSERT INTO session_tokens (token, username, device_info, expires_at) VALUES (?, ?, ?, ?)",
 		tok, username, device, expires,
+	)
+	return tok, err
+}
+
+func (s *NexusServer) issueAdminSessionToken(username string) (string, error) {
+	tok, err := randHex(32)
+	if err != nil {
+		return "", err
+	}
+	expires := time.Now().Add(4 * time.Hour)
+	_, err = s.DB.Exec(
+		"INSERT INTO session_tokens (token, username, device_info, expires_at) VALUES (?, ?, ?, ?)",
+		tok, username, "admin-portal", expires,
 	)
 	return tok, err
 }
@@ -4556,7 +4618,7 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "not a staff account", http.StatusForbidden)
 		return
 	}
-	tok, err := s.issueSessionToken(body.Username, "admin-portal")
+	tok, err := s.issueAdminSessionToken(body.Username)
 	if err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
@@ -5499,17 +5561,26 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 			"version":     "1.0.0-Phaze",
 		})
 	}))
-	http.HandleFunc("/admin", rateLimit(server.adminPortalHandler))
-	http.HandleFunc("/admin/", rateLimit(server.adminPortalHandler))
-	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))
-	http.HandleFunc("/api/v1/admin/users", rateLimit(server.adminUsersHandler))
-	http.HandleFunc("/api/v1/admin/broadcast", rateLimit(server.adminBroadcastHandler))
-	http.HandleFunc("/api/v1/admin/ip-block", rateLimit(server.adminIPBlockHandler))
-	http.HandleFunc("/api/v1/admin/global-notice", rateLimit(server.adminGlobalNoticeHandler))
-	http.HandleFunc("/api/v1/admin/verify-user", rateLimit(server.adminVerifyUserHandler))
-	http.HandleFunc("/api/v1/admin/stats", rateLimit(server.adminStatsHandler))
-	http.HandleFunc("/api/v1/admin/logs", rateLimit(server.adminLogsHandler))
-	http.HandleFunc("/api/v1/admin/geo", rateLimit(server.adminGeoHandler))
+	// Admin portal — hidden path, not /admin. Set PHAZE_ADMIN_PATH env var
+	// to customize (default: /nexus-cmd). Bots scanning /admin get nothing.
+	adminPath := strings.TrimSpace(os.Getenv("PHAZE_ADMIN_PATH"))
+	if adminPath == "" {
+		adminPath = "/nexus-cmd"
+	}
+	adminPath = "/" + strings.TrimLeft(adminPath, "/")
+	log.Printf("[admin] portal mounted at %s", adminPath)
+	adminGate := adminIPGate(rateLimit(server.adminPortalHandler))
+	http.HandleFunc(adminPath, adminGate)
+	http.HandleFunc(adminPath+"/", adminGate)
+	http.HandleFunc("/api/v1/admin/login", adminIPGate(adminLoginLimit(server.adminLoginHandler)))
+	http.HandleFunc("/api/v1/admin/users", adminIPGate(rateLimit(server.adminUsersHandler)))
+	http.HandleFunc("/api/v1/admin/broadcast", adminIPGate(rateLimit(server.adminBroadcastHandler)))
+	http.HandleFunc("/api/v1/admin/ip-block", adminIPGate(rateLimit(server.adminIPBlockHandler)))
+	http.HandleFunc("/api/v1/admin/global-notice", adminIPGate(rateLimit(server.adminGlobalNoticeHandler)))
+	http.HandleFunc("/api/v1/admin/verify-user", adminIPGate(rateLimit(server.adminVerifyUserHandler)))
+	http.HandleFunc("/api/v1/admin/stats", adminIPGate(rateLimit(server.adminStatsHandler)))
+	http.HandleFunc("/api/v1/admin/logs", adminIPGate(rateLimit(server.adminLogsHandler)))
+	http.HandleFunc("/api/v1/admin/geo", adminIPGate(rateLimit(server.adminGeoHandler)))
 	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
 	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
 	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve
