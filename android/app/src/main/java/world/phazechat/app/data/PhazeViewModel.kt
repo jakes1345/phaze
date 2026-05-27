@@ -117,6 +117,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectChat(peer: String) {
+        if (peer.isBlank()) {
+            _selectedChat.value = null
+            return
+        }
         _selectedChat.value = peer
         _unread.value = _unread.value.toMutableMap().apply { remove(peer) }
         _chatLog.value = emptyList()
@@ -142,6 +146,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     fun acceptFriend(from: String) {
         nexus.send(NexusMessage(type = "friend_accept", recipient = from))
         _pending.value = _pending.value.filter { it != from }
+        _friends.value = _friends.value.toMutableMap().apply {
+            put(from, FriendInfo(from, "Online"))
+        }
     }
 
     fun signOut() {

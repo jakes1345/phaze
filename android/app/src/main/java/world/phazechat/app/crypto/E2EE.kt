@@ -25,8 +25,7 @@ fun fingerprint(pub: ByteArray): String {
 
 fun encryptForPeer(plain: String, peerPub: ByteArray, mySecret: ByteArray): String {
     val msg = plain.toByteArray(Charsets.UTF_8)
-    val nonce = ByteArray(Box.NONCEBYTES)
-    sodium.randomBytesBuf(nonce, nonce.size)
+    val nonce = sodium.randomBytesBuf(Box.NONCEBYTES)
 
     val ciphertext = ByteArray(msg.size + Box.MACBYTES)
     sodium.cryptoBoxEasy(

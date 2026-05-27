@@ -1,12 +1,15 @@
 package world.phazechat.app.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -24,14 +27,26 @@ fun AuthScreen(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
+    val focus = LocalFocusManager.current
+
+    val submit = {
+        focus.clearFocus()
+        if (username.isNotBlank() && password.isNotBlank()) {
+            if (mode == "login") onLogin(username, password) else onRegister(username, email, password)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(32.dp)
+            .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Spacer(Modifier.weight(1f))
+
         Text("Phaze", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = PhazeBrandDark)
         Spacer(Modifier.height(4.dp))
         Text("Encrypted chat for everyone", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
@@ -66,10 +81,8 @@ fun AuthScreen(
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = {
-                if (mode == "login") onLogin(username, password) else onRegister(username, email, password)
-            }),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { submit() }),
         )
         Spacer(Modifier.height(16.dp))
 
@@ -79,9 +92,7 @@ fun AuthScreen(
         }
 
         Button(
-            onClick = {
-                if (mode == "login") onLogin(username, password) else onRegister(username, email, password)
-            },
+            onClick = { submit() },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             enabled = username.isNotBlank() && password.isNotBlank(),
         ) {
@@ -92,5 +103,7 @@ fun AuthScreen(
         TextButton(onClick = { mode = if (mode == "login") "register" else "login" }) {
             Text(if (mode == "login") "Create an account" else "Already have an account? Sign in")
         }
+
+        Spacer(Modifier.weight(1f))
     }
 }
