@@ -37,6 +37,7 @@ import (
 	"phaze-native/internal/chat"
 	"phaze-native/internal/crypto"
 	"phaze-native/internal/remote"
+	"phaze-native/internal/screencap"
 	"phaze-native/internal/sentinel"
 	"phaze-native/internal/ui"
 	"phaze-native/internal/updater"
@@ -1680,13 +1681,43 @@ func (s *PhazeApp) openCallWindow(name, initialStatus string) {
 		}
 	})
 
+	var screenCap *screencap.Capturer
+	sharing := false
+	var shareBtn *widget.Button
+	shareBtn = widget.NewButton("Share Screen", func() {
+		if sharing {
+			sharing = false
+			shareBtn.SetText("Share Screen")
+			if screenCap != nil {
+				screenCap.Stop()
+				screenCap = nil
+			}
+			return
+		}
+		sc := screencap.New(10)
+		if err := sc.Start(); err != nil {
+			log.Printf("[screenshare] %v", err)
+			return
+		}
+		screenCap = sc
+		sharing = true
+		shareBtn.SetText("Stop Sharing")
+		go func() {
+			for img := range sc.Frames() {
+				if err := s.Calls.WriteVideoFrame(name, img, 60); err != nil {
+					log.Printf("[screenshare] send: %v", err)
+				}
+			}
+		}()
+	})
+
 	content := container.NewVBox(
 		container.NewCenter(container.NewStack(remoteVideo.Container, avatar)),
 		container.NewHBox(layout.NewSpacer(), localVideo.Container, layout.NewSpacer()),
 		statusLabel,
 		callTimer,
 		layout.NewSpacer(),
-		container.NewHBox(muteBtn, videoBtn, hangupBtn),
+		container.NewHBox(muteBtn, videoBtn, shareBtn, hangupBtn),
 	)
 
 	callWin.SetContent(container.NewPadded(content))

@@ -794,6 +794,7 @@
 .voice-join-btn { background: #863bff; color: #fff; }
 .voice-join-btn:hover { background: #6f1ee0; }
 .voice-mute-btn { background: #1f2937; color: #fff; }
+.voice-mute-btn.active { background: #863bff; color: #fff; }
 .voice-leave-btn { background: #ef4444; color: #fff; }
 .voice-err { color: #ef4444; font-size: 0.9rem; text-align: center; }
 
