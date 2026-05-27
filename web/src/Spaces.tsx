@@ -94,6 +94,7 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
   const [newTopic, setNewTopic] = useState('')
   const [newVisibility, setNewVisibility] = useState<'public' | 'private'>('private')
   const [joinCode, setJoinCode] = useState('')
+  const [membersOpen, setMembersOpen] = useState(false)
   const [newChannelOpen, setNewChannelOpen] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -525,6 +526,9 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
                 <button type="button" className="chat-head-btn" title="Pinned messages" onClick={() => setPinsOpen((v) => !v)}>
                   📌{(() => { const pins = (messagesByChannel[activeChannel!] ?? []).filter((m) => m.pinned); return pins.length > 0 ? <span className="head-badge">{pins.length}</span> : null })()}
                 </button>
+                <button type="button" className={`chat-head-btn ${membersOpen ? 'active' : ''}`} title="Members" onClick={() => setMembersOpen((v) => !v)}>
+                  👥{members.length > 0 ? <span className="head-badge">{members.length}</span> : null}
+                </button>
               </div>
             </header>
 
@@ -763,6 +767,21 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
           </div>
         )}
       </section>
+
+      {membersOpen && activeServer && (
+        <aside className="members-sidebar">
+          <h3 className="members-title">Members — {members.length}</h3>
+          <ul className="members-list">
+            {members.map((u) => (
+              <li key={u} className="member-row" onClick={() => onUserClick?.(u)}>
+                <span className="avatar small" data-initial={u[0]?.toUpperCase()} />
+                <span className="member-name">{u}{u === me ? ' (you)' : ''}</span>
+              </li>
+            ))}
+            {members.length === 0 && <li className="member-empty">No members loaded</li>}
+          </ul>
+        </aside>
+      )}
 
       {composerOpen === 'create' && (
         <div className="modal-scrim" onClick={() => setComposerOpen(null)}>
