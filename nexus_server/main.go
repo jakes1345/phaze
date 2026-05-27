@@ -319,6 +319,7 @@ type Client struct {
 	Conn     *websocket.Conn
 	Username string
 	Status   string
+	IP       string
 	// writeMu serializes all writes to Conn. gorilla/websocket is explicit
 	// that concurrent writes are undefined behavior, and this server fans
 	// messages out to other clients' conns from unrelated read-loops.
@@ -353,6 +354,33 @@ type NexusServer struct {
 	// Streams maps broadcaster username -> active livestream metadata.
 	// Guarded by VoiceRoomsMu (shared mutex — both are room-style state).
 	Streams map[string]*liveStream
+	// RemoteCodes maps 6-digit session codes to host usernames for remote control.
+	RemoteCodes   map[string]string
+	RemoteCodesMu sync.RWMutex
+	// Per-IP WebSocket connection counter for DDoS mitigation.
+	wsConnCount   map[string]int
+	wsConnCountMu sync.Mutex
+	// IP blocklist — blocked IPs cannot connect.
+	blockedIPs   map[string]bool
+	blockedIPsMu sync.RWMutex
+}
+
+func (s *NexusServer) isIPBlocked(ip string) bool {
+	s.blockedIPsMu.RLock()
+	defer s.blockedIPsMu.RUnlock()
+	return s.blockedIPs[ip]
+}
+
+func (s *NexusServer) blockIP(ip string) {
+	s.blockedIPsMu.Lock()
+	s.blockedIPs[ip] = true
+	s.blockedIPsMu.Unlock()
+}
+
+func (s *NexusServer) unblockIP(ip string) {
+	s.blockedIPsMu.Lock()
+	delete(s.blockedIPs, ip)
+	s.blockedIPsMu.Unlock()
 }
 
 var upgrader = websocket.Upgrader{
@@ -643,6 +671,9 @@ func (s *NexusServer) initDB() {
 		`CREATE INDEX IF NOT EXISTS idx_abuse_reports_status ON abuse_reports(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)`,
 		`ALTER TABLE users ADD COLUMN fcm_token TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN last_ip TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN last_login_at DATETIME`,
+		`ALTER TABLE users ADD COLUMN signup_ip TEXT DEFAULT ''`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -1878,7 +1909,29 @@ func (s *NexusServer) searchUsers(query, excludeUser string) []string {
 // ---------- WebSocket Handler ----------
 
 func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Incoming connection: %s %s", r.Method, r.URL.String())
+	ip := clientIP(r)
+	if s.isIPBlocked(ip) {
+		http.Error(w, "blocked", http.StatusForbidden)
+		return
+	}
+	s.wsConnCountMu.Lock()
+	count := s.wsConnCount[ip]
+	if count >= 10 {
+		s.wsConnCountMu.Unlock()
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+	s.wsConnCount[ip] = count + 1
+	s.wsConnCountMu.Unlock()
+	defer func() {
+		s.wsConnCountMu.Lock()
+		s.wsConnCount[ip]--
+		if s.wsConnCount[ip] <= 0 {
+			delete(s.wsConnCount, ip)
+		}
+		s.wsConnCountMu.Unlock()
+	}()
+	log.Printf("Incoming connection from %s: %s %s", ip, r.Method, r.URL.String())
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade error: %v", err)
@@ -1894,6 +1947,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 	// indicators + rapid sends without permitting a tight spam loop.
 	client := &Client{
 		Conn:       ws,
+		IP:         clientIP(r),
 		msgLimiter: rate.NewLimiter(rate.Limit(20), 40),
 	}
 
@@ -1973,7 +2027,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if err != nil {
 				client.Send(NexusMessage{Type: "register_result", Error: err.Error()})
 			} else {
-				log.Printf("New user registered: %s (%s) - Code: %s", msg.Sender, msg.Email, code)
+				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
+				log.Printf("New user registered: %s (%s) from %s - Code: %s", msg.Sender, msg.Email, client.IP, code)
 				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
 				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
 					"<h1>Welcome to Phaze</h1>"+
@@ -2063,6 +2118,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			metrics.authSuccess.Add(1)
 			username = msg.Sender
+			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", client.IP, username)
 			s.autoJoinGlobalSpace(username)
 			sessTok, _ := s.issueSessionToken(username, msg.DeviceInfo)
 			s.Mu.Lock()
@@ -2130,6 +2186,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			username = u
+			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", client.IP, username)
 			s.autoJoinGlobalSpace(username)
 			s.Mu.Lock()
 			if existing, ok := s.Clients[username]; ok {
@@ -2140,7 +2197,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			client.Status = "Online"
 			s.Clients[username] = client
 			s.Mu.Unlock()
-			log.Printf("User %s resumed via session token", username)
+			log.Printf("User %s resumed via session token from %s", username, client.IP)
 			client.Send(NexusMessage{
 				Type:       "auth_result",
 				Status:     "ok",
@@ -2509,8 +2566,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.DB.Exec("INSERT INTO invite_codes (code, inviter, email) VALUES (?, ?, ?)", code, username, msg.Email)
 			link := "https://phazechat.world/web?invite=" + code
 			go s.sendEmailLogged(msg.Email, username+" invited you to Phaze",
-				"<h1>You've been invited to Phaze!</h1><p><b>"+username+"</b> wants to chat with you on Phaze — free encrypted messaging and calls.</p>"+
-					"<p><a href=\""+link+"\" style=\"background:#00aff0;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold;\">Join Phaze</a></p>"+
+				"<h1>You've been invited to Phaze!</h1><p><b>"+username+"</b> wants to chat with you on Phaze — free encrypted messaging, calls, and more.</p>"+
+					"<p><a href=\""+link+"\" style=\"background:#863bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;\">Join Phaze</a></p>"+
 					"<p style=\"font-size:12px;color:#666\">Or paste this link: "+link+"</p>")
 			client.Send(NexusMessage{Type: "invite_result", Status: "sent"})
 
@@ -2922,6 +2979,84 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.Mu.RLock()
 			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
 				recipientClient.Send(msg)
+			}
+			s.Mu.RUnlock()
+
+		// ---------- Group Call Invite ----------
+		case "call_invite":
+			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
+				continue
+			}
+			msg.Sender = username
+			s.Mu.RLock()
+			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
+				recipientClient.Send(msg)
+			}
+			s.Mu.RUnlock()
+
+		// ---------- Remote Control (TeamViewer-style) ----------
+		case "remote_register":
+			if username == "" {
+				continue
+			}
+			code := msg.Body
+			if len(code) != 6 {
+				client.Send(NexusMessage{Type: "remote_error", Error: "Invalid code"})
+				continue
+			}
+			s.RemoteCodesMu.Lock()
+			s.RemoteCodes[code] = username
+			s.RemoteCodesMu.Unlock()
+			log.Printf("[remote] %s registered code %s", username, code)
+			client.Send(NexusMessage{Type: "remote_registered", Body: code})
+
+		case "remote_unregister":
+			if username == "" {
+				continue
+			}
+			s.RemoteCodesMu.Lock()
+			for k, v := range s.RemoteCodes {
+				if v == username {
+					log.Printf("[remote] %s unregistered code %s", username, k)
+					delete(s.RemoteCodes, k)
+				}
+			}
+			s.RemoteCodesMu.Unlock()
+
+		case "remote_lookup":
+			if username == "" {
+				continue
+			}
+			code := msg.Body
+			s.RemoteCodesMu.RLock()
+			host, ok := s.RemoteCodes[code]
+			s.RemoteCodesMu.RUnlock()
+			log.Printf("[remote] %s looked up code %s -> found=%v host=%s (map has %d entries)", username, code, ok, host, len(s.RemoteCodes))
+			if ok {
+				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "ok", Body: host})
+			} else {
+				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "error", Error: "Invalid code — make sure the host is still sharing"})
+			}
+
+		case "remote_offer", "remote_answer", "remote_ice", "remote_input", "remote_end":
+			if username == "" {
+				continue
+			}
+			msg.Sender = username
+			if msg.Type == "remote_end" {
+				s.RemoteCodesMu.Lock()
+				for k, v := range s.RemoteCodes {
+					if v == username || v == msg.Recipient {
+						delete(s.RemoteCodes, k)
+					}
+				}
+				s.RemoteCodesMu.Unlock()
+			}
+			s.Mu.RLock()
+			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
+				recipientClient.Send(msg)
+			} else if msg.Type == "remote_offer" {
+				client.Send(NexusMessage{Type: "remote_error", Error: msg.Recipient + " is not online"})
 			}
 			s.Mu.RUnlock()
 
@@ -3406,6 +3541,12 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "voice_join":
 			if username == "" || msg.ChannelID == "" {
+				continue
+			}
+			// Ad-hoc call rooms (prefixed "call_") skip Spaces channel checks.
+			if strings.HasPrefix(msg.ChannelID, "call_") {
+				s.voiceRoomJoin(msg.ChannelID, username)
+				s.voiceRoomBroadcastPeers(msg.ChannelID)
 				continue
 			}
 			// Verify the channel exists and the user belongs to its server.
@@ -4431,7 +4572,7 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 	if u, _ := s.modFromRequest(w, r, "helper"); u == "" {
 		return
 	}
-	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),'')
+	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
 		FROM users ORDER BY created_at DESC LIMIT 1000`)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
@@ -4439,25 +4580,36 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 	type adminUser struct {
-		Username  string `json:"username"`
-		Email     string `json:"email"`
-		Verified  bool   `json:"verified"`
-		Banned    bool   `json:"banned"`
-		IsAdmin   bool   `json:"is_admin"`
-		Role      string `json:"role"`
-		BanReason string `json:"ban_reason"`
-		CreatedAt string `json:"created_at"`
+		Username    string `json:"username"`
+		Email       string `json:"email"`
+		Verified    bool   `json:"verified"`
+		Banned      bool   `json:"banned"`
+		IsAdmin     bool   `json:"is_admin"`
+		Role        string `json:"role"`
+		BanReason   string `json:"ban_reason"`
+		CreatedAt   string `json:"created_at"`
+		LastIP      string `json:"last_ip"`
+		SignupIP    string `json:"signup_ip"`
+		LastLoginAt string `json:"last_login_at"`
+		Online      bool   `json:"online"`
 	}
+	s.Mu.RLock()
+	onlineMap := make(map[string]bool, len(s.Clients))
+	for u := range s.Clients {
+		onlineMap[u] = true
+	}
+	s.Mu.RUnlock()
 	out := []adminUser{}
 	for rows.Next() {
 		var u adminUser
 		var v, b, a int
-		if err := rows.Scan(&u.Username, &u.Email, &v, &b, &a, &u.Role, &u.BanReason, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.Username, &u.Email, &v, &b, &a, &u.Role, &u.BanReason, &u.CreatedAt, &u.LastIP, &u.SignupIP, &u.LastLoginAt); err != nil {
 			continue
 		}
 		u.Verified = v == 1
 		u.Banned = b == 1
 		u.IsAdmin = a == 1
+		u.Online = onlineMap[u.Username]
 		out = append(out, u)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -4507,6 +4659,158 @@ func (s *NexusServer) adminBroadcastHandler(w http.ResponseWriter, r *http.Reque
 	s.Mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "ok": true})
+}
+
+func (s *NexusServer) adminIPBlockHandler(w http.ResponseWriter, r *http.Request) {
+	admin := s.adminFromRequest(w, r)
+	if admin == "" {
+		return
+	}
+	if r.Method == http.MethodGet {
+		s.blockedIPsMu.RLock()
+		ips := make([]string, 0, len(s.blockedIPs))
+		for ip := range s.blockedIPs {
+			ips = append(ips, ip)
+		}
+		s.blockedIPsMu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ips)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "GET or POST", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		IP     string `json:"ip"`
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IP == "" {
+		http.Error(w, "ip required", http.StatusBadRequest)
+		return
+	}
+	if body.Action == "unblock" {
+		s.unblockIP(body.IP)
+		log.Printf("[admin] %s unblocked IP %s", admin, body.IP)
+	} else {
+		s.blockIP(body.IP)
+		log.Printf("[admin] %s blocked IP %s", admin, body.IP)
+		s.Mu.RLock()
+		for _, c := range s.Clients {
+			if c.IP == body.IP {
+				c.Send(NexusMessage{Type: "kicked", Body: "Your IP has been blocked"})
+				c.Conn.Close()
+			}
+		}
+		s.Mu.RUnlock()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+}
+
+func (s *NexusServer) adminGlobalNoticeHandler(w http.ResponseWriter, r *http.Request) {
+	admin := s.adminFromRequest(w, r)
+	if admin == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Message == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+	log.Printf("[admin] %s sent global notice: %s", admin, body.Message)
+	s.Mu.RLock()
+	for _, c := range s.Clients {
+		c.Send(NexusMessage{Type: "global_notice", Body: body.Message, Sender: admin})
+	}
+	s.Mu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+}
+
+func (s *NexusServer) adminVerifyUserHandler(w http.ResponseWriter, r *http.Request) {
+	admin := s.adminFromRequest(w, r)
+	if admin == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.DB.Exec("UPDATE users SET is_verified = 1 WHERE username = ?", body.Username); err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[admin] %s verified user %s", admin, body.Username)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+}
+
+func (s *NexusServer) adminStatsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	s.Mu.RLock()
+	online := len(s.Clients)
+	s.Mu.RUnlock()
+	var totalUsers, verified, banned, totalMessages, totalDMs int
+	s.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&totalUsers)
+	s.DB.QueryRow("SELECT COUNT(*) FROM users WHERE is_verified=1").Scan(&verified)
+	s.DB.QueryRow("SELECT COUNT(*) FROM users WHERE is_banned=1").Scan(&banned)
+	s.DB.QueryRow("SELECT COUNT(*) FROM channel_messages").Scan(&totalMessages)
+	s.DB.QueryRow("SELECT COUNT(*) FROM dm_messages").Scan(&totalDMs)
+	var dbSize int64
+	s.DB.QueryRow("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size").Scan(&dbSize)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"online":         online,
+		"total_users":    totalUsers,
+		"verified":       verified,
+		"banned":         banned,
+		"total_messages": totalMessages,
+		"total_dms":      totalDMs,
+		"db_size_mb":     float64(dbSize) / 1024 / 1024,
+	})
+}
+
+func (s *NexusServer) adminLogsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	rows, err := s.DB.Query(`SELECT username, COALESCE(last_ip,''), COALESCE(CAST(last_login_at AS TEXT),''), COALESCE(CAST(created_at AS TEXT),'')
+		FROM users WHERE last_login_at IS NOT NULL ORDER BY last_login_at DESC LIMIT 50`)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type logEntry struct {
+		Username string `json:"username"`
+		IP       string `json:"ip"`
+		LoginAt  string `json:"login_at"`
+		JoinedAt string `json:"joined_at"`
+	}
+	out := []logEntry{}
+	for rows.Next() {
+		var e logEntry
+		rows.Scan(&e.Username, &e.IP, &e.LoginAt, &e.JoinedAt)
+		out = append(out, e)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // adminPortalHandler serves the single-page HTML admin dashboard.
@@ -4986,10 +5290,13 @@ func main() {
 	db.Exec("PRAGMA busy_timeout=5000")
 
 	server := &NexusServer{
-		DB:         db,
-		Clients:    make(map[string]*Client),
-		VoiceRooms: make(map[string]map[string]struct{}),
-		Streams:    make(map[string]*liveStream),
+		DB:          db,
+		Clients:     make(map[string]*Client),
+		VoiceRooms:  make(map[string]map[string]struct{}),
+		Streams:     make(map[string]*liveStream),
+		RemoteCodes: make(map[string]string),
+		wsConnCount: make(map[string]int),
+		blockedIPs:  make(map[string]bool),
 	}
 	server.initDB()
 	server.initFCM()
@@ -5176,6 +5483,11 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/login", rateLimit(server.adminLoginHandler))
 	http.HandleFunc("/api/v1/admin/users", rateLimit(server.adminUsersHandler))
 	http.HandleFunc("/api/v1/admin/broadcast", rateLimit(server.adminBroadcastHandler))
+	http.HandleFunc("/api/v1/admin/ip-block", rateLimit(server.adminIPBlockHandler))
+	http.HandleFunc("/api/v1/admin/global-notice", rateLimit(server.adminGlobalNoticeHandler))
+	http.HandleFunc("/api/v1/admin/verify-user", rateLimit(server.adminVerifyUserHandler))
+	http.HandleFunc("/api/v1/admin/stats", rateLimit(server.adminStatsHandler))
+	http.HandleFunc("/api/v1/admin/logs", rateLimit(server.adminLogsHandler))
 	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
 	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
 	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve

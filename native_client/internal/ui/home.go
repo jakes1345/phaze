@@ -18,9 +18,14 @@ type ActivityItem struct {
 	Content string
 }
 
-// PhazeHome creates the classic 2-column "Phaze Home" view.
 func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSlicer, onMoodChange func(string)) fyne.CanvasObject {
-	// --- Sidebar / Left Column (The Hood) ---
+	if IsMobile() {
+		return newMobileHome(username, mood, updates, slicer, onMoodChange)
+	}
+	return newDesktopHome(username, mood, updates, slicer, onMoodChange)
+}
+
+func newDesktopHome(username, mood string, updates []ActivityItem, slicer *AeroSlicer, onMoodChange func(string)) fyne.CanvasObject {
 	avatar := canvas.NewImageFromFile(ResolveAsset("assets/default_avatar.png"))
 	avatar.SetMinSize(fyne.NewSize(80, 80))
 	avatar.FillMode = canvas.ImageFillContain
@@ -31,7 +36,7 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 
 	welcome := canvas.NewText(username, color.Black)
 	welcome.TextStyle = fyne.TextStyle{Bold: true}
-	welcome.TextSize = 28 // Flagship size
+	welcome.TextSize = 28
 	welcome.Alignment = fyne.TextAlignCenter
 
 	slogan := canvas.NewText("Stay in phase.", color.NRGBA{R: 255, G: 255, B: 255, A: 180})
@@ -53,7 +58,6 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 	statusContainer := container.NewCenter(statusIcon)
 	statusContainer.Resize(fyne.NewSize(16, 16))
 
-	// Modern flat brand fill — matches the web client's indigo accent.
 	hoodBg := canvas.NewRectangle(PhazeBrand)
 
 	hoodContent := container.NewBorder(
@@ -67,16 +71,13 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 			container.NewHBox(layout.NewSpacer(), statusContainer, widget.NewLabelWithStyle("Online", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}), layout.NewSpacer()),
 			container.NewHBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(300, 40), moodEntry), layout.NewSpacer()),
 			layout.NewSpacer(),
-
 		),
 	)
 
 	hood := container.NewStack(hoodBg, container.NewPadded(hoodContent))
 
-	// --- Feed / Feed Column ---
 	feedHeader := widget.NewLabelWithStyle("What's new with your friends?", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	
-	// Tiles (Phaze 7 Home style)
+
 	tiles := container.NewGridWithColumns(2,
 		createHomeTile("What's new?", "Check out the latest updates from your friends.", theme.InfoIcon()),
 		createHomeTile("Add Contacts", "Find people you know on Phaze.", theme.AccountIcon()),
@@ -84,7 +85,6 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 		createHomeTile("Video Message", "Record and send a personal video message.", theme.VisibilityIcon()),
 	)
 
-	// Feed items
 	socialFeed := container.NewVBox()
 	if len(updates) == 0 {
 		socialFeed.Add(widget.NewLabel("No new updates yet."))
@@ -97,10 +97,9 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 
 	feedScroll := container.NewVScroll(container.NewPadded(container.NewVBox(feedHeader, tiles, widget.NewSeparator(), socialFeed)))
 
-	// --- Right Column (Widgets) ---
 	onlineNowHeader := widget.NewLabelWithStyle("Online Now", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	onlineNowList := widget.NewLabel("No contacts online")
-	
+
 	shortcutsHeader := widget.NewLabelWithStyle("Shortcuts", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	shortcuts := container.NewVBox(
 		widget.NewButton("Add a Contact", func() {}),
@@ -114,7 +113,6 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 		shortcutsHeader, shortcuts,
 	)
 
-	// Main Layout: Split Feed (Left/Center) and Widgets (Right)
 	mainContent := container.NewHSplit(
 		feedScroll,
 		container.NewPadded(rightCol),
@@ -126,6 +124,49 @@ func NewPhazeHome(username, mood string, updates []ActivityItem, slicer *AeroSli
 		nil, nil, nil,
 		mainContent,
 	)
+}
+
+func newMobileHome(username, mood string, updates []ActivityItem, slicer *AeroSlicer, onMoodChange func(string)) fyne.CanvasObject {
+	welcome := canvas.NewText(username, color.White)
+	welcome.TextStyle = fyne.TextStyle{Bold: true}
+	welcome.TextSize = 22
+	welcome.Alignment = fyne.TextAlignCenter
+
+	slogan := canvas.NewText("Stay in phase.", color.NRGBA{R: 255, G: 255, B: 255, A: 180})
+	slogan.TextStyle = fyne.TextStyle{Italic: true}
+	slogan.TextSize = 13
+	slogan.Alignment = fyne.TextAlignCenter
+
+	moodEntry := widget.NewEntry()
+	moodEntry.SetPlaceHolder("What are you up to?")
+	moodEntry.SetText(mood)
+	moodEntry.OnSubmitted = onMoodChange
+
+	hoodBg := canvas.NewRectangle(PhazeBrand)
+	hoodContent := container.NewVBox(
+		welcome,
+		slogan,
+		moodEntry,
+	)
+	hood := container.NewStack(hoodBg, container.NewPadded(hoodContent))
+
+	tiles := container.NewGridWithColumns(1,
+		createHomeTile("What's new?", "Latest updates from friends.", theme.InfoIcon()),
+		createHomeTile("Add Contacts", "Find people on Phaze.", theme.AccountIcon()),
+	)
+
+	socialFeed := container.NewVBox()
+	if len(updates) == 0 {
+		socialFeed.Add(widget.NewLabel("No new updates yet."))
+	} else {
+		for _, up := range updates {
+			socialFeed.Add(createActivityCard(up))
+		}
+	}
+
+	scroll := container.NewVScroll(container.NewPadded(container.NewVBox(tiles, widget.NewSeparator(), socialFeed)))
+
+	return container.NewBorder(hood, nil, nil, nil, scroll)
 }
 
 func createHomeTile(title, desc string, icon fyne.Resource) fyne.CanvasObject {
@@ -154,14 +195,14 @@ func createActivityCard(item ActivityItem) fyne.CanvasObject {
 	nameLabel := widget.NewLabelWithStyle(item.Name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	actionLabel := widget.NewLabel(item.Action + ":")
 	contentLabel := widget.NewLabelWithStyle(item.Content, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-	
+
 	cardBg := canvas.NewRectangle(PhazePanel)
 	cardBg.StrokeColor = PhazeSeparator
 	cardBg.StrokeWidth = 1
 	cardBg.CornerRadius = 10
-	
+
 	header := container.NewHBox(avatar, nameLabel, actionLabel)
 	body := container.NewPadded(contentLabel)
-	
+
 	return container.NewStack(cardBg, container.NewPadded(container.NewVBox(header, body)))
 }

@@ -36,6 +36,7 @@ import (
 
 	"phaze-native/internal/chat"
 	"phaze-native/internal/crypto"
+	"phaze-native/internal/remote"
 	"phaze-native/internal/sentinel"
 	"phaze-native/internal/ui"
 	"phaze-native/internal/updater"
@@ -1367,6 +1368,16 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			s.LiveStreams = append(s.LiveStreams, ui.LiveStream{Host: msg.Results[i], Title: msg.Results[i+1]})
 		}
 
+	case "remote_input":
+		if msg.Body != "" {
+			evt, err := remote.ParseInputEvent([]byte(msg.Body))
+			if err == nil {
+				if err := remote.InjectInput(evt); err != nil {
+					log.Printf("[remote] inject: %v", err)
+				}
+			}
+		}
+
 	default:
 		log.Printf("[ws] unhandled message type %q from %s", msg.Type, msg.Sender)
 	}
@@ -2030,6 +2041,209 @@ func (s *PhazeApp) OpenChat(name string) fyne.CanvasObject {
 	return chatView.Container
 }
 
+func (s *PhazeApp) OpenChatMobile(name string) fyne.CanvasObject {
+	isGroup := false
+	var convoName string
+	s.DB.QueryRow("SELECT displayname FROM Conversations WHERE identity = ? AND type = 2", name).Scan(&convoName)
+	if convoName != "" {
+		isGroup = true
+	}
+
+	title := name
+	if isGroup {
+		title = convoName
+	}
+
+	historyContainer := container.NewVBox()
+	s.ChatLogs[name] = historyContainer
+
+	rows, err := s.DB.Query("SELECT author, body_xml FROM Messages WHERE chatname = ? ORDER BY timestamp ASC", name)
+	if err == nil {
+		for rows.Next() {
+			var author, body string
+			rows.Scan(&author, &body)
+			isMe := author == s.Username
+			historyContainer.Add(ui.NewMessageBubble(author, body, isMe, s.Slicer))
+		}
+		rows.Close()
+	}
+
+	scroll := container.NewVScroll(historyContainer)
+
+	typingLabel := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+	s.ChatTypingLabels[name] = typingLabel
+	typingLabel.Hide()
+
+	headerStatus := "Group"
+	if !isGroup {
+		headerStatus = "Unknown"
+		for _, f := range s.Friends {
+			if f.Username == name {
+				headerStatus = f.Status
+				break
+			}
+		}
+	}
+
+	var contactNames []string
+	for _, f := range s.Friends {
+		contactNames = append(contactNames, f.Username)
+	}
+
+	chatProps := ui.ChatViewProps{
+		Name:     title,
+		Status:   headerStatus,
+		IsGroup:  isGroup,
+		Slicer:   s.Slicer,
+		Contacts: contactNames,
+		OnBack: func() {
+			s.ContentStack.Objects = []fyne.CanvasObject{s.Sidebar}
+			s.ContentStack.Refresh()
+		},
+		OnCall: func() { s.StartCall(name) },
+		OnBlock: func() {
+			dialog.ShowConfirm("Block User",
+				"Block "+name+"?",
+				func(ok bool) {
+					if ok {
+						s.SendMessage(NexusMessage{
+							Type:      "block",
+							Sender:    s.Username,
+							Recipient: name,
+						})
+					}
+				}, s.MainWindow)
+		},
+		OnReport: func() {
+			reasonEntry := widget.NewMultiLineEntry()
+			reasonEntry.SetPlaceHolder("Describe the issue...")
+			d := dialog.NewCustomConfirm("Report", "Send", "Cancel",
+				container.NewVBox(widget.NewLabel("Report "+name+"?"), reasonEntry),
+				func(ok bool) {
+					if ok && strings.TrimSpace(reasonEntry.Text) != "" {
+						s.SendMessage(NexusMessage{
+							Type:      "report_abuse",
+							Sender:    s.Username,
+							Recipient: name,
+							Body:      strings.TrimSpace(reasonEntry.Text),
+						})
+					}
+				}, s.MainWindow)
+			d.Show()
+		},
+		OnSend: func(text string) {
+			if strings.TrimSpace(text) == "" {
+				return
+			}
+			body := text
+			if strings.HasPrefix(text, "/me ") {
+				body = "* " + s.Username + " " + strings.TrimPrefix(text, "/me ")
+			}
+			if isGroup {
+				members := s.ConvoMembers[name]
+				envelopes := make(map[string]string, len(members))
+				for _, m := range members {
+					if m == "" || m == s.Username {
+						continue
+					}
+					if _, haveKey := s.PeerKeys[m]; !haveKey {
+						go s.requestPeerKey(m)
+					}
+					envelopes[m] = s.encryptForPeer(body, m)
+				}
+				s.SendMessage(NexusMessage{
+					Type:      "convo_msg",
+					Sender:    s.Username,
+					ConvoID:   name,
+					Envelopes: envelopes,
+				})
+				ts := time.Now().Unix()
+				s.DB.Exec(`INSERT INTO Messages (chatname, author, body_xml, timestamp, type)
+					VALUES (?, ?, ?, ?, 61)`, name, s.Username, body, ts)
+				historyContainer.Add(ui.NewMessageBubble(s.Username, body, true, s.Slicer))
+			} else {
+				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+				s.SendMessage(NexusMessage{Type: "msg", Sender: s.Username, Recipient: name, Body: body, MsgID: msgID})
+				historyContainer.Add(ui.NewMessageBubble(s.Username, body, true, s.Slicer))
+			}
+			historyContainer.Refresh()
+			scroll.ScrollToBottom()
+		},
+		OnSendFile: func() {
+			fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+				if err == nil && reader != nil {
+					data, _ := io.ReadAll(reader)
+					fileName := reader.URI().Name()
+					go func() {
+						fileURL, err := s.uploadFile(fileName, data)
+						if err != nil {
+							log.Printf("[upload] %v", err)
+							return
+						}
+						msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+						s.SendMessage(NexusMessage{
+							Type: "msg", Sender: s.Username, Recipient: name,
+							MsgID: msgID, Kind: "file", FileURL: fileURL, FileName: fileName,
+							Body: "[File: " + fileName + "]",
+						})
+						fyne.Do(func() {
+							historyContainer.Add(ui.NewMessageBubble(s.Username, "[File: "+fileName+"]", true, s.Slicer))
+							scroll.ScrollToBottom()
+						})
+					}()
+				}
+			}, s.MainWindow)
+			fd.Show()
+		},
+		OnVoiceRecord: func() {
+			go func() {
+				chat.StartVoiceRecord()
+				time.Sleep(200 * time.Millisecond)
+				stopCh := make(chan struct{})
+				fyne.Do(func() {
+					dialog.ShowConfirm("Voice", "Recording... tap Stop when done.",
+						func(_ bool) { close(stopCh) }, s.MainWindow)
+				})
+				<-stopCh
+				filePath, err := chat.StopVoiceRecord()
+				if err != nil {
+					return
+				}
+				data, err := os.ReadFile(filePath)
+				os.Remove(filePath)
+				if err != nil {
+					return
+				}
+				fileURL, err := s.uploadFile("voice.wav", data)
+				if err != nil {
+					return
+				}
+				msgID := fmt.Sprintf("%s-%d", s.Username, time.Now().UnixNano())
+				s.SendMessage(NexusMessage{
+					Type: "msg", Sender: s.Username, Recipient: name,
+					MsgID: msgID, Kind: "voice", FileURL: fileURL, FileName: "voice.wav",
+					Body: "[Voice Message]",
+				})
+				fyne.Do(func() {
+					historyContainer.Add(ui.NewMessageBubble(s.Username, "[Voice Message]", true, s.Slicer))
+					scroll.ScrollToBottom()
+				})
+			}()
+		},
+		OnTyping: func() {
+			if time.Since(s.LastTypingSent[name]) > 3*time.Second {
+				s.SendMessage(NexusMessage{Type: "typing", Sender: s.Username, Recipient: name})
+				s.LastTypingSent[name] = time.Now()
+			}
+		},
+	}
+
+	chatView := ui.NewChatView(chatProps)
+	chatView.Container.Objects[2] = container.NewBorder(nil, typingLabel, nil, nil, scroll)
+
+	return chatView.Container
+}
+
 func (s *PhazeApp) CreateHomeView() fyne.CanvasObject {
 	var lastMood string
 	s.DB.QueryRow("SELECT value FROM Profile WHERE key = 'mood'").Scan(&lastMood)
@@ -2145,27 +2359,18 @@ func (s *PhazeApp) getFriendStatus(name string) string {
 
 func (s *PhazeApp) ShowMainWindow() {
 	s.MainWindow = s.App.NewWindow("Phaze™ - " + s.Username)
-	s.MainWindow.Resize(fyne.NewSize(1000, 700))
 
-	s.loadFriends() // Ensure we have the list
-	recent := s.loadRecentChats()
-	var recentNames []string
-	for _, r := range recent {
-		recentNames = append(recentNames, r.Username)
+	s.loadFriends()
+
+	if ui.IsMobile() {
+		s.showMainWindowMobile()
+	} else {
+		s.showMainWindowDesktop()
 	}
-	// Add friends who haven't messaged yet to ensure list isn't empty
-	for _, f := range s.Friends {
-		found := false
-		for _, r := range recentNames {
-			if r == f.Username {
-				found = true
-				break
-			}
-		}
-		if !found {
-			recentNames = append(recentNames, f.Username)
-		}
-	}
+}
+
+func (s *PhazeApp) showMainWindowDesktop() {
+	s.MainWindow.Resize(fyne.NewSize(1000, 700))
 
 	s.Sidebar = ui.NewPhazeSidebar(ui.SidebarProps{
 		Username:        s.Username,
@@ -2201,7 +2406,6 @@ func (s *PhazeApp) ShowMainWindow() {
 	s.HomeView = s.CreateHomeView()
 	s.ContentStack = container.NewStack(s.HomeView)
 
-	// --- Toolbar (Top Bar) ---
 	billingNote := widget.NewLabel("PSTN billing: in-app credit not wired — Telnyx on Nexus when enabled.")
 	billingNote.Wrapping = fyne.TextWrapWord
 	toolbar := container.NewHBox(
@@ -2231,28 +2435,126 @@ func (s *PhazeApp) ShowMainWindow() {
 		widget.NewButton("Details", s.ShowBuyCreditDialog),
 	)
 
-	// --- Setup Main Menu ---
 	s.setupMenu(s.MainWindow)
 
-	// Layout: [Sidebar] | [Toolbar / Content]
 	split := container.NewHSplit(s.Sidebar, container.NewBorder(toolbar, nil, nil, nil, s.ContentStack))
-	split.Offset = 0.25 // Default "Skype" 1:3 ratio
+	split.Offset = 0.25
 	s.MainSplit = split
 
 	s.MainWindow.SetContent(split)
 	s.MainWindow.Show()
 }
 
-func (s *PhazeApp) rebuildSidebar() {
-	if s.MainSplit == nil {
+func (s *PhazeApp) showMainWindowMobile() {
+	s.MainWindow.SetFullScreen(true)
+
+	s.ContentStack = container.NewStack()
+
+	sidebarView := ui.NewPhazeSidebar(ui.SidebarProps{
+		Username:   s.Username,
+		Status:     "Online",
+		AvatarPath: s.AvatarPath,
+		Slicer:     s.Slicer,
+		OnChatOpen: func(name string) {
+			s.mobileOpenChat(name)
+		},
+		OnAddFriend: s.showAddContactDialog,
+		OnNewGroup:  s.showNewGroupDialog,
+		RecentChats: s.Friends,
+		OnProfile:   s.ShowMyProfileWindow,
+		OnDialCall: func(number string) {
+			s.PlaySound("CallOutgoing.wav")
+			s.SendMessage(NexusMessage{
+				Type:   "pstn_call",
+				Sender: s.Username,
+				Body:   number,
+			})
+		},
+		OnStatusChange: func(status string) {
+			s.SendMessage(NexusMessage{
+				Type:   "status_update",
+				Sender: s.Username,
+				Body:   status,
+			})
+		},
+		OnSearch:   s.handleSearch,
+		OnSettings: s.showSettingsWindow,
+	})
+	s.Sidebar = sidebarView
+
+	s.HomeView = s.CreateHomeView()
+
+	chatsTab := sidebarView
+	homeTab := s.HomeView
+
+	storiesTab := widget.NewLabel("Tap to load stories")
+	storiesTabWrap := container.NewStack(storiesTab)
+
+	liveTab := widget.NewLabel("Tap to load live streams")
+	liveTabWrap := container.NewStack(liveTab)
+
+	tabContent := container.NewStack(chatsTab)
+
+	bottomNav := container.NewGridWithColumns(4,
+		widget.NewButtonWithIcon("Chats", theme.MailComposeIcon(), func() {
+			tabContent.Objects = []fyne.CanvasObject{chatsTab}
+			tabContent.Refresh()
+		}),
+		widget.NewButtonWithIcon("Home", theme.HomeIcon(), func() {
+			tabContent.Objects = []fyne.CanvasObject{homeTab}
+			tabContent.Refresh()
+		}),
+		widget.NewButtonWithIcon("Stories", theme.MediaPhotoIcon(), func() {
+			storiesTabWrap.Objects = []fyne.CanvasObject{ui.NewStoriesView(s.Infra.API, s.SessionToken)}
+			storiesTabWrap.Refresh()
+			tabContent.Objects = []fyne.CanvasObject{storiesTabWrap}
+			tabContent.Refresh()
+		}),
+		widget.NewButtonWithIcon("Live", theme.MediaVideoIcon(), func() {
+			s.SendMessage(NexusMessage{Type: "stream_list"})
+			liveTabWrap.Objects = []fyne.CanvasObject{ui.NewLiveView(ui.LiveViewProps{
+				Streams: s.LiveStreams,
+				WebBase: s.Infra.API,
+				OnRefresh: func() {
+					s.SendMessage(NexusMessage{Type: "stream_list"})
+				},
+			})}
+			liveTabWrap.Refresh()
+			tabContent.Objects = []fyne.CanvasObject{liveTabWrap}
+			tabContent.Refresh()
+		}),
+	)
+
+	s.ContentStack = tabContent
+
+	root := container.NewBorder(nil, bottomNav, nil, nil, tabContent)
+	s.MainWindow.SetContent(root)
+	s.MainWindow.Show()
+}
+
+func (s *PhazeApp) mobileOpenChat(name string) {
+	if name == "Echo / Sound Test Service" {
+		s.showEchoCallDialog()
 		return
 	}
+
+	view := s.OpenChatMobile(name)
+	s.ContentStack.Objects = []fyne.CanvasObject{view}
+	s.ContentStack.Refresh()
+}
+
+func (s *PhazeApp) rebuildSidebar() {
+	chatOpen := s.handleChatOpen
+	if ui.IsMobile() {
+		chatOpen = func(name string) { s.mobileOpenChat(name) }
+	}
+
 	s.Sidebar = ui.NewPhazeSidebar(ui.SidebarProps{
 		Username:        s.Username,
 		Status:          "Online",
 		AvatarPath:      s.AvatarPath,
 		Slicer:          s.Slicer,
-		OnChatOpen:      s.handleChatOpen,
+		OnChatOpen:      chatOpen,
 		OnChatWindow:    s.handleChatWindowOpen,
 		OnAddFriend:     s.showAddContactDialog,
 		OnNewGroup:      s.showNewGroupDialog,
@@ -2279,8 +2581,16 @@ func (s *PhazeApp) rebuildSidebar() {
 		OnSearch:   s.handleSearch,
 		OnSettings: s.showSettingsWindow,
 	})
-	s.MainSplit.Leading = s.Sidebar
-	s.MainSplit.Refresh()
+
+	if ui.IsMobile() {
+		if s.ContentStack != nil {
+			s.ContentStack.Objects = []fyne.CanvasObject{s.Sidebar}
+			s.ContentStack.Refresh()
+		}
+	} else if s.MainSplit != nil {
+		s.MainSplit.Leading = s.Sidebar
+		s.MainSplit.Refresh()
+	}
 }
 
 type RecentChat struct {
@@ -2511,12 +2821,20 @@ func (s *PhazeApp) ShowOptionsWindow() {
 
 func (s *PhazeApp) ShowLoginWindow() {
 	win := s.App.NewWindow("Phaze™ - Sign In")
-	win.Resize(fyne.NewSize(400, 600))
-	win.SetFixedSize(true)
+	if ui.IsMobile() {
+		win.SetFullScreen(true)
+	} else {
+		win.Resize(fyne.NewSize(400, 600))
+		win.SetFixedSize(true)
+	}
 
+	logoSize := fyne.NewSize(200, 100)
+	if ui.IsMobile() {
+		logoSize = fyne.NewSize(140, 70)
+	}
 	logo := canvas.NewImageFromFile(ui.ResolveAsset("assets/phaze_logo.png"))
 	logo.FillMode = canvas.ImageFillContain
-	logo.SetMinSize(fyne.NewSize(200, 100))
+	logo.SetMinSize(logoSize)
 
 	usernameEntry := widget.NewEntry()
 	usernameEntry.SetPlaceHolder("Phaze Name")
