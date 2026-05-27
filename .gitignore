@@ -21,6 +21,7 @@ fyne-cross/
 /skype-nexus
 /skype_test
 /phaze
+/phaze-native
 /phaze-nexus
 native_client/native_client
 native_client/Phaze.exe
