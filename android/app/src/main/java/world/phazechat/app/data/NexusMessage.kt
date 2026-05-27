@@ -67,16 +67,25 @@ data class NexusMessage(
     }
 
     companion object {
-        fun fromJson(j: JSONObject): NexusMessage {
-            val results = if (j.has("results")) {
-                val arr = j.getJSONArray("results")
-                (0 until arr.length()).map { arr.getString(it) }
-            } else null
+        private fun JSONObject.str(key: String): String? {
+            val v = opt(key)
+            return if (v == null || v == JSONObject.NULL) null else v.toString().ifEmpty { null }
+        }
 
-            val members = if (j.has("members")) {
-                val arr = j.getJSONArray("members")
-                (0 until arr.length()).map { arr.getString(it) }
-            } else null
+        fun fromJson(j: JSONObject): NexusMessage {
+            val results = try {
+                if (j.has("results") && !j.isNull("results")) {
+                    val arr = j.getJSONArray("results")
+                    (0 until arr.length()).map { arr.getString(it) }
+                } else null
+            } catch (_: Exception) { null }
+
+            val members = try {
+                if (j.has("members") && !j.isNull("members")) {
+                    val arr = j.getJSONArray("members")
+                    (0 until arr.length()).map { arr.getString(it) }
+                } else null
+            } catch (_: Exception) { null }
 
             var turnUrl: String? = null
             var turnUser: String? = null
@@ -90,38 +99,38 @@ data class NexusMessage(
 
             return NexusMessage(
                 type = j.getString("type"),
-                sender = j.optString("sender", null),
-                recipient = j.optString("recipient", null),
-                body = j.optString("body", null),
-                status = j.optString("status", null),
-                error = j.optString("error", null),
+                sender = j.str("sender"),
+                recipient = j.str("recipient"),
+                body = j.str("body"),
+                status = j.str("status"),
+                error = j.str("error"),
                 results = results,
-                sdp = j.optString("sdp", null),
-                candidate = j.optString("candidate", null),
-                qrToken = j.optString("qr_token", null),
-                email = j.optString("email", null),
-                mood = j.optString("mood", null),
-                displayName = j.optString("display_name", null),
-                convoId = j.optString("convo_id", null),
-                convoName = j.optString("convo_name", null),
+                sdp = j.str("sdp"),
+                candidate = j.str("candidate"),
+                qrToken = j.str("qr_token"),
+                email = j.str("email"),
+                mood = j.str("mood"),
+                displayName = j.str("display_name"),
+                convoId = j.str("convo_id"),
+                convoName = j.str("convo_name"),
                 members = members,
                 turnUrl = turnUrl,
                 turnUsername = turnUser,
                 turnPassword = turnPass,
-                totpCode = j.optString("totp_code", null),
-                totpUri = j.optString("totp_uri", null),
-                deviceInfo = j.optString("device_info", null),
-                publicKey = j.optString("public_key", null),
-                keyFingerprint = j.optString("key_fingerprint", null),
-                msgId = j.optString("msg_id", null),
-                reaction = j.optString("reaction", null),
-                kind = j.optString("kind", null),
-                fileUrl = j.optString("file_url", null),
-                fileName = j.optString("file_name", null),
-                serverId = j.optString("server_id", null),
-                channelId = j.optString("channel_id", null),
-                serverName = j.optString("server_name", null),
-                channelName = j.optString("channel_name", null),
+                totpCode = j.str("totp_code"),
+                totpUri = j.str("totp_uri"),
+                deviceInfo = j.str("device_info"),
+                publicKey = j.str("public_key"),
+                keyFingerprint = j.str("key_fingerprint"),
+                msgId = j.str("msg_id"),
+                reaction = j.str("reaction"),
+                kind = j.str("kind"),
+                fileUrl = j.str("file_url"),
+                fileName = j.str("file_name"),
+                serverId = j.str("server_id"),
+                channelId = j.str("channel_id"),
+                serverName = j.str("server_name"),
+                channelName = j.str("channel_name"),
             )
         }
     }
