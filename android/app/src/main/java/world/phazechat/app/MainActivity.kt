@@ -9,7 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -23,10 +22,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             PhazeTheme(darkTheme = true) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     PhazeRoot()
                 }
             }
@@ -43,6 +39,11 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val unread by vm.unread.collectAsState()
     val selectedChat by vm.selectedChat.collectAsState()
     val chatLog by vm.chatLog.collectAsState()
+    val spaces by vm.spaces.collectAsState()
+    val activeSpace by vm.activeSpace.collectAsState()
+    val channels by vm.channels.collectAsState()
+    val activeChannel by vm.activeChannel.collectAsState()
+    val channelMessages by vm.channelMessages.collectAsState()
 
     if (me == null) {
         AuthScreen(
@@ -72,20 +73,18 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
+                    selected = tab == 0, onClick = { tab = 0 },
                     icon = { Icon(Icons.Default.Email, "Chats") },
                     label = { Text("Chats") },
                 )
                 NavigationBarItem(
                     selected = tab == 1,
-                    onClick = { tab = 1 },
+                    onClick = { tab = 1; vm.loadSpaces() },
                     icon = { Icon(Icons.Default.Menu, "Spaces") },
                     label = { Text("Spaces") },
                 )
                 NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
+                    selected = tab == 2, onClick = { tab = 2 },
                     icon = { Icon(Icons.Default.Settings, "Settings") },
                     label = { Text("Settings") },
                 )
@@ -95,20 +94,25 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         Box(modifier = Modifier.padding(padding)) {
             when (tab) {
                 0 -> ChatsScreen(
-                    friends = friends,
-                    pending = pending,
-                    unread = unread,
+                    friends = friends, pending = pending, unread = unread,
                     onSelectChat = { vm.selectChat(it) },
                     onAddFriend = { vm.sendFriendRequest(it) },
                     onAcceptFriend = { vm.acceptFriend(it) },
                 )
-                1 -> Box(Modifier.fillMaxSize()) {
-                    Text(
-                        "Spaces coming soon",
-                        modifier = Modifier.padding(24.dp),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
+                1 -> SpacesScreen(
+                    spaces = spaces,
+                    activeSpace = activeSpace,
+                    channels = channels,
+                    activeChannel = activeChannel,
+                    channelMessages = channelMessages,
+                    me = me!!,
+                    onSelectSpace = { vm.selectSpace(it) },
+                    onSelectChannel = { vm.selectChannel(it) },
+                    onSendMessage = { vm.sendChannelMessage(it) },
+                    onCreateSpace = { name, vis -> vm.createSpace(name, vis) },
+                    onJoinSpace = { vm.joinSpace(it) },
+                    onBack = { vm.selectSpace("") },
+                )
                 2 -> SettingsScreen(me = me!!, onSignOut = { vm.signOut() })
             }
         }
