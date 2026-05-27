@@ -99,6 +99,7 @@ async function registerPush(send: (m: NexusMessage) => void) {
     const perm = await Notification.requestPermission()
     if (perm !== 'granted') return
     const resp = await fetch('/api/v1/vapid-key')
+    if (!resp.ok) return
     const { publicKey } = await resp.json() as { publicKey: string }
     if (!publicKey) return
     const sub = await reg.pushManager.subscribe({

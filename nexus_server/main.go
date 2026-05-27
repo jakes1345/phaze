@@ -4813,6 +4813,27 @@ func (s *NexusServer) adminLogsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
+func (s *NexusServer) adminGeoHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	ip := r.URL.Query().Get("ip")
+	if ip == "" {
+		http.Error(w, "ip required", http.StatusBadRequest)
+		return
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://ip-api.com/json/" + url.QueryEscape(ip) + "?fields=country,city,isp")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	io.Copy(w, resp.Body)
+}
+
 // adminPortalHandler serves the single-page HTML admin dashboard.
 func (s *NexusServer) adminPortalHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5488,6 +5509,7 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/verify-user", rateLimit(server.adminVerifyUserHandler))
 	http.HandleFunc("/api/v1/admin/stats", rateLimit(server.adminStatsHandler))
 	http.HandleFunc("/api/v1/admin/logs", rateLimit(server.adminLogsHandler))
+	http.HandleFunc("/api/v1/admin/geo", rateLimit(server.adminGeoHandler))
 	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
 	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
 	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve

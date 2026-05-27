@@ -153,9 +153,11 @@ async function resolveReport(id) { if (!confirm('Resolve #' + id + '?')) return;
 async function broadcast(text) { if (!text.trim()) return; await api('POST', '/api/v1/admin/broadcast', { message: text.trim() }); }
 
 async function geoLookup(ip) {
-  if (!ip || STATE.geoCache[ip]) return STATE.geoCache[ip] || '';
+  if (!ip) return '';
+  if (STATE.geoCache[ip]) return STATE.geoCache[ip];
   try {
-    const r = await fetch('http://ip-api.com/json/' + encodeURIComponent(ip) + '?fields=country,city,isp');
+    const r = await fetch('/api/v1/admin/geo?ip=' + encodeURIComponent(ip));
+    if (!r.ok) return '';
     const d = await r.json();
     const s = (d.city || '') + (d.city && d.country ? ', ' : '') + (d.country || '') + (d.isp ? ' · ' + d.isp : '');
     STATE.geoCache[ip] = s;
