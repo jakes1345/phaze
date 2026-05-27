@@ -30,6 +30,8 @@ fun ChatScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onCall: (() -> Unit)? = null,
+    onAttachFile: (() -> Unit)? = null,
+    onVoiceRecord: (() -> Unit)? = null,
 ) {
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -72,6 +74,16 @@ fun ChatScreen(
                         .imePadding(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (onAttachFile != null) {
+                        IconButton(onClick = onAttachFile, modifier = Modifier.size(40.dp)) {
+                            Text("📎", fontSize = 18.sp)
+                        }
+                    }
+                    if (onVoiceRecord != null) {
+                        IconButton(onClick = onVoiceRecord, modifier = Modifier.size(40.dp)) {
+                            Text("🎙", fontSize = 18.sp)
+                        }
+                    }
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
