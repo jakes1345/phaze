@@ -100,6 +100,7 @@ func main() {
 		{"display_name", `ALTER TABLE users ADD COLUMN display_name TEXT`},
 		{"is_verified", `ALTER TABLE users ADD COLUMN is_verified INTEGER DEFAULT 0`},
 		{"verification_code", `ALTER TABLE users ADD COLUMN verification_code TEXT`},
+		{"phone_verification_code", `ALTER TABLE users ADD COLUMN phone_verification_code TEXT`},
 		{"phone_number", `ALTER TABLE users ADD COLUMN phone_number TEXT`},
 		{"phone_verified", `ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0`},
 		{"is_admin", `ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`},

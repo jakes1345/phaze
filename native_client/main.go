@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"io"
@@ -20,8 +21,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liyue201/goqr"
+	_ "image/jpeg"
+	_ "image/png"
+
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
+	"github.com/skip2/go-qrcode"
 	"github.com/zalando/go-keyring"
 	_ "modernc.org/sqlite"
 
@@ -101,6 +107,7 @@ type NexusMessage struct {
 	Email          string           `json:"email,omitempty"`
 	Mood           string           `json:"mood,omitempty"`
 	DisplayName    string           `json:"display_name,omitempty"`
+	Supporter      bool             `json:"supporter,omitempty"`
 	Phone          string           `json:"phone,omitempty"`
 	Location       string           `json:"location,omitempty"`
 	Birthday       string           `json:"birthday,omitempty"`
@@ -130,6 +137,18 @@ type NexusMessage struct {
 	FileURL   string              `json:"file_url,omitempty"`
 	FileName  string              `json:"file_name,omitempty"`
 	Reactions map[string][]string `json:"reactions,omitempty"`
+
+	// Spaces extensions
+	Visibility string           `json:"visibility,omitempty"`
+	Topic      string           `json:"topic,omitempty"`
+	InviteCode string           `json:"invite_code,omitempty"`
+	ServerID   string           `json:"server_id,omitempty"`
+	ChannelID  string           `json:"channel_id,omitempty"`
+	ServerName string           `json:"server_name,omitempty"`
+	Servers    []ui.SpaceInfo   `json:"servers,omitempty"`
+	Channels   []ui.ChannelInfo `json:"channels,omitempty"`
+	Messages   []ui.ChannelMsg  `json:"messages,omitempty"`
+	KeyBackup  *KeyBackupPayload `json:"key_backup,omitempty"`
 }
 
 type authResult struct {
@@ -199,6 +218,13 @@ type PhazeApp struct {
 	// populated from convo_info / convo_created messages. Used to fan out
 	// per-member E2EE envelopes on outgoing group messages.
 	ConvoMembers map[string][]string
+
+	// Spaces State
+	Spaces         []ui.SpaceInfo
+	Channels       map[string][]ui.ChannelInfo
+	ActiveSpace    string
+	ActiveChannel  string
+	ChannelHistory map[string][]ui.ChannelMsg
 
 	// Extended State
 	OpenWindows  map[string]fyne.Window
@@ -332,6 +358,9 @@ func NewPhazeApp() *PhazeApp {
 		Infra:            PhazeInfra,
 		PeerKeys:         make(map[string]*[32]byte),
 		ConvoMembers:     make(map[string][]string),
+		Spaces:           make([]ui.SpaceInfo, 0),
+		Channels:         make(map[string][]ui.ChannelInfo),
+		ChannelHistory:   make(map[string][]ui.ChannelMsg),
 	}
 
 	s.Sentinel = sentinel.NewSentinel(func(issue string) {
@@ -953,6 +982,8 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			}
 			// Sync settings from server
 			go s.SendMessage(NexusMessage{Type: "settings_get", Sender: msg.Sender})
+			// Fetch Spaces
+			go s.SendMessage(NexusMessage{Type: "server_list", Sender: msg.Sender})
 		} else {
 			log.Println("Auth failed:", msg.Error, "status:", msg.Status)
 		}
@@ -987,6 +1018,38 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 				dialog.ShowError(fmt.Errorf("%s", msg.Error), s.MainWindow)
 			})
 		}
+
+	case "link_result":
+		fyne.Do(func() {
+			if msg.Status == "ok" {
+				dialog.ShowInformation("Link New Device", "One-time Link Code: "+msg.Token+"\n\nEnter this code on the device you want to sign in. It will expire in 5 minutes.", s.MainWindow)
+			} else if msg.Status == "approved" {
+				dialog.ShowInformation("Link New Device", "Device approved successfully.", s.MainWindow)
+			} else if msg.Error != "" {
+				dialog.ShowError(fmt.Errorf("Link failed: %s", msg.Error), s.MainWindow)
+			}
+		})
+
+	case "key_backup":
+		if msg.Status == "ok" && msg.KeyBackup != nil {
+			fyne.Do(func() {
+				s.showRestoreBackupDialog(msg.KeyBackup)
+			})
+		}
+	case "key_backup_result":
+		fyne.Do(func() {
+			if msg.Error != "" {
+				dialog.ShowError(fmt.Errorf("Backup operation failed: %s", msg.Error), s.MainWindow)
+			} else {
+				msgText := "E2EE Backup operation successful."
+				if msg.Status == "stored" {
+					msgText = "E2EE key backup saved successfully."
+				} else if msg.Status == "deleted" {
+					msgText = "E2EE key backup deleted successfully."
+				}
+				dialog.ShowInformation("Backup", msgText, s.MainWindow)
+			}
+		})
 
 	case "forgot_password_result":
 		fyne.Do(func() {
@@ -1132,6 +1195,7 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 
 	case "presence":
 		s.updateFriendStatus(msg.Sender, msg.Status)
+		s.setFriendSupporter(msg.Sender, msg.Supporter)
 		if len(msg.PublicKey) == 32 {
 			var pk [32]byte
 			copy(pk[:], msg.PublicKey)
@@ -1347,6 +1411,17 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			}
 		})
 
+	case "server_list_result":
+		s.handleServerListResult(msg)
+	case "server_info_result":
+		s.handleServerInfoResult(msg)
+	case "channel_history_result":
+		s.handleChannelHistoryResult(msg)
+	case "channel_msg_in":
+		s.handleChannelMsgIn(msg)
+	case "server_created", "server_joined":
+		go s.SendMessage(NexusMessage{Type: "server_list", Sender: s.Username})
+
 	case "settings_result":
 		if msg.Body != "" {
 			var prefs map[string]interface{}
@@ -1438,6 +1513,25 @@ func (s *PhazeApp) updateFriendStatus(username, status string) {
 			s.Friends[i].Status = status
 			if s.Sidebar != nil {
 				s.Sidebar.Refresh()
+			}
+			break
+		}
+	}
+}
+
+// setFriendSupporter marks a friend as a Phaze supporter so the sidebar can
+// render the 💜 badge. Only ever sets the flag on (presence carries it when true).
+func (s *PhazeApp) setFriendSupporter(username string, supporter bool) {
+	if !supporter {
+		return
+	}
+	for i, f := range s.Friends {
+		if f.Username == username {
+			if !s.Friends[i].Supporter {
+				s.Friends[i].Supporter = true
+				if s.Sidebar != nil {
+					s.Sidebar.Refresh()
+				}
 			}
 			break
 		}
@@ -2350,6 +2444,7 @@ func (s *PhazeApp) getFriendStatus(name string) string {
 }
 
 func (s *PhazeApp) ShowMainWindow() {
+	s.EnsureForensicKeys()
 	s.MainWindow = s.App.NewWindow("Phaze™ - " + s.Username)
 
 	s.loadFriends()
@@ -2373,6 +2468,7 @@ func (s *PhazeApp) showMainWindowDesktop() {
 		OnAddFriend:     s.showAddContactDialog,
 		OnNewGroup:      s.showNewGroupDialog,
 		RecentChats:     s.Friends,
+		SpacesView:      s.buildSpacesView(),
 		OnProfile:       s.ShowMyProfileWindow,
 		CompactMode:     s.CompactMode,
 		PSTNDialEnabled: os.Getenv("PHAZE_ENABLE_PSTN") == "true",
@@ -2447,6 +2543,7 @@ func (s *PhazeApp) showMainWindowMobile() {
 		Status:     "Online",
 		AvatarPath: s.AvatarPath,
 		Slicer:     s.Slicer,
+		SpacesView: s.buildSpacesView(),
 		OnChatOpen: func(name string) {
 			s.mobileOpenChat(name)
 		},
@@ -2551,6 +2648,7 @@ func (s *PhazeApp) rebuildSidebar() {
 		OnAddFriend:     s.showAddContactDialog,
 		OnNewGroup:      s.showNewGroupDialog,
 		RecentChats:     s.Friends,
+		SpacesView:      s.buildSpacesView(),
 		OnProfile:       s.ShowMyProfileWindow,
 		CompactMode:     s.CompactMode,
 		PSTNDialEnabled: os.Getenv("PHAZE_ENABLE_PSTN") == "true",
@@ -2659,6 +2757,11 @@ func (s *PhazeApp) setupMenu(win fyne.Window) {
 
 	helpMenu := fyne.NewMenu("Help",
 		fyne.NewMenuItem("Check for Updates", func() {}),
+		fyne.NewMenuItem("Support Phaze 💜", func() {
+			if u, err := url.Parse("https://buymeacoffee.com/phazeworld"); err == nil {
+				s.App.OpenURL(u)
+			}
+		}),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("About Phaze™", s.showAboutDialog),
 	)
@@ -2959,6 +3062,11 @@ func (s *PhazeApp) ShowLoginWindow() {
 	})
 	qrBtn.Importance = widget.LowImportance
 
+	linkCodeBtn := widget.NewButton("Sign in with Link Code", func() {
+		s.showLinkCodeLoginDialog(win)
+	})
+	linkCodeBtn.Importance = widget.LowImportance
+
 	loginContent = container.NewCenter(
 		container.NewVBox(
 			container.NewCenter(logo),
@@ -2971,6 +3079,7 @@ func (s *PhazeApp) ShowLoginWindow() {
 			container.NewPadded(loginBtn),
 			container.NewCenter(createBtn),
 			container.NewCenter(qrBtn),
+			container.NewCenter(linkCodeBtn),
 			container.NewCenter(forgotBtn),
 			layout.NewSpacer(),
 			widget.NewLabelWithStyle("Version "+Version, fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
@@ -2985,9 +3094,21 @@ func (s *PhazeApp) showTOTPEnrollDialog(uri string) {
 	uriLabel.Wrapping = fyne.TextWrapBreak
 	codeEntry := widget.NewEntry()
 	codeEntry.SetPlaceHolder("6-digit code from authenticator")
+
+	var qrContainer fyne.CanvasObject
+	if pngBytes, err := qrcode.Encode(uri, qrcode.Medium, 200); err == nil {
+		img := canvas.NewImageFromReader(bytes.NewReader(pngBytes), "totp_qr.png")
+		img.FillMode = canvas.ImageFillContain
+		img.SetMinSize(fyne.NewSize(200, 200))
+		qrContainer = container.NewCenter(img)
+	} else {
+		qrContainer = widget.NewLabel("Could not generate QR code image locally.")
+	}
+
 	d := dialog.NewCustomConfirm("Enable 2FA", "Confirm", "Cancel",
 		container.NewVBox(
-			widget.NewLabel("Add this otpauth:// URI to Google Authenticator / Authy:"),
+			widget.NewLabel("Scan this QR code or add the URI manually to Google Authenticator / Authy:"),
+			qrContainer,
 			uriLabel,
 			widget.NewLabel("Then enter the current 6-digit code to confirm:"),
 			codeEntry,
@@ -2997,7 +3118,7 @@ func (s *PhazeApp) showTOTPEnrollDialog(uri string) {
 			}
 			s.SendMessage(NexusMessage{Type: "confirm_totp", Sender: s.Username, TOTPCode: strings.TrimSpace(codeEntry.Text)})
 		}, s.MainWindow)
-	d.Resize(fyne.NewSize(500, 300))
+	d.Resize(fyne.NewSize(500, 480))
 	d.Show()
 }
 
@@ -3036,7 +3157,17 @@ func (s *PhazeApp) showQRLoginDialog(parent fyne.Window) {
 		return
 	}
 
-	status := widget.NewLabel("Open Phaze on a signed-in device and approve this code:")
+	status := widget.NewLabel("Scan this QR code using a signed-in device (or approve via settings):")
+	var qrContainer fyne.CanvasObject
+	if pngBytes, err := qrcode.Encode(first.QRData, qrcode.Medium, 200); err == nil {
+		img := canvas.NewImageFromReader(bytes.NewReader(pngBytes), "login_qr.png")
+		img.FillMode = canvas.ImageFillContain
+		img.SetMinSize(fyne.NewSize(200, 200))
+		qrContainer = container.NewCenter(img)
+	} else {
+		qrContainer = widget.NewLabel("Could not generate QR code image locally.")
+	}
+
 	linkLabel := widget.NewLabel(first.QRData)
 	linkLabel.Wrapping = fyne.TextWrapBreak
 	tokenLabel := widget.NewLabel("Token: " + first.QRToken)
@@ -3044,7 +3175,7 @@ func (s *PhazeApp) showQRLoginDialog(parent fyne.Window) {
 		s.App.Clipboard().SetContent(first.QRData)
 	})
 
-	content := container.NewVBox(status, linkLabel, tokenLabel, copyBtn)
+	content := container.NewVBox(status, qrContainer, linkLabel, tokenLabel, copyBtn)
 	stop := make(chan struct{})
 
 	d := dialog.NewCustom("Sign in with QR", "Cancel", content, parent)
@@ -3052,7 +3183,7 @@ func (s *PhazeApp) showQRLoginDialog(parent fyne.Window) {
 		close(stop)
 		c.Close()
 	})
-	d.Resize(fyne.NewSize(460, 260))
+	d.Resize(fyne.NewSize(460, 480))
 	d.Show()
 
 	go func() {
@@ -3102,6 +3233,181 @@ func (s *PhazeApp) showQRLoginDialog(parent fyne.Window) {
 			}
 		}
 	}()
+}
+
+func (s *PhazeApp) showLinkCodeLoginDialog(parent fyne.Window) {
+	addr := s.ServerAddress
+	if addr == "" {
+		addr = "wss://phazechat.world/ws"
+	}
+
+	tokenEntry := widget.NewEntry()
+	tokenEntry.SetPlaceHolder("Enter Link Code / QR Token")
+
+	statusLabel := widget.NewLabel("")
+	statusLabel.Hide()
+
+	var d dialog.Dialog
+	var stop chan struct{}
+	var conn *websocket.Conn
+
+	startPolling := func() {
+		tok := strings.TrimSpace(tokenEntry.Text)
+		if tok == "" {
+			statusLabel.SetText("Please enter a code")
+			statusLabel.Show()
+			return
+		}
+		if idx := strings.Index(tok, "token="); idx >= 0 {
+			tok = tok[idx+len("token="):]
+			if endIdx := strings.Index(tok, "&"); endIdx >= 0 {
+				tok = tok[:endIdx]
+			}
+		}
+
+		statusLabel.SetText("Connecting to server...")
+		statusLabel.Show()
+
+		dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+		c, _, err := dialer.Dial(addr, nil)
+		if err != nil {
+			statusLabel.SetText("Error connecting: " + err.Error())
+			return
+		}
+		conn = c
+
+		statusLabel.SetText("Waiting for approval on another device...")
+		stop = make(chan struct{})
+
+		go func() {
+			ticker := time.NewTicker(2500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					if err := c.WriteJSON(NexusMessage{Type: "link_check", Token: tok}); err != nil {
+						fyne.Do(func() {
+							statusLabel.SetText("Connection lost: " + err.Error())
+						})
+						return
+					}
+					var r NexusMessage
+					if err := c.ReadJSON(&r); err != nil {
+						fyne.Do(func() {
+							statusLabel.SetText("Error reading response")
+						})
+						return
+					}
+					if r.Type == "link_check" && r.Status == "approved" {
+						u := r.Sender
+						sess := r.QRToken
+						if u == "" || sess == "" {
+							fyne.Do(func() {
+								statusLabel.SetText("Invalid response: missing session details")
+							})
+							return
+						}
+
+						s.ConnMu.Lock()
+						if s.Conn != nil {
+							s.Conn.Close()
+						}
+						s.Conn = c
+						s.Username = u
+						s.ServerAddress = addr
+						s.SessionToken = sess
+						keyring.Set(sessionKeyringService, s.Username, sess)
+						s.authChan = make(chan authResult, 1)
+						s.ConnMu.Unlock()
+
+						go s.ReadLoop()
+
+						fyne.Do(func() {
+							d.Hide()
+							s.DB.Exec("INSERT OR REPLACE INTO Profile (key, value) VALUES ('username', ?)", s.Username)
+							s.DB.Exec("INSERT OR REPLACE INTO Profile (key, value) VALUES ('server', ?)", s.ServerAddress)
+							s.PlaySound("Login.wav")
+							s.ShowMainWindow()
+							s.CheckForUpdates()
+							parent.Close()
+						})
+						// Request E2EE key backup from server
+						go s.SendMessage(NexusMessage{Type: "key_backup_get", Sender: s.Username})
+						return
+					} else if r.Error != "" {
+						fyne.Do(func() {
+							statusLabel.SetText("Error: " + r.Error)
+						})
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	scanQRFromFile := func() {
+		fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, parent)
+				return
+			}
+			if reader == nil {
+				return
+			}
+			defer reader.Close()
+
+			img, _, err := image.Decode(reader)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("failed to decode image: %w", err), parent)
+				return
+			}
+
+			codes, err := goqr.Recognize(img)
+			if err != nil || len(codes) == 0 {
+				dialog.ShowError(fmt.Errorf("no QR code found in image"), parent)
+				return
+			}
+
+			tok := string(codes[0].Payload)
+			if idx := strings.Index(tok, "token="); idx >= 0 {
+				tok = tok[idx+len("token="):]
+				if endIdx := strings.Index(tok, "&"); endIdx >= 0 {
+					tok = tok[:endIdx]
+				}
+			}
+
+			fyne.Do(func() {
+				tokenEntry.SetText(tok)
+				statusLabel.SetText("✓ Scanned token: " + tok)
+				statusLabel.Show()
+			})
+		}, parent)
+		fd.Show()
+	}
+
+	content := container.NewVBox(
+		widget.NewLabel("Enter the Link Code or QR Token shown on your other device:"),
+		tokenEntry,
+		statusLabel,
+		container.NewHBox(
+			widget.NewButton("Sign In with Code", startPolling),
+			widget.NewButton("Scan QR from Image", scanQRFromFile),
+		),
+	)
+
+	d = dialog.NewCustom("Sign in with Link Code", "Cancel", content, parent)
+	d.SetOnClosed(func() {
+		if stop != nil {
+			close(stop)
+		}
+		if conn != nil {
+			conn.Close()
+		}
+	})
+	d.Resize(fyne.NewSize(400, 250))
+	d.Show()
 }
 
 func (s *PhazeApp) showForgotPasswordDialog(parent fyne.Window) {
@@ -3540,6 +3846,58 @@ func (s *PhazeApp) showSettingsWindow() {
 				})
 			}, s.MainWindow)
 	})
+	linkNewDevice := widget.NewButton("Link a new device", func() {
+		s.SendMessage(NexusMessage{Type: "link_create", Sender: s.Username})
+	})
+	backupKeys := widget.NewButton("Back up E2EE Keys to Server", func() {
+		pin1 := widget.NewPasswordEntry()
+		pin1.SetPlaceHolder("Choose a recovery PIN (4+ chars)")
+		pin2 := widget.NewPasswordEntry()
+		pin2.SetPlaceHolder("Confirm PIN")
+		dialog.ShowForm("Back up E2EE Keys", "Save Backup", "Cancel",
+			[]*widget.FormItem{
+				widget.NewFormItem("Recovery PIN", pin1),
+				widget.NewFormItem("Confirm PIN", pin2),
+			},
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				p1 := pin1.Text
+				p2 := pin2.Text
+				if len(p1) < 4 {
+					dialog.ShowError(errors.New("PIN must be at least 4 characters"), s.MainWindow)
+					return
+				}
+				if p1 != p2 {
+					dialog.ShowError(errors.New("PINs do not match"), s.MainWindow)
+					return
+				}
+
+				payload, err := EncryptKeypair(s.PubKey[:], s.PrivKey[:], p1)
+				if err != nil {
+					dialog.ShowError(err, s.MainWindow)
+					return
+				}
+
+				s.SendMessage(NexusMessage{
+					Type:   "key_backup_put",
+					Sender: s.Username,
+					KeyBackup: &KeyBackupPayload{
+						Ciphertext: payload.Ciphertext,
+						Salt:       payload.Salt,
+						Iterations: payload.Iterations,
+					},
+				})
+			}, s.MainWindow)
+	})
+	deleteBackup := widget.NewButton("Delete E2EE Backup from Server", func() {
+		dialog.ShowConfirm("Delete Backup", "Are you sure you want to delete your key backup from the server? New devices won't be able to restore E2EE keys.", func(ok bool) {
+			if ok {
+				s.SendMessage(NexusMessage{Type: "key_backup_delete", Sender: s.Username})
+			}
+		}, s.MainWindow)
+	})
 	revokeSession := widget.NewButton("Sign out everywhere", func() {
 		s.SendMessage(NexusMessage{Type: "revoke_session", Sender: s.Username, QRToken: s.SessionToken})
 		keyring.Delete(sessionKeyringService, s.Username)
@@ -3552,11 +3910,91 @@ func (s *PhazeApp) showSettingsWindow() {
 		enable2FA,
 		disable2FA,
 		approveQR,
+		linkNewDevice,
+		backupKeys,
+		deleteBackup,
 		revokeSession,
 	)
 
 	win.SetContent(container.NewVBox(settings, widget.NewSeparator(), security))
 	win.Show()
+}
+
+func (s *PhazeApp) EnsureForensicKeys() {
+	if s.PubKey != nil && s.PrivKey != nil {
+		return
+	}
+	s.DB.Exec("INSERT OR IGNORE INTO Accounts (skypename) VALUES (?)", s.Username)
+	var pub, priv []byte
+	err := s.DB.QueryRow("SELECT public_key, private_key FROM Accounts WHERE skypename = ?", s.Username).Scan(&pub, &priv)
+	if err != nil || len(pub) == 0 {
+		log.Println("[Sovereign] Generating new forensic key pair...")
+		kp, _ := crypto.GenerateKeyPair()
+		s.PubKey = kp.Public
+		s.PrivKey = kp.Private
+		s.DB.Exec("UPDATE Accounts SET public_key = ?, private_key = ? WHERE skypename = ?", kp.Public[:], kp.Private[:], s.Username)
+	} else {
+		var pK, sK [32]byte
+		copy(pK[:], pub)
+		copy(sK[:], priv)
+		s.PubKey = &pK
+		s.PrivKey = &sK
+		log.Println("[Sovereign] Forensic keys loaded.")
+	}
+
+	// Share presence keys
+	go s.SendMessage(NexusMessage{
+		Type:           "presence",
+		Sender:         s.Username,
+		Status:         "Online",
+		PublicKey:      s.PubKey[:],
+		KeyFingerprint: crypto.Fingerprint(s.PubKey),
+	})
+}
+
+func (s *PhazeApp) showRestoreBackupDialog(backup *KeyBackupPayload) {
+	pinEntry := widget.NewPasswordEntry()
+	pinEntry.SetPlaceHolder("Enter your 4+ character Recovery PIN")
+	dialog.ShowForm("Restore E2EE Keys", "Restore", "Skip",
+		[]*widget.FormItem{
+			widget.NewFormItem("PIN", pinEntry),
+		},
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			pub, priv, err := DecryptKeypair(backup.Ciphertext, backup.Salt, backup.Iterations, pinEntry.Text)
+			if err != nil {
+				dialog.ShowError(err, s.MainWindow)
+				// Re-prompt on error
+				s.showRestoreBackupDialog(backup)
+				return
+			}
+
+			// Save to local db
+			s.DB.Exec("INSERT OR IGNORE INTO Accounts (skypename) VALUES (?)", s.Username)
+			s.DB.Exec("UPDATE Accounts SET public_key = ?, private_key = ? WHERE skypename = ?", pub, priv, s.Username)
+
+			// Update in memory
+			var pK, sK [32]byte
+			copy(pK[:], pub)
+			copy(sK[:], priv)
+			s.PubKey = &pK
+			s.PrivKey = &sK
+
+			log.Println("[Sovereign] E2EE keys restored from backup successfully!")
+
+			// Announce presence with new key
+			go s.SendMessage(NexusMessage{
+				Type:           "presence",
+				Sender:         s.Username,
+				Status:         "Online",
+				PublicKey:      s.PubKey[:],
+				KeyFingerprint: crypto.Fingerprint(s.PubKey),
+			})
+
+			dialog.ShowInformation("Restore", "E2EE keys restored and synchronized successfully.", s.MainWindow)
+		}, s.MainWindow)
 }
 
 func (s *PhazeApp) showAboutDialog() {
@@ -3619,4 +4057,63 @@ func (s *PhazeApp) updateStatus(status string) {
 	if s.Sidebar != nil {
 		s.Sidebar.Refresh()
 	}
+}
+
+func (s *PhazeApp) handleServerListResult(msg NexusMessage) {
+	if msg.Status != "ok" {
+		log.Println("[Spaces] Failed to load servers:", msg.Error)
+		return
+	}
+	s.Spaces = msg.Servers
+	log.Printf("[Spaces] Loaded %d servers", len(s.Spaces))
+}
+
+func (s *PhazeApp) handleServerInfoResult(msg NexusMessage) {
+	if msg.Status != "ok" {
+		log.Println("[Spaces] Failed to load server info:", msg.Error)
+		return
+	}
+	s.Channels[msg.ServerID] = msg.Channels
+	log.Printf("[Spaces] Loaded %d channels for server %s", len(msg.Channels), msg.ServerID)
+}
+
+func (s *PhazeApp) handleChannelHistoryResult(msg NexusMessage) {
+	if msg.Status != "ok" {
+		log.Println("[Spaces] Failed to load channel history:", msg.Error)
+		return
+	}
+	s.ChannelHistory[msg.ChannelID] = msg.Messages
+	log.Printf("[Spaces] Loaded %d messages for channel %s", len(msg.Messages), msg.ChannelID)
+}
+
+func (s *PhazeApp) handleChannelMsgIn(msg NexusMessage) {
+	if len(msg.Messages) > 0 {
+		chID := msg.ChannelID
+		s.ChannelHistory[chID] = append(s.ChannelHistory[chID], msg.Messages...)
+	}
+}
+
+func (s *PhazeApp) buildSpacesView() fyne.CanvasObject {
+	return ui.NewSpacesView(ui.SpacesProps{
+		Spaces:         s.Spaces,
+		Channels:       s.Channels,
+		ActiveSpace:    s.ActiveSpace,
+		ActiveChannel:  s.ActiveChannel,
+		OnSelectSpace: func(id string) {
+			s.ActiveSpace = id
+			s.ActiveChannel = ""
+			s.rebuildSidebar()
+		},
+		OnSelectChannel: func(id string) {
+			s.ActiveChannel = id
+			// Note: would open channel chat view here
+			s.rebuildSidebar()
+		},
+		OnJoinSpace: func(code string) {
+			s.SendMessage(NexusMessage{Type: "server_join", Sender: s.Username, InviteCode: code})
+		},
+		OnCreateSpace: func(name, visibility string) {
+			s.SendMessage(NexusMessage{Type: "server_create", Sender: s.Username, Body: name, Visibility: visibility})
+		},
+	})
 }
