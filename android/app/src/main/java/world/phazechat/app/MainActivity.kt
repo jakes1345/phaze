@@ -65,6 +65,59 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
 
     val context = LocalContext.current
 
+    var scannedLinkCode by remember { mutableStateOf("") }
+
+    val scannerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val code = result.data?.getStringExtra("scanned_code")
+            if (!code.isNullOrBlank()) {
+                var tok = code.trim()
+                if (tok.contains("token=")) {
+                    tok = tok.substringAfter("token=").substringBefore("&")
+                }
+                scannedLinkCode = tok
+                vm.loginWithLinkCode(tok)
+            }
+        }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val code = try {
+                val inputStream = context.contentResolver.openInputStream(it)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmap != null) {
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    val pixels = IntArray(width * height)
+                    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                    val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+                    val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+                    com.google.zxing.MultiFormatReader().decode(binaryBitmap).text
+                } else null
+            } catch (e: Exception) {
+                android.util.Log.e("PhazeRoot", "Failed to decode gallery QR: ${e.message}")
+                null
+            }
+
+            if (!code.isNullOrBlank()) {
+                var tok = code.trim()
+                if (tok.contains("token=")) {
+                    tok = tok.substringAfter("token=").substringBefore("&")
+                }
+                scannedLinkCode = tok
+                vm.loginWithLinkCode(tok)
+            } else {
+                android.widget.Toast.makeText(context, "No QR code found in selected image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // File picker
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { vm.sendFile(it) }
@@ -141,6 +194,16 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             error = authError,
             onLogin = { u, p -> vm.login(u, p) },
             onRegister = { u, e, p -> vm.register(u, e, p) },
+            onLoginWithLinkCode = { vm.loginWithLinkCode(it) },
+            onCancelLinkLogin = { vm.cancelLinkLogin() },
+            scannedLinkCode = scannedLinkCode,
+            onScanQR = {
+                val intent = android.content.Intent(context, QRScannerActivity::class.java)
+                scannerLauncher.launch(intent)
+            },
+            onScanGallery = {
+                galleryLauncher.launch("image/*")
+            }
         )
         return
     }
@@ -218,13 +281,33 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onJoinSpace = { vm.joinSpace(it) },
                     onBack = { vm.selectSpace("") },
                 )
-                2 -> SettingsScreen(
-                    me = me!!,
-                    onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
-                    onEnable2FA = { vm.enable2FA() },
-                    onDisable2FA = { vm.disable2FA() },
-                    onSignOut = { vm.signOut() },
-                )
+                2 -> {
+                    val linkCode by vm.activeLinkCode.collectAsState()
+                    val linkStatus by vm.linkStatus.collectAsState()
+                    val linkError by vm.linkError.collectAsState()
+                    val keyBackupStatus by vm.keyBackupStatus.collectAsState()
+                    val keyBackupError by vm.keyBackupError.collectAsState()
+                    SettingsScreen(
+                        me = me!!,
+                        mood = friends[me]?.mood ?: "",
+                        displayName = "",
+                        onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
+                        onEnable2FA = { vm.enable2FA() },
+                        onDisable2FA = { vm.disable2FA() },
+                        onSignOut = { vm.signOut() },
+                        linkCode = linkCode,
+                        linkStatus = linkStatus,
+                        linkError = linkError,
+                        onGenerateLinkCode = { vm.generateLinkCode() },
+                        onApproveDevice = { vm.approveDevice(it) },
+                        onClearLinkStatus = { vm.clearLinkStatus() },
+                        keyBackupStatus = keyBackupStatus,
+                        keyBackupError = keyBackupError,
+                        onBackupKeys = { pin -> vm.backupKeys(pin) },
+                        onRestoreKeys = { pin -> vm.restoreKeys(pin) },
+                        onClearKeyBackupStatus = { vm.clearKeyBackupStatus() },
+                    )
+                }
             }
         }
     }

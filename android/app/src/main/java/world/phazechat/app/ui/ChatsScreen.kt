@@ -137,7 +137,13 @@ fun FriendRow(friend: FriendInfo, unreadCount: Int, onClick: () -> Unit) {
         Avatar(friend.username, 48, friend.status)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(friend.username, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(friend.username, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                if (friend.supporter) {
+                    Spacer(Modifier.width(4.dp))
+                    Text("💜", fontSize = 13.sp) // 💜 supporter badge
+                }
+            }
             Text(
                 friend.mood ?: friend.status,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

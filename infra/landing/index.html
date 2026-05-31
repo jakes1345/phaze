@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phaze — Encrypted Chat, Calls & Spaces. Free, Forever.</title>
+  <meta name="description" content="Phaze is the privacy-first messaging platform with end-to-end encrypted chat, HD voice &amp; video calls, group Spaces, and stories. Free forever. No ads. No data mining." />
+  <meta name="theme-color" content="#863bff" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Phaze" />
+  <meta property="og:title" content="Phaze — Encrypted Chat, Calls &amp; Spaces" />
+  <meta property="og:description" content="Privacy-first messaging. End-to-end encrypted. Free forever. No ads. No data mining." />
+  <meta property="og:url" content="https://phazechat.world/" />
+  <meta property="og:image" content="https://phazechat.world/icon-512.png" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Phaze — Encrypted Chat, Calls &amp; Spaces" />
+  <meta name="twitter:description" content="Privacy-first messaging. End-to-end encrypted. Free forever." />
+  <meta name="twitter:image" content="https://phazechat.world/icon-512.png" />
+  <meta name="twitter:site" content="@PhazeChatWorld" />
+
+  <!-- Canonical + robots -->
+  <link rel="canonical" href="https://phazechat.world/" />
+  <meta name="robots" content="index, follow" />
+
+  <!-- Favicons -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" />
+
+  <!-- Schema.org -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Phaze",
+    "url": "https://phazechat.world/",
+    "applicationCategory": "CommunicationApplication",
+    "operatingSystem": "Web, Windows, Linux, Android",
+    "description": "Privacy-first messaging platform with end-to-end encrypted chat, HD voice and video calls, group Spaces, and stories.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "5", "ratingCount": "1" },
+    "sameAs": [
+      "https://x.com/PhazeChatWorld",
+      "https://instagram.com/phazechat.world",
+      "https://github.com/jakes1345/skype7-reborn"
+    ]
+  }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand: #863bff;
+      --brand-light: #a96aff;
+      --brand-dark: #5b21b6;
+      --bg: #09090f;
+      --bg2: #111118;
+      --bg3: #18181f;
+      --surface: rgba(255,255,255,0.04);
+      --surface-hover: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.08);
+      --text: #f0f0f8;
+      --muted: #8888a8;
+      --success: #22c55e;
+      --radius: 16px;
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ───────────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 48px;
+      background: rgba(9,9,15,0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 32px; height: 32px; border-radius: 8px; }
+    .nav-logo span { font-size: 1.25rem; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
+    .nav-links { display: flex; align-items: center; gap: 32px; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 500; transition: color .2s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta { display: flex; gap: 12px; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 22px; border-radius: 10px; font-weight: 700;
+      font-size: 0.9rem; text-decoration: none; cursor: pointer;
+      transition: all .2s; border: none; font-family: var(--font);
+    }
+    .btn-primary {
+      background: var(--brand); color: #fff;
+      box-shadow: 0 0 24px rgba(134,59,255,0.4);
+    }
+    .btn-primary:hover {
+      background: var(--brand-light);
+      box-shadow: 0 0 36px rgba(134,59,255,0.6);
+      transform: translateY(-1px);
+    }
+    .btn-outline {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover { background: var(--surface); }
+
+    /* ── HERO ──────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative; overflow: hidden;
+    }
+    .hero-glow {
+      position: absolute; top: -200px; left: 50%; transform: translateX(-50%);
+      width: 900px; height: 600px;
+      background: radial-gradient(ellipse at center, rgba(134,59,255,0.22) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 16px; border-radius: 100px;
+      background: rgba(134,59,255,0.12); border: 1px solid rgba(134,59,255,0.3);
+      font-size: 0.8rem; font-weight: 600; color: var(--brand-light);
+      margin-bottom: 28px;
+      animation: fadeUp .6s ease both;
+    }
+    .hero-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .hero h1 {
+      font-size: clamp(2.5rem, 7vw, 5.5rem);
+      font-weight: 900; line-height: 1.05;
+      letter-spacing: -2px;
+      background: linear-gradient(135deg, #fff 30%, var(--brand-light));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 24px;
+      animation: fadeUp .7s ease .1s both;
+    }
+    .hero-sub {
+      font-size: clamp(1rem, 2.5vw, 1.3rem);
+      color: var(--muted); max-width: 600px;
+      margin-bottom: 48px;
+      animation: fadeUp .7s ease .2s both;
+    }
+    .hero-actions {
+      display: flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+      animation: fadeUp .7s ease .3s both;
+    }
+    .hero-actions .btn { font-size: 1.05rem; padding: 14px 32px; }
+    .hero-img-wrap {
+      margin-top: 72px; width: 100%; max-width: 960px;
+      border-radius: 24px; overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 40px 120px rgba(134,59,255,0.2), 0 0 0 1px rgba(255,255,255,0.04);
+      animation: fadeUp .8s ease .4s both;
+      position: relative;
+    }
+    .hero-img-wrap img { width: 100%; display: block; }
+    .hero-img-overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom, transparent 60%, var(--bg) 100%);
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── STATS BAR ─────────────────────────────────────── */
+    .stats {
+      display: flex; justify-content: center; gap: 64px; flex-wrap: wrap;
+      padding: 48px 24px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat { text-align: center; }
+    .stat-n { font-size: 2.2rem; font-weight: 900; color: var(--brand-light); letter-spacing: -1px; }
+    .stat-l { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+
+    /* ── FEATURES ──────────────────────────────────────── */
+    .section { padding: 96px 24px; max-width: 1200px; margin: 0 auto; }
+    .section-tag {
+      display: inline-block; font-size: 0.75rem; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase;
+      color: var(--brand-light); margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 900;
+      letter-spacing: -1px; line-height: 1.1; margin-bottom: 16px;
+    }
+    .section-sub { color: var(--muted); max-width: 520px; margin-bottom: 56px; font-size: 1.05rem; }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .feature-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: all .3s;
+      position: relative; overflow: hidden;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--brand), transparent);
+      opacity: 0; transition: opacity .3s;
+    }
+    .feature-card:hover { transform: translateY(-4px); border-color: rgba(134,59,255,0.3); background: var(--bg3); }
+    .feature-card:hover::before { opacity: 1; }
+    .feature-icon {
+      width: 48px; height: 48px; border-radius: 12px;
+      background: rgba(134,59,255,0.12); border: 1px solid rgba(134,59,255,0.2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; margin-bottom: 16px;
+    }
+    .feature-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
+    .feature-desc { color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
+
+    /* ── PRIVACY SECTION ───────────────────────────────── */
+    .privacy-split {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center;
+    }
+    @media (max-width: 768px) { .privacy-split { grid-template-columns: 1fr; } }
+    .privacy-visual {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 24px; padding: 40px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .p-row {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 18px; font-size: 0.88rem;
+    }
+    .p-row-icon { font-size: 1.2rem; }
+    .p-row-label { font-weight: 600; }
+    .p-row-val { margin-left: auto; color: var(--success); font-weight: 700; font-size: 0.82rem; }
+    .p-row-val.bad { color: #ef4444; }
+
+    /* ── PLATFORMS ─────────────────────────────────────── */
+    .platforms { text-align: center; padding: 96px 24px; }
+    .platform-cards {
+      display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-top: 48px;
+    }
+    .platform-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px 36px;
+      text-align: center; min-width: 160px;
+      transition: all .3s; cursor: default;
+    }
+    .platform-card:hover { border-color: rgba(134,59,255,0.4); transform: translateY(-3px); }
+    .platform-icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .platform-name { font-weight: 700; margin-bottom: 4px; }
+    .platform-sub { color: var(--muted); font-size: 0.82rem; }
+
+    /* ── CTA BOTTOM ────────────────────────────────────── */
+    .cta-section {
+      text-align: center; padding: 120px 24px;
+      background: radial-gradient(ellipse at center, rgba(134,59,255,0.12) 0%, transparent 70%);
+      border-top: 1px solid var(--border);
+    }
+    .cta-section h2 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 900; letter-spacing: -1.5px;
+      background: linear-gradient(135deg, #fff, var(--brand-light));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; margin-bottom: 16px;
+    }
+    .cta-section p { color: var(--muted); max-width: 480px; margin: 0 auto 48px; font-size: 1.05rem; }
+    .cta-actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .cta-actions .btn { font-size: 1.05rem; padding: 14px 32px; }
+
+    /* ── FOOTER ────────────────────────────────────────── */
+    footer {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      padding: 48px 48px 32px;
+    }
+    .footer-inner {
+      max-width: 1200px; margin: 0 auto;
+      display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 48px;
+    }
+    @media (max-width: 768px) { .footer-inner { grid-template-columns: 1fr 1fr; gap: 32px; } }
+    .footer-brand p { color: var(--muted); font-size: 0.88rem; margin-top: 12px; max-width: 260px; line-height: 1.7; }
+    .footer-col h4 { font-size: 0.8rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+    .footer-col a { display: block; color: var(--muted); text-decoration: none; font-size: 0.88rem; margin-bottom: 10px; transition: color .2s; }
+    .footer-col a:hover { color: var(--text); }
+    .footer-bottom { max-width: 1200px; margin: 40px auto 0; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: gap; font-size: 0.82rem; color: var(--muted); }
+    .footer-social { display: flex; gap: 16px; }
+    .footer-social a { color: var(--muted); text-decoration: none; transition: color .2s; }
+    .footer-social a:hover { color: var(--text); }
+
+    /* ── COMPARISON TABLE ──────────────────────────────── */
+    .compare-wrap { overflow-x: auto; margin-top: 48px; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; background: var(--bg2); }
+    th { padding: 16px 24px; font-size: 0.82rem; font-weight: 700; color: var(--muted); text-align: left; background: var(--bg3); letter-spacing: 0.5px; }
+    th:first-child { border-radius: var(--radius) 0 0 0; }
+    th:last-child { border-radius: 0 var(--radius) 0 0; }
+    td { padding: 14px 24px; border-top: 1px solid var(--border); font-size: 0.9rem; }
+    .phaze-col { color: var(--brand-light); font-weight: 700; }
+    .check { color: var(--success); }
+    .cross { color: #ef4444; }
+    .partial { color: #f59e0b; }
+
+    /* ── SCROLL ANIMATIONS ─────────────────────────────── */
+    .reveal {
+      opacity: 0; transform: translateY(32px);
+      transition: opacity .6s ease, transform .6s ease;
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    /* ── RESPONSIVE ────────────────────────────────────── */
+    @media (max-width: 768px) {
+      nav { padding: 14px 20px; }
+      .nav-links { display: none; }
+      .hero { padding: 100px 20px 60px; }
+      .stats { gap: 32px; }
+      .section { padding: 64px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="/">
+    <img src="/icon-192.png" alt="Phaze logo" />
+    <span>Phaze</span>
+  </a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#compare">Compare</a>
+    <a href="#download">Download</a>
+  </div>
+  <div class="nav-cta">
+    <a class="btn btn-outline" href="/web">Sign in</a>
+    <a class="btn btn-primary" href="/web">Get started free →</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-badge">
+    <span class="hero-badge-dot"></span>
+    v1.0.1 — Stable release · End-to-end encrypted
+  </div>
+  <h1>Your conversations.<br/>No one else's business.</h1>
+  <p class="hero-sub">
+    Phaze is the messaging platform that actually respects you.
+    Encrypted chat, HD calls, group Spaces — free forever, no ads, no tracking.
+  </p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="/web" id="hero-open-app">Open Phaze →</a>
+    <a class="btn btn-outline" href="#download" id="hero-download">Download the app</a>
+  </div>
+  <div class="hero-img-wrap reveal">
+    <img src="/hero.png" alt="Phaze messaging app screenshot showing encrypted conversations" loading="lazy" />
+    <div class="hero-img-overlay"></div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-n">E2EE</div>
+    <div class="stat-l">End-to-end encrypted by default</div>
+  </div>
+  <div class="stat">
+    <div class="stat-n">0</div>
+    <div class="stat-l">Ads, ever</div>
+  </div>
+  <div class="stat">
+    <div class="stat-n">$0</div>
+    <div class="stat-l">Cost, forever</div>
+  </div>
+  <div class="stat">
+    <div class="stat-n">4</div>
+    <div class="stat-l">Platforms (web, desktop, Android, iOS)</div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section id="features" class="section">
+  <div class="reveal">
+    <span class="section-tag">Everything you need</span>
+    <h2 class="section-title">One app.<br/>All your people.</h2>
+    <p class="section-sub">Stop juggling five different apps. Phaze has everything — and keeps it all private.</p>
+  </div>
+  <div class="features-grid reveal">
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <div class="feature-title">End-to-End Encrypted DMs</div>
+      <div class="feature-desc">Every private message is encrypted with NaCl Box. Not even Phaze can read your chats.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📹</div>
+      <div class="feature-title">HD Voice &amp; Video Calls</div>
+      <div class="feature-desc">Crystal-clear calls powered by WebRTC with STUN/TURN fallback. Works everywhere.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🏠</div>
+      <div class="feature-title">Group Spaces</div>
+      <div class="feature-desc">Discord-style servers with text channels, voice rooms, and role-based permissions.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📖</div>
+      <div class="feature-title">Stories</div>
+      <div class="feature-desc">Share moments that disappear. Post photos and videos to your story that expire after 24h.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔑</div>
+      <div class="feature-title">Key Backup &amp; Sync</div>
+      <div class="feature-desc">PIN-protected encrypted key backup. Restore your identity on any device — the server never sees your PIN.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📱</div>
+      <div class="feature-title">Device Linking via QR</div>
+      <div class="feature-desc">Log in to a new device in seconds by scanning a QR code from an existing signed-in device.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔔</div>
+      <div class="feature-title">Push Notifications</div>
+      <div class="feature-desc">Get notified the moment a message arrives, even when the app is closed.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🛡️</div>
+      <div class="feature-title">Two-Factor Auth</div>
+      <div class="feature-desc">TOTP-based 2FA support. Use any authenticator app — Google Authenticator, Authy, Bitwarden.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📂</div>
+      <div class="feature-title">File &amp; Voice Sharing</div>
+      <div class="feature-desc">Send files, images, and voice messages. Everything stored securely on your Phaze account.</div>
+    </div>
+  </div>
+</section>
+
+<!-- PRIVACY -->
+<section id="privacy" style="padding: 0 24px 96px; max-width: 1200px; margin: 0 auto;">
+  <div class="privacy-split">
+    <div class="reveal">
+      <span class="section-tag">Zero-knowledge architecture</span>
+      <h2 class="section-title">Privacy isn't<br/>a feature. It's<br/>the foundation.</h2>
+      <p style="color:var(--muted); margin-bottom: 32px; font-size: 1.05rem;">Other apps say they're encrypted. Phaze is built so it's mathematically impossible for us to read your messages.</p>
+      <ul style="list-style:none; display:flex; flex-direction:column; gap:12px;">
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>NaCl Box encryption — keys never leave your device</span>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>PBKDF2-SHA256 + AES-256-GCM for key backups</span>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>No tracking, no ads, no profiling</span>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>Open source — verify everything yourself</span>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>GDPR compliant — export or delete your data anytime</span>
+        </li>
+      </ul>
+    </div>
+    <div class="privacy-visual reveal">
+      <div class="p-row"><span class="p-row-icon">🔒</span><span class="p-row-label">Message encryption</span><span class="p-row-val">NaCl E2EE</span></div>
+      <div class="p-row"><span class="p-row-icon">👁️</span><span class="p-row-label">We can read your DMs</span><span class="p-row-val bad">NEVER</span></div>
+      <div class="p-row"><span class="p-row-icon">📊</span><span class="p-row-label">Data sold to third parties</span><span class="p-row-val bad">NO</span></div>
+      <div class="p-row"><span class="p-row-icon">🎯</span><span class="p-row-label">Ad targeting</span><span class="p-row-val bad">NONE</span></div>
+      <div class="p-row"><span class="p-row-icon">🔑</span><span class="p-row-label">2FA support</span><span class="p-row-val">TOTP</span></div>
+      <div class="p-row"><span class="p-row-icon">📜</span><span class="p-row-label">Data export (GDPR Art.20)</span><span class="p-row-val">YES</span></div>
+      <div class="p-row"><span class="p-row-icon">⚙️</span><span class="p-row-label">Open source</span><span class="p-row-val">YES</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARE -->
+<section id="compare" style="padding: 0 24px 96px; max-width: 1200px; margin: 0 auto;">
+  <div class="reveal" style="text-align:center;margin-bottom:0;">
+    <span class="section-tag">How we stack up</span>
+    <h2 class="section-title">Why Phaze?</h2>
+    <p class="section-sub" style="margin:0 auto 0;">See how Phaze compares to the most popular messaging apps.</p>
+  </div>
+  <div class="compare-wrap reveal">
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th style="color:var(--brand-light)">Phaze</th>
+          <th>WhatsApp</th>
+          <th>Discord</th>
+          <th>Telegram</th>
+          <th>Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>E2EE by default</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
+        <tr><td>No ads ever</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Group Spaces / Servers</td><td class="phaze-col check">✓</td><td class="partial">~</td><td class="check">✓</td><td class="check">✓</td><td class="cross">✗</td></tr>
+        <tr><td>Voice &amp; Video calls</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Stories</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td></tr>
+        <tr><td>Phone number NOT required</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td><td class="cross">✗</td></tr>
+        <tr><td>Open source</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
+        <tr><td>Web + Desktop + Android</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Owned by Meta/Microsoft</td><td class="phaze-col" style="color:var(--success);font-weight:700;">No</td><td class="cross">Yes (Meta)</td><td class="cross">Yes (VC)</td><td class="check">No</td><td class="check">No</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- PLATFORMS / DOWNLOAD -->
+<section id="download" class="platforms">
+  <div class="reveal">
+    <span class="section-tag">Cross-platform</span>
+    <h2 class="section-title">Everywhere you are</h2>
+    <p style="color:var(--muted);max-width:480px;margin:0 auto;font-size:1.05rem;">One account, every device. Your chats stay in sync across web, desktop, and mobile.</p>
+  </div>
+  <div class="platform-cards reveal">
+    <a class="platform-card" href="/web" id="dl-web" style="text-decoration:none;color:inherit;">
+      <div class="platform-icon">🌐</div>
+      <div class="platform-name">Web App</div>
+      <div class="platform-sub">All browsers — iPhone too</div>
+    </a>
+    <a class="platform-card" href="https://github.com/jakes1345/skype7-reborn/releases/latest" id="dl-windows" style="text-decoration:none;color:inherit;">
+      <div class="platform-icon">🪟</div>
+      <div class="platform-name">Windows</div>
+      <div class="platform-sub">Desktop app</div>
+    </a>
+    <a class="platform-card" href="https://github.com/jakes1345/skype7-reborn/releases/latest" id="dl-linux" style="text-decoration:none;color:inherit;">
+      <div class="platform-icon">🐧</div>
+      <div class="platform-name">Linux</div>
+      <div class="platform-sub">Desktop app</div>
+    </a>
+    <a class="platform-card" href="https://github.com/jakes1345/skype7-reborn/releases/latest" id="dl-android" style="text-decoration:none;color:inherit;">
+      <div class="platform-icon">🤖</div>
+      <div class="platform-name">Android</div>
+      <div class="platform-sub">APK — Play Store soon</div>
+    </a>
+    <a class="platform-card" href="/web" id="dl-iphone" style="text-decoration:none;color:inherit;opacity:0.7;">
+      <div class="platform-icon">🍎</div>
+      <div class="platform-name">iPhone / iOS</div>
+      <div class="platform-sub">Use web app in Safari</div>
+    </a>
+  </div>
+  <p style="margin-top:24px;color:var(--muted);font-size:0.88rem;">📱 iPhone users — open <strong style="color:var(--text);">phazechat.world/web</strong> in Safari and tap <em>"Add to Home Screen"</em> for an app-like experience.</p>
+</section>
+
+<!-- CTA BOTTOM -->
+<section class="cta-section">
+  <div class="reveal">
+    <h2>Ready to take back<br/>your privacy?</h2>
+    <p>Join Phaze. Free forever. No credit card. No phone number required.</p>
+    <div class="cta-actions">
+      <a class="btn btn-primary" href="/web" id="cta-start">Start chatting now →</a>
+      <a class="btn btn-outline" href="https://github.com/jakes1345/skype7-reborn" id="cta-github">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <a class="nav-logo" href="/" style="text-decoration:none;">
+        <img src="/icon-192.png" alt="Phaze" style="width:28px;height:28px;border-radius:7px;" />
+        <span style="font-size:1.1rem;font-weight:800;color:var(--text);">Phaze</span>
+      </a>
+      <p>Privacy-first messaging for everyone. End-to-end encrypted. Free forever.</p>
+    </div>
+    <div class="footer-col">
+      <h4>Product</h4>
+      <a href="/web">Web App</a>
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#compare">Compare</a>
+    </div>
+    <div class="footer-col">
+      <h4>Legal</h4>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+      <a href="/security">Security</a>
+    </div>
+    <div class="footer-col">
+      <h4>Community</h4>
+      <a href="https://github.com/jakes1345/skype7-reborn" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://x.com/PhazeChatWorld" target="_blank" rel="noopener">X / Twitter</a>
+      <a href="https://instagram.com/phazechat.world" target="_blank" rel="noopener">Instagram</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <span>© 2026 Phaze. All rights reserved.</span>
+    <div class="footer-social">
+      <a href="https://x.com/PhazeChatWorld" target="_blank" rel="noopener" aria-label="Phaze on X">𝕏</a>
+      <a href="https://instagram.com/phazechat.world" target="_blank" rel="noopener" aria-label="Phaze on Instagram">📷</a>
+      <a href="https://github.com/jakes1345/skype7-reborn" target="_blank" rel="noopener" aria-label="Phaze on GitHub">⌨️</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Scroll reveal
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible') })
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' })
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+
+  // Smooth nav link highlighting
+  const sections = document.querySelectorAll('section[id]')
+  const navLinks = document.querySelectorAll('.nav-links a')
+  window.addEventListener('scroll', () => {
+    let cur = ''
+    sections.forEach(s => { if (window.scrollY >= s.offsetTop - 120) cur = s.id })
+    navLinks.forEach(a => {
+      a.style.color = a.getAttribute('href') === `#${cur}` ? 'var(--text)' : ''
+    })
+  }, { passive: true })
+</script>
+
+</body>
+</html>

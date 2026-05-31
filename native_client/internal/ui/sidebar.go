@@ -16,6 +16,7 @@ type FriendInfo struct {
 	Avatar      string
 	Mood        string
 	DisplayName string
+	Supporter   bool
 }
 
 type SidebarProps struct {
@@ -36,6 +37,7 @@ type SidebarProps struct {
 	OnStatusChange  func(status string)
 	RecentChats     []FriendInfo
 	CompactMode     bool
+	SpacesView      fyne.CanvasObject
 }
 
 func NewPhazeSidebar(props SidebarProps) fyne.CanvasObject {
@@ -100,7 +102,11 @@ func newDesktopSidebar(props SidebarProps) fyne.CanvasObject {
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			friend := props.RecentChats[i]
 			label := o.(*fyne.Container).Objects[1].(*widget.Label)
-			label.SetText(friend.Username)
+			name := friend.Username
+			if friend.Supporter {
+				name += " 💜"
+			}
+			label.SetText(name)
 
 			avatarWrap := o.(*fyne.Container).Objects[0].(*fyne.Container)
 			size := float32(36)
@@ -139,6 +145,7 @@ func newDesktopSidebar(props SidebarProps) fyne.CanvasObject {
 	contactsHint := widget.NewLabel("Your saved contacts appear under Recent after you chat. Use Search above to find someone on your Nexus server, or Add from the home view. A dedicated contact list is planned.")
 	contactsHint.Wrapping = fyne.TextWrapWord
 	tabs := container.NewAppTabs(
+		container.NewTabItem("Spaces", props.SpacesView),
 		container.NewTabItem("Recent", list),
 		container.NewTabItem("Contacts", container.NewPadded(contactsHint)),
 		dialTab,
@@ -220,10 +227,21 @@ func newMobileSidebar(props SidebarProps) fyne.CanvasObject {
 		list.Unselect(id)
 	}
 
+	var tabContent fyne.CanvasObject
+	if props.SpacesView != nil {
+		tabs := container.NewAppTabs(
+			container.NewTabItem("Spaces", props.SpacesView),
+			container.NewTabItem("Recent", list),
+		)
+		tabContent = tabs
+	} else {
+		tabContent = list
+	}
+
 	content := container.NewBorder(
 		container.NewVBox(header, container.NewPadded(search), actionRow, widget.NewSeparator()),
 		nil, nil, nil,
-		list,
+		tabContent,
 	)
 
 	bg := canvas.NewRectangle(PhazeShell)

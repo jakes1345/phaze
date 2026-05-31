@@ -107,16 +107,17 @@ const html = (s) => { const t = document.createElement('template'); t.innerHTML 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const STATE = {
-  token: localStorage.getItem('phaze_admin_token') || '',
-  username: localStorage.getItem('phaze_admin_user') || '',
+  authenticated: false,
+  username: '',
   tab: 'dashboard',
-  users: [], reports: [], pending: [], geoCache: {},
+  users: [], totalUsers: 0, limit: 50, offset: 0, usersLoaded: false,
+  stats: null, statsLoaded: false,
+  reports: [], pending: [], supporters: [], supportersLoaded: false, geoCache: {},
   search: '',
 };
 
 async function api(method, path, body) {
   const opts = { method, headers: {} };
-  if (STATE.token) opts.headers['Authorization'] = 'Bearer ' + STATE.token;
   if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const r = await fetch(path, opts);
   if (!r.ok) {
@@ -130,21 +131,52 @@ async function api(method, path, body) {
 
 async function login(u, p) {
   const res = await api('POST', '/api/v1/admin/login', { username: u, password: p });
-  STATE.token = res.token; STATE.username = res.username;
-  localStorage.setItem('phaze_admin_token', res.token);
-  localStorage.setItem('phaze_admin_user', res.username);
-  render();
-}
-function logout() {
-  STATE.token = ''; STATE.username = '';
-  localStorage.removeItem('phaze_admin_token');
-  localStorage.removeItem('phaze_admin_user');
+  STATE.username = res.username;
+  STATE.authenticated = true;
   render();
 }
 
-async function loadUsers() { STATE.users = await api('GET', '/api/v1/admin/users'); renderContent(); }
+async function logout() {
+  try {
+    await fetch('/api/v1/admin/logout', { method: 'POST' });
+  } catch (e) {
+    console.error('logout failed', e);
+  }
+  STATE.authenticated = false;
+  STATE.username = '';
+  render();
+}
+
+async function checkAuth() {
+  try {
+    const res = await api('GET', '/api/v1/admin/me');
+    STATE.username = res.username;
+    STATE.authenticated = true;
+    render();
+  } catch (err) {
+    STATE.authenticated = false;
+    STATE.username = '';
+    render();
+  }
+}
+
+async function loadUsers() {
+  const res = await api('GET', '/api/v1/admin/users?limit=' + STATE.limit + '&offset=' + STATE.offset + '&search=' + encodeURIComponent(STATE.search));
+  STATE.users = res.users;
+  STATE.totalUsers = res.total;
+  STATE.usersLoaded = true;
+  renderContent();
+}
+async function loadStats() {
+  STATE.stats = await api('GET', '/api/v1/admin/stats');
+  STATE.statsLoaded = true;
+  renderContent();
+}
 async function loadReports() { STATE.reports = await api('GET', '/api/v1/admin/reports'); renderContent(); }
 async function loadPending() { STATE.pending = await api('GET', '/api/v1/admin/pending-verifications'); renderContent(); }
+async function loadSupporters() { STATE.supporters = await api('GET', '/api/v1/admin/supporters'); renderContent(); }
+async function grantSupporter(id, u) { if (!confirm('Grant supporter badge to @' + (u || '(no account)') + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/grant'); loadSupporters(); }
+async function dismissSupporter(id) { if (!confirm('Dismiss request #' + id + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/dismiss'); loadSupporters(); }
 async function banUser(u) { const r = prompt('Reason:', 'TOS violation'); if (r === null) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/ban', { reason: r }); loadUsers(); }
 async function unbanUser(u) { if (!confirm('Unban ' + u + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/unban'); loadUsers(); }
 async function setRole(u, role) { if (!confirm('Set ' + u + ' → ' + role + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/role', { role }); loadUsers(); }
@@ -191,7 +223,7 @@ function renderLogin() {
   root.appendChild(wrap);
 }
 
-function setTab(t) { STATE.tab = t; STATE.search = ''; renderNav(); renderContent(); }
+function setTab(t) { STATE.tab = t; STATE.search = ''; STATE.offset = 0; STATE.usersLoaded = false; STATE.statsLoaded = false; STATE.supportersLoaded = false; renderNav(); renderContent(); }
 
 function renderNav() {
   document.querySelectorAll('.sidebar nav button').forEach(b => {
@@ -208,6 +240,7 @@ function renderShell() {
     { id: 'dashboard', icon: '📊', label: 'Dashboard' },
     { id: 'users', icon: '👥', label: 'Users' },
     { id: 'reports', icon: '⚑', label: 'Reports' },
+    { id: 'supporters', icon: '💜', label: 'Supporters' },
     { id: 'pending', icon: '⏳', label: 'Pending' },
     { id: 'logs', icon: '📋', label: 'Activity Log' },
     { id: 'broadcast', icon: '📢', label: 'Broadcast' },
@@ -235,11 +268,12 @@ function renderContent() {
   if (!el) return;
 
   if (STATE.tab === 'dashboard') {
-    if (!STATE.users.length) { el.innerHTML = '<div class="empty">Loading…</div>'; loadUsers(); return; }
-    const total = STATE.users.length;
-    const online = STATE.users.filter(u => u.online).length;
-    const verified = STATE.users.filter(u => u.verified).length;
-    const banned = STATE.users.filter(u => u.banned).length;
+    if (!STATE.statsLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; loadStats(); return; }
+    if (!STATE.usersLoaded) { loadUsers(); return; }
+    const total = STATE.stats.total_users;
+    const online = STATE.stats.online;
+    const verified = STATE.stats.verified;
+    const banned = STATE.stats.banned;
     el.innerHTML = '<h1 class="page-title">Dashboard</h1><p class="page-sub">Real-time overview of Phaze.</p>' +
       '<div class="stats">' +
       '<div class="stat"><div class="stat-label">Total users</div><div class="stat-value brand">' + total + '</div></div>' +
@@ -259,13 +293,17 @@ function renderContent() {
   }
 
   if (STATE.tab === 'users') {
-    if (!STATE.users.length) { el.innerHTML = '<div class="empty">Loading…</div>'; loadUsers(); return; }
-    const q = STATE.search.toLowerCase();
-    const filtered = q ? STATE.users.filter(u => u.username.toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q) || (u.last_ip||'').includes(q) || (u.signup_ip||'').includes(q)) : STATE.users;
-    el.innerHTML = '<h1 class="page-title">Users</h1><p class="page-sub">' + STATE.users.length + ' total · ' + filtered.length + ' shown</p>' +
+    if (!STATE.usersLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; loadUsers(); return; }
+    
+    const startIdx = STATE.totalUsers > 0 ? STATE.offset + 1 : 0;
+    const endIdx = Math.min(STATE.offset + STATE.limit, STATE.totalUsers);
+    const hasPrev = STATE.offset > 0;
+    const hasNext = STATE.offset + STATE.limit < STATE.totalUsers;
+
+    el.innerHTML = '<h1 class="page-title">Users</h1><p class="page-sub">' + STATE.totalUsers + ' total · showing ' + startIdx + '–' + endIdx + '</p>' +
       '<div class="search-bar"><input placeholder="Search by username, email, or IP…" value="' + esc(STATE.search) + '"></div>' +
       '<table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Status</th><th>Role</th><th>IP</th><th>Joined</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>' +
-      filtered.map(u =>
+      STATE.users.map(u =>
         '<tr><td><strong>' + esc(u.username) + '</strong></td>' +
         '<td style="font-size:0.78rem">' + esc(u.email) + '</td>' +
         '<td>' +
@@ -285,9 +323,37 @@ function renderContent() {
           ' <select class="role-sel" data-role-u="' + esc(u.username) + '"><option value="">Role…</option><option value="user">user</option><option value="helper">helper</option><option value="moderator">mod</option><option value="admin">admin</option></select>' +
           ' <button class="btn danger" data-act="delete" data-u="' + esc(u.username) + '">Delete</button>' +
         '</div></td></tr>'
-      ).join('') + '</tbody></table>';
+      ).join('') + '</tbody></table>' +
+      '<div style="display:flex;gap:0.5rem;margin-top:1rem;justify-content:flex-end;align-items:center">' +
+        '<span style="font-size:0.8rem;color:var(--muted)">Page ' + (Math.floor(STATE.offset / STATE.limit) + 1) + ' of ' + Math.ceil(STATE.totalUsers / STATE.limit) + '</span>' +
+        '<button class="btn" id="prev-page" ' + (hasPrev ? '' : 'disabled') + '>Previous</button>' +
+        '<button class="btn" id="next-page" ' + (hasNext ? '' : 'disabled') + '>Next</button>' +
+      '</div>';
 
-    el.querySelector('.search-bar input').addEventListener('input', (e) => { STATE.search = e.target.value; renderContent(); });
+    let searchTimeout;
+    const inp = el.querySelector('.search-bar input');
+    inp.focus();
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+    inp.addEventListener('input', (e) => {
+      STATE.search = e.target.value;
+      STATE.offset = 0;
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(loadUsers, 250);
+    });
+
+    el.querySelector('#prev-page').addEventListener('click', () => {
+      if (hasPrev) {
+        STATE.offset -= STATE.limit;
+        loadUsers();
+      }
+    });
+
+    el.querySelector('#next-page').addEventListener('click', () => {
+      if (hasNext) {
+        STATE.offset += STATE.limit;
+        loadUsers();
+      }
+    });
     el.querySelectorAll('button[data-act]').forEach(b => b.addEventListener('click', () => {
       if (b.dataset.act === 'ban') banUser(b.dataset.u);
       else if (b.dataset.act === 'unban') unbanUser(b.dataset.u);
@@ -316,6 +382,25 @@ function renderContent() {
         (r.resolved_by ? '<br><span style="color:var(--muted);font-size:0.78rem">by ' + esc(r.resolved_by) + '</span>' : '') +
         '</td><td>' + (r.status === 'open' ? '<button class="btn brand" data-id="' + r.id + '">Resolve</button>' : '<span style="color:var(--success)">✓</span>') + '</td></tr>').join('') + '</tbody></table>';
     el.querySelectorAll('button[data-id]').forEach(b => b.addEventListener('click', () => resolveReport(+b.dataset.id)));
+    return;
+  }
+
+  if (STATE.tab === 'supporters') {
+    if (!STATE.supportersLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; STATE.supportersLoaded = true; loadSupporters(); return; }
+    if (!STATE.supporters.length) { el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">People who opted in via the Support form. Match each to your Buy Me a Coffee payment notification, then grant the badge.</p><div class="empty">No pending supporter requests.</div>'; return; }
+    el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">' + STATE.supporters.length + ' pending · match each to your Buy Me a Coffee email, then grant.</p>' +
+      '<table class="tbl"><thead><tr><th>Phaze user</th><th>Name</th><th>Email</th><th>Requested</th><th>Actions</th></tr></thead><tbody>' +
+      STATE.supporters.map(s => '<tr>' +
+        '<td><strong>' + (s.username ? esc(s.username) : '<span style="color:var(--muted)">— none —</span>') + '</strong></td>' +
+        '<td>' + esc(s.name) + '</td>' +
+        '<td style="font-size:0.78rem">' + esc(s.email) + '</td>' +
+        '<td>' + fmtDate(s.created_at) + '</td>' +
+        '<td><div class="actions">' +
+          '<button class="btn brand" data-grant="' + s.id + '" data-u="' + esc(s.username) + '">💜 Grant badge</button> ' +
+          '<button class="btn" data-dismiss="' + s.id + '">Dismiss</button>' +
+        '</div></td></tr>').join('') + '</tbody></table>';
+    el.querySelectorAll('button[data-grant]').forEach(b => b.addEventListener('click', () => grantSupporter(+b.dataset.grant, b.dataset.u)));
+    el.querySelectorAll('button[data-dismiss]').forEach(b => b.addEventListener('click', () => dismissSupporter(+b.dataset.dismiss)));
     return;
   }
 
@@ -401,11 +486,11 @@ function renderContent() {
 }
 
 function render() {
-  if (!STATE.token) renderLogin();
+  if (!STATE.authenticated) renderLogin();
   else renderShell();
 }
 
-render();
+checkAuth();
 </script>
 </body>
 </html>
