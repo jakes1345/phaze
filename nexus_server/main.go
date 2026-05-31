@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -46,6 +48,8 @@ import (
 var allowedOrigins = func() map[string]bool {
 	raw := os.Getenv("Phaze_ALLOWED_ORIGINS")
 	if raw == "" {
+		// H1: warn loudly in production when CORS is wide-open.
+		log.Println("[WARNING] Phaze_ALLOWED_ORIGINS is not set — CORS allows ALL origins. Set this in production!")
 		return nil // nil = allow all (dev mode)
 	}
 	m := map[string]bool{}
@@ -159,6 +163,144 @@ func clientIP(r *http.Request) string {
 var globalLimiter = newIPLimiter(rate.Limit(10), 30)      // 10 req/s, burst 30 per IP
 var adminLimiter = newIPLimiter(rate.Limit(0.05), 3)     // 3 attempts per minute per IP
 
+// ---------- Auth brute-force protection ----------
+
+// authFailTracker tracks per-IP and per-user consecutive failed auth attempts.
+// When thresholds are breached, connections are throttled or blocked entirely.
+type authFailTracker struct {
+	mu         sync.Mutex
+	ipFails    map[string]*authFail // keyed by IP
+	userFails  map[string]*authFail // keyed by username
+}
+
+type authFail struct {
+	count   int
+	firstAt time.Time
+	lastAt  time.Time
+}
+
+var authTracker = &authFailTracker{
+	ipFails:   make(map[string]*authFail),
+	userFails: make(map[string]*authFail),
+}
+
+const (
+	// Per-IP: after 5 fails in 15 min, impose progressive delay. At 50, auto-block.
+	authIPFailThreshold    = 5
+	authIPBlockThreshold   = 50
+	authIPWindow           = 15 * time.Minute
+	// Per-user: lock account after 10 consecutive fails in 30 min.
+	authUserLockThreshold  = 10
+	authUserWindow         = 30 * time.Minute
+	// TOTP: max 5 attempts per 10 min.
+	totpMaxAttempts        = 5
+	totpWindow             = 10 * time.Minute
+)
+
+func (t *authFailTracker) recordFail(ip, username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+
+	// IP tracking
+	if f, ok := t.ipFails[ip]; ok {
+		if now.Sub(f.firstAt) > authIPWindow {
+			*f = authFail{count: 1, firstAt: now, lastAt: now}
+		} else {
+			f.count++
+			f.lastAt = now
+		}
+	} else {
+		t.ipFails[ip] = &authFail{count: 1, firstAt: now, lastAt: now}
+	}
+
+	// User tracking
+	if username != "" {
+		if f, ok := t.userFails[username]; ok {
+			if now.Sub(f.firstAt) > authUserWindow {
+				*f = authFail{count: 1, firstAt: now, lastAt: now}
+			} else {
+				f.count++
+				f.lastAt = now
+			}
+		} else {
+			t.userFails[username] = &authFail{count: 1, firstAt: now, lastAt: now}
+		}
+	}
+}
+
+func (t *authFailTracker) recordSuccess(ip, username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.ipFails, ip)
+	if username != "" {
+		delete(t.userFails, username)
+	}
+}
+
+// isIPThrottled returns true if this IP should be denied login attempts.
+func (t *authFailTracker) isIPThrottled(ip string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.ipFails[ip]
+	if !ok {
+		return false
+	}
+	if time.Since(f.firstAt) > authIPWindow {
+		delete(t.ipFails, ip)
+		return false
+	}
+	return f.count >= authIPFailThreshold
+}
+
+// shouldAutoBlock returns true if the IP has exceeded the hard block threshold.
+func (t *authFailTracker) shouldAutoBlock(ip string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.ipFails[ip]
+	if !ok {
+		return false
+	}
+	return f.count >= authIPBlockThreshold && time.Since(f.firstAt) <= authIPWindow
+}
+
+// isUserLocked returns true if too many consecutive auth failures for this user.
+func (t *authFailTracker) isUserLocked(username string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.userFails[username]
+	if !ok {
+		return false
+	}
+	if time.Since(f.firstAt) > authUserWindow {
+		delete(t.userFails, username)
+		return false
+	}
+	return f.count >= authUserLockThreshold
+}
+
+// sweepAuthTracker cleans stale entries every 5 minutes.
+func sweepAuthTracker() {
+	tk := time.NewTicker(5 * time.Minute)
+	defer tk.Stop()
+	for {
+		<-tk.C
+		now := time.Now()
+		authTracker.mu.Lock()
+		for ip, f := range authTracker.ipFails {
+			if now.Sub(f.lastAt) > authIPWindow {
+				delete(authTracker.ipFails, ip)
+			}
+		}
+		for u, f := range authTracker.userFails {
+			if now.Sub(f.lastAt) > authUserWindow {
+				delete(authTracker.userFails, u)
+			}
+		}
+		authTracker.mu.Unlock()
+	}
+}
+
 // adminIPGate restricts admin endpoints to allowed IPs when PHAZE_ADMIN_IPS
 // is set (comma-separated CIDRs or IPs). If unset, all IPs are allowed.
 func adminIPGate(next http.HandlerFunc) http.HandlerFunc {
@@ -248,6 +390,7 @@ type NexusMessage struct {
 	Email       string      `json:"email,omitempty"`
 	Mood        string      `json:"mood,omitempty"`
 	DisplayName string      `json:"display_name,omitempty"`
+	Supporter   bool        `json:"supporter,omitempty"`
 	ConvoID     string      `json:"convo_id,omitempty"`
 	ConvoName   string      `json:"convo_name,omitempty"`
 	Members     []string    `json:"members,omitempty"`
@@ -387,6 +530,9 @@ func (c *Client) Send(m NexusMessage) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	conn := c.Conn
+	// M4: prevent slow-client goroutine leaks — if the peer stops reading,
+	// the write times out after 10s instead of blocking forever.
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteJSON(m)
 }
 
@@ -403,8 +549,9 @@ type NexusServer struct {
 	// Streams maps broadcaster username -> active livestream metadata.
 	// Guarded by VoiceRoomsMu (shared mutex — both are room-style state).
 	Streams map[string]*liveStream
-	// RemoteCodes maps 6-digit session codes to host usernames for remote control.
-	RemoteCodes   map[string]string
+	// RemoteCodes maps 6-digit session codes to host info for remote control.
+	// L2: entries include creation time for TTL enforcement.
+	RemoteCodes   map[string]remoteCodeEntry
 	RemoteCodesMu sync.RWMutex
 	// Per-IP WebSocket connection counter for DDoS mitigation.
 	wsConnCount   map[string]int
@@ -417,23 +564,87 @@ type NexusServer struct {
 func (s *NexusServer) isIPBlocked(ip string) bool {
 	s.blockedIPsMu.RLock()
 	defer s.blockedIPsMu.RUnlock()
+	if s.blockedIPs == nil {
+		return false
+	}
 	return s.blockedIPs[ip]
 }
 
 func (s *NexusServer) blockIP(ip string) {
 	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
 	s.blockedIPs[ip] = true
 	s.blockedIPsMu.Unlock()
+	// M3: persist to DB so the block survives restarts.
+	s.DB.Exec(`INSERT OR IGNORE INTO blocked_ips (ip) VALUES (?)`, ip)
 }
 
 func (s *NexusServer) unblockIP(ip string) {
 	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
 	delete(s.blockedIPs, ip)
 	s.blockedIPsMu.Unlock()
+	s.DB.Exec(`DELETE FROM blocked_ips WHERE ip = ?`, ip)
+}
+
+// loadBlockedIPs loads persisted IP blocks from the database on boot.
+func (s *NexusServer) loadBlockedIPs() {
+	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
+	s.blockedIPsMu.Unlock()
+	rows, err := s.DB.Query(`SELECT ip FROM blocked_ips`)
+	if err != nil {
+		log.Printf("[ipblock] load: %v", err)
+		return
+	}
+	defer rows.Close()
+	s.blockedIPsMu.Lock()
+	for rows.Next() {
+		var ip string
+		if rows.Scan(&ip) == nil {
+			s.blockedIPs[ip] = true
+		}
+	}
+	count := len(s.blockedIPs)
+	s.blockedIPsMu.Unlock()
+	if count > 0 {
+		log.Printf("[ipblock] loaded %d blocked IPs from database", count)
+	}
 }
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: originAllowed,
+}
+
+// remoteCodeEntry holds a remote-control pairing code with an expiry.
+type remoteCodeEntry struct {
+	Username  string
+	CreatedAt time.Time
+}
+
+const remoteCodeTTL = 10 * time.Minute
+
+// sweepRemoteCodes removes expired remote control codes every 2 minutes.
+func (s *NexusServer) sweepRemoteCodes() {
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	for {
+		<-t.C
+		now := time.Now()
+		s.RemoteCodesMu.Lock()
+		for k, v := range s.RemoteCodes {
+			if now.Sub(v.CreatedAt) > remoteCodeTTL {
+				delete(s.RemoteCodes, k)
+			}
+		}
+		s.RemoteCodesMu.Unlock()
+	}
 }
 
 // ---------- Sovereign Media Configuration ----------
@@ -691,6 +902,12 @@ func (s *NexusServer) initDB() {
 			iterations INTEGER NOT NULL DEFAULT 200000,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// M3: persisted IP blocklist — survives server restarts.
+		`CREATE TABLE IF NOT EXISTS blocked_ips (
+			ip TEXT PRIMARY KEY,
+			blocked_by TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, q := range tables {
 		if _, err := s.DB.Exec(q); err != nil {
@@ -723,9 +940,25 @@ func (s *NexusServer) initDB() {
 		`ALTER TABLE users ADD COLUMN last_ip TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN last_login_at DATETIME`,
 		`ALTER TABLE users ADD COLUMN signup_ip TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN phone_verification_code TEXT`,
+		// Supporters: a `supporter` flag (with the date it was granted) plus a
+		// queue of opt-in requests captured by the public support form. The
+		// admin matches a request against the actual Buy Me a Coffee payment
+		// notification, then grants the badge — see supporters.go.
+		`ALTER TABLE users ADD COLUMN supporter INTEGER DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN supporter_since DATETIME`,
+		`CREATE TABLE IF NOT EXISTS supporter_requests (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT,
+			name TEXT,
+			email TEXT,
+			status TEXT DEFAULT 'pending',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_supporter_requests_status ON supporter_requests(status)`,
 	}
 	for _, q := range migrations {
-		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") && !strings.Contains(err.Error(), "already exists") {
 			log.Printf("DB migration skipped (%v)", err)
 		}
 	}
@@ -804,7 +1037,9 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	if len(password) < 8 {
 		return "", errShortPassword
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	// C2: pre-hash with SHA-256 to avoid bcrypt's silent 72-byte truncation.
+	pwHash := sha256.Sum256([]byte(password))
+	hash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
 	if err != nil {
 		return "", err
 	}
@@ -1010,7 +1245,9 @@ func (s *NexusServer) consumePasswordReset(token, newPassword string) error {
 	if used != 0 || time.Now().After(expires) {
 		return errResetInvalid
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	// C2: pre-hash with SHA-256 to avoid bcrypt's silent 72-byte truncation.
+	pwHash := sha256.Sum256([]byte(newPassword))
+	hash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -1061,7 +1298,7 @@ func (s *NexusServer) approveQRLogin(token, username, device string) error {
 	return nil
 }
 
-func (s *NexusServer) checkQRLogin(token string) (string, string, bool) {
+func (s *NexusServer) checkQRLogin(token string) (string, string, bool, bool) {
 	var username, sess string
 	var approved int
 	var expires time.Time
@@ -1069,16 +1306,20 @@ func (s *NexusServer) checkQRLogin(token string) (string, string, bool) {
 		"SELECT username, session_token, approved, expires_at FROM qr_login_tokens WHERE token = ?",
 		token,
 	).Scan(&username, &sess, &approved, &expires)
-	if err != nil || time.Now().After(expires) {
-		return "", "", false
+	if err == sql.ErrNoRows {
+		return "", "", false, false
 	}
-	return username, sess, approved == 1
+	if err != nil || time.Now().After(expires) {
+		return "", "", false, true
+	}
+	return username, sess, approved == 1, true
 }
 
 func (s *NexusServer) verifyUser(username, code string) bool {
 	var dbCode string
 	err := s.DB.QueryRow("SELECT verification_code FROM users WHERE username = ?", username).Scan(&dbCode)
-	if err != nil || dbCode != code {
+	// H6: constant-time comparison to prevent timing side-channels on OTP codes.
+	if err != nil || dbCode == "" || code == "" || subtle.ConstantTimeCompare([]byte(dbCode), []byte(code)) != 1 {
 		return false
 	}
 	_, err = s.DB.Exec("UPDATE users SET is_verified = 1, verification_code = NULL WHERE username = ?", username)
@@ -1200,9 +1441,13 @@ func sendEmailSMTP(to, subject, body string) error {
 		from = user
 	}
 	auth := smtp.PlainAuth("", user, pass, host)
-	msg := []byte("From: Phaze <" + from + ">\r\n" +
-		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
+	// C4: sanitize header values — strip CR/LF to prevent SMTP header injection.
+	sanitizeHeader := func(s string) string {
+		return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+	}
+	msg := []byte("From: Phaze <" + sanitizeHeader(from) + ">\r\n" +
+		"To: " + sanitizeHeader(to) + "\r\n" +
+		"Subject: " + sanitizeHeader(subject) + "\r\n" +
 		"MIME-version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n" +
 		"\r\n" +
 		body + "\r\n")
@@ -1234,7 +1479,27 @@ func (s *NexusServer) authenticateUser(username, password string) bool {
 	if !isVerified {
 		return false
 	}
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	// C2 dual-path migration:
+	// 1. Try new scheme: bcrypt(SHA256(password))
+	// 2. Fall back to legacy: bcrypt(password)
+	// On successful legacy match, silently re-hash with the new scheme
+	// so future logins use the hardened path. After all users have logged
+	// in once post-deploy, the fallback can be removed.
+	pwHash := sha256.Sum256([]byte(password))
+	if bcrypt.CompareHashAndPassword([]byte(hash), pwHash[:]) == nil {
+		return true // new scheme match
+	}
+	// Legacy fallback: raw password was hashed directly
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil {
+		// Silently upgrade to new scheme
+		newHash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
+		if err == nil {
+			s.DB.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(newHash), username)
+			log.Printf("[security] migrated %s password hash to SHA256+bcrypt", username)
+		}
+		return true
+	}
+	return false
 }
 
 // userBanInfo returns (banned, reason). Reason is empty for non-banned users.
@@ -1431,11 +1696,30 @@ func (s *NexusServer) broadcastChannelMsg(serverID string, payload NexusMessage)
 			recipients = append(recipients, u)
 		}
 	}
+
+	var serverName string
+	_ = s.DB.QueryRow(`SELECT name FROM servers WHERE id = ?`, serverID).Scan(&serverName)
+	if serverName == "" {
+		serverName = "Group"
+	}
+	var channelName string
+	if payload.ChannelID != "" {
+		_ = s.DB.QueryRow(`SELECT name FROM channels WHERE id = ?`, payload.ChannelID).Scan(&channelName)
+	}
+
+	pushTitle := payload.Sender + " in " + serverName
+	if channelName != "" {
+		pushTitle = payload.Sender + " in " + serverName + " #" + channelName
+	}
+
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 	for _, u := range recipients {
 		if c, ok := s.Clients[u]; ok {
 			c.Send(payload)
+		} else if u != payload.Sender {
+			go s.sendWebPush(u, pushTitle, payload.Body)
+			go s.sendFCMPush(u, pushTitle, payload.Body)
 		}
 	}
 }
@@ -1872,18 +2156,27 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 
 func (s *NexusServer) broadcastPresence(username, status string) {
 	friends := s.getFriends(username)
+	supporter := s.isSupporter(username)
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 
 	for _, friend := range friends {
 		if client, ok := s.Clients[friend]; ok {
 			client.Send(NexusMessage{
-				Type:   "presence",
-				Sender: username,
-				Status: status,
+				Type:      "presence",
+				Sender:    username,
+				Status:    status,
+				Supporter: supporter,
 			})
 		}
 	}
+}
+
+// isSupporter reports whether the user holds the supporter badge.
+func (s *NexusServer) isSupporter(username string) bool {
+	var n int
+	err := s.DB.QueryRow("SELECT COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&n)
+	return err == nil && n == 1
 }
 
 // ---------- Trust & Safety: blocks + abuse reports ----------
@@ -1977,6 +2270,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.wsConnCountMu.Lock()
+	if s.wsConnCount == nil {
+		s.wsConnCount = make(map[string]int)
+	}
 	count := s.wsConnCount[ip]
 	if count >= 10 {
 		s.wsConnCountMu.Unlock()
@@ -1987,9 +2283,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 	s.wsConnCountMu.Unlock()
 	defer func() {
 		s.wsConnCountMu.Lock()
-		s.wsConnCount[ip]--
-		if s.wsConnCount[ip] <= 0 {
-			delete(s.wsConnCount, ip)
+		if s.wsConnCount != nil {
+			s.wsConnCount[ip]--
+			if s.wsConnCount[ip] <= 0 {
+				delete(s.wsConnCount, ip)
+			}
 		}
 		s.wsConnCountMu.Unlock()
 	}()
@@ -2002,6 +2300,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 	}
 	metrics.wsConnections.Add(1)
 	defer ws.Close()
+
+	// C3: cap inbound message size to 1 MB. The NexusMessage protocol is
+	// small (typically < 50 KB even with envelopes); anything larger is
+	// either a bug or an adversary trying to OOM the server.
+	ws.SetReadLimit(1 << 20) // 1 MB
 
 	// client owns the write mutex for this connection. Pre-auth writes use
 	// it even before the client is registered in s.Clients.
@@ -2085,12 +2388,23 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 
 		case "register":
+			if authTracker.isIPThrottled(client.IP) {
+				metrics.authFailure.Add(1)
+				if authTracker.shouldAutoBlock(client.IP) {
+					log.Printf("[security] auto-blocking IP %s after %d registration/auth failures", client.IP, authIPBlockThreshold)
+					s.blockIP(client.IP)
+				}
+				client.Send(NexusMessage{Type: "register_result", Error: "Too many registration/login attempts. Try again later."})
+				time.Sleep(2 * time.Second)
+				continue
+			}
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
 			if err != nil {
+				authTracker.recordFail(client.IP, "")
 				client.Send(NexusMessage{Type: "register_result", Error: err.Error()})
 			} else {
 				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
-				log.Printf("New user registered: %s (%s) from %s - Code: %s", msg.Sender, msg.Email, client.IP, code)
+				log.Printf("New user registered: %s (%s) from %s", msg.Sender, msg.Email, client.IP)
 				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
 				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
 					"<h1>Welcome to Phaze</h1>"+
@@ -2119,38 +2433,43 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "request_phone_link":
 			number := msg.Body
-			code := fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
-			_, err := s.DB.Exec("UPDATE users SET verification_code = ?, phone_number = ? WHERE username = ?", code, number, username)
+			// H4: use crypto/rand instead of time-based code (was predictable).
+			code, _ := randDigits(6)
+			_, err := s.DB.Exec("UPDATE users SET phone_verification_code = ?, phone_number = ? WHERE username = ?", code, number, username)
 			if err != nil {
 				client.Send(NexusMessage{Type: "phone_link_result", Error: "Update failed"})
 			} else {
-				log.Printf("[SMS] Sending verification to %s: %s", number, code)
+				log.Printf("[SMS] Sending verification to %s", number)
 				go s.sendSMS(number, "Your Phaze verification code is: "+code)
 				client.Send(NexusMessage{Type: "phone_link_result", Status: "code_sent"})
 			}
 
 		case "verify_phone_link":
 			var dbCode string
-			err := s.DB.QueryRow("SELECT verification_code FROM users WHERE username = ?", username).Scan(&dbCode)
-			if err == nil && dbCode == msg.Body {
-				s.DB.Exec("UPDATE users SET phone_verified = 1, verification_code = NULL WHERE username = ?", username)
+			err := s.DB.QueryRow("SELECT phone_verification_code FROM users WHERE username = ?", username).Scan(&dbCode)
+			// H6: constant-time compare for phone verification codes.
+			if err == nil && dbCode != "" && msg.Body != "" && subtle.ConstantTimeCompare([]byte(dbCode), []byte(msg.Body)) == 1 {
+				s.DB.Exec("UPDATE users SET phone_verified = 1, phone_verification_code = NULL WHERE username = ?", username)
 				client.Send(NexusMessage{Type: "phone_link_result", Status: "verified"})
 			} else {
-				s.DB.Exec("UPDATE users SET verification_code = NULL WHERE username = ?", username)
+				s.DB.Exec("UPDATE users SET phone_verification_code = NULL WHERE username = ?", username)
 				client.Send(NexusMessage{Type: "phone_link_result", Error: "Invalid code. Security lockout: please request a new code."})
 			}
 
 		case "update_profile":
-			// Update mood and display name
+			// C5: Use server-side username, NOT client-supplied msg.Sender.
+			// Without this, any authed user could overwrite another user's profile.
+			if username == "" {
+				continue
+			}
 			_, err := s.DB.Exec("UPDATE users SET mood = ?, display_name = ? WHERE username = ?",
-				msg.Mood, msg.DisplayName, msg.Sender)
+				msg.Mood, msg.DisplayName, username)
 			if err != nil {
 				client.Send(NexusMessage{Type: "update_result", Error: "Update failed"})
 			} else {
-				log.Printf("Profile updated for %s: %s | %s", msg.Sender, msg.DisplayName, msg.Mood)
+				log.Printf("Profile updated for %s: %s | %s", username, msg.DisplayName, msg.Mood)
 				client.Send(NexusMessage{Type: "update_result", Status: "ok"})
-				// Broadcast this change to all online friends
-				s.broadcastProfileUpdate(msg.Sender, msg.DisplayName, msg.Mood)
+				s.broadcastProfileUpdate(username, msg.DisplayName, msg.Mood)
 			}
 
 		case "auth":
@@ -2159,8 +2478,42 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "auth_result", Error: "Password required"})
 				continue
 			}
+			// Brute-force protection: check IP and user lockouts BEFORE doing
+			// expensive bcrypt work. This stops credential-stuffing bots cold.
+			if authTracker.isIPThrottled(client.IP) {
+				metrics.authFailure.Add(1)
+				if authTracker.shouldAutoBlock(client.IP) {
+					log.Printf("[security] auto-blocking IP %s after %d auth failures", client.IP, authIPBlockThreshold)
+					s.blockIP(client.IP)
+				}
+				client.Send(NexusMessage{Type: "auth_result", Error: "Too many failed attempts. Try again later."})
+				// Intentional delay to waste attacker time
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			if authTracker.isUserLocked(msg.Sender) {
+				metrics.authFailure.Add(1)
+				client.Send(NexusMessage{Type: "auth_result", Error: "Account temporarily locked due to too many failed attempts. Try again in 30 minutes."})
+				time.Sleep(2 * time.Second)
+				continue
+			}
 			if !s.authenticateUser(msg.Sender, msg.Body) {
 				metrics.authFailure.Add(1)
+				authTracker.recordFail(client.IP, msg.Sender)
+				// Progressive delay: 500ms per failure count (max 5s).
+				// Slows brute-force without hurting legit users.
+				authTracker.mu.Lock()
+				delay := time.Duration(0)
+				if f, ok := authTracker.ipFails[client.IP]; ok {
+					delay = time.Duration(f.count) * 500 * time.Millisecond
+					if delay > 5*time.Second {
+						delay = 5 * time.Second
+					}
+				}
+				authTracker.mu.Unlock()
+				if delay > 0 {
+					time.Sleep(delay)
+				}
 				client.Send(NexusMessage{Type: "auth_result", Error: "Invalid username or password"})
 				continue
 			}
@@ -2179,6 +2532,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			metrics.authSuccess.Add(1)
+			authTracker.recordSuccess(client.IP, msg.Sender) // clear fail counters
 			username = msg.Sender
 			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", client.IP, username)
 			s.autoJoinGlobalSpace(username)
@@ -2233,11 +2587,36 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 
 		case "session_auth":
+			if authTracker.isIPThrottled(client.IP) {
+				metrics.authFailure.Add(1)
+				if authTracker.shouldAutoBlock(client.IP) {
+					log.Printf("[security] auto-blocking IP %s after %d auth failures", client.IP, authIPBlockThreshold)
+					s.blockIP(client.IP)
+				}
+				client.Send(NexusMessage{Type: "auth_result", Error: "Too many failed attempts. Try again later."})
+				time.Sleep(2 * time.Second)
+				continue
+			}
 			u := s.sessionUsername(msg.QRToken)
 			if u == "" {
+				metrics.authFailure.Add(1)
+				authTracker.recordFail(client.IP, "")
+				authTracker.mu.Lock()
+				delay := time.Duration(0)
+				if f, ok := authTracker.ipFails[client.IP]; ok {
+					delay = time.Duration(f.count) * 500 * time.Millisecond
+					if delay > 5*time.Second {
+						delay = 5 * time.Second
+					}
+				}
+				authTracker.mu.Unlock()
+				if delay > 0 {
+					time.Sleep(delay)
+				}
 				client.Send(NexusMessage{Type: "auth_result", Error: "Session expired, please log in"})
 				continue
 			}
+			authTracker.recordSuccess(client.IP, u)
 			if banned, reason := s.userBanInfo(u); banned {
 				body := "Account suspended"
 				if reason != "" {
@@ -2328,10 +2707,28 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			return
 
 		case "resend_verification":
+			// H3: resend_verification previously used msg.Sender (client-supplied),
+			// allowing unauthenticated spam. Now: if authed, use server-side username;
+			// if not, use msg.Sender but only for unverified accounts (pre-auth flow).
+			targetUser := msg.Sender
+			if username != "" {
+				targetUser = username
+			}
+			if targetUser == "" {
+				client.Send(NexusMessage{Type: "register_result", Error: "Username required"})
+				continue
+			}
 			var email string
-			err := s.DB.QueryRow("SELECT email FROM users WHERE username = ?", msg.Sender).Scan(&email)
+			var verified int
+			err := s.DB.QueryRow("SELECT email, is_verified FROM users WHERE username = ?", targetUser).Scan(&email, &verified)
 			if err != nil || email == "" {
-				client.Send(NexusMessage{Type: "register_result", Error: "User not found"})
+				// Don't reveal whether the user exists.
+				client.Send(NexusMessage{Type: "register_result", Status: "code_resent"})
+				continue
+			}
+			if verified == 1 {
+				// Already verified — nothing to resend.
+				client.Send(NexusMessage{Type: "register_result", Status: "code_resent"})
 				continue
 			}
 			code, err := randDigits(6)
@@ -2339,7 +2736,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "register_result", Error: "Internal error"})
 				continue
 			}
-			if _, err := s.DB.Exec("UPDATE users SET verification_code = ? WHERE username = ?", code, msg.Sender); err != nil {
+			if _, err := s.DB.Exec("UPDATE users SET verification_code = ? WHERE username = ?", code, targetUser); err != nil {
 				client.Send(NexusMessage{Type: "register_result", Error: "Database error"})
 				continue
 			}
@@ -2429,7 +2826,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "change_password_result", Error: "New password must be at least 8 characters"})
 				continue
 			}
-			hash, err := bcrypt.GenerateFromPassword([]byte(newPw), bcrypt.DefaultCost)
+			// C2: pre-hash with SHA-256 to match registerUser/authenticateUser.
+			pwHash := sha256.Sum256([]byte(newPw))
+			hash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
 			if err != nil {
 				client.Send(NexusMessage{Type: "change_password_result", Error: "Internal error"})
 				continue
@@ -2466,11 +2865,26 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			client.Send(NexusMessage{Type: "qr_login_result", Status: "approved"})
 
 		case "qr_login_check":
-			u, sess, approved := s.checkQRLogin(msg.QRToken)
+			if authTracker.isIPThrottled(client.IP) {
+				metrics.authFailure.Add(1)
+				if authTracker.shouldAutoBlock(client.IP) {
+					log.Printf("[security] auto-blocking IP %s after %d auth failures", client.IP, authIPBlockThreshold)
+					s.blockIP(client.IP)
+				}
+				client.Send(NexusMessage{Type: "qr_login_result", Error: "Too many failed attempts. Try again later."})
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			u, sess, approved, exists := s.checkQRLogin(msg.QRToken)
 			if !approved {
+				if !exists {
+					metrics.authFailure.Add(1)
+					authTracker.recordFail(client.IP, "")
+				}
 				client.Send(NexusMessage{Type: "qr_login_result", Status: "pending", QRToken: msg.QRToken})
 				continue
 			}
+			authTracker.recordSuccess(client.IP, u)
 			// Promote this socket onto the approved session.
 			username = u
 			s.Mu.Lock()
@@ -2705,11 +3119,22 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 		// PIN-encrypted blob containing the user's NaCl keypair. The plain
 		// keys never touch the server.
 		case "key_backup_put":
-			if username == "" || msg.KeyBackup == nil {
+			if username == "" {
 				continue
 			}
-			b := msg.KeyBackup
-			if b.Ciphertext == "" || b.Salt == "" || b.Iterations < 10000 {
+			// Accept the backup blob from either the structured KeyBackup field
+			// (Go desktop / web) or the Token string field (Android / new clients).
+			var b *KeyBackupPayload
+			if msg.KeyBackup != nil {
+				b = msg.KeyBackup
+			} else if msg.Token != "" {
+				b = &KeyBackupPayload{}
+				if err := json.Unmarshal([]byte(msg.Token), b); err != nil {
+					client.Send(NexusMessage{Type: "key_backup_result", Error: "invalid backup token: " + err.Error()})
+					continue
+				}
+			}
+			if b == nil || b.Ciphertext == "" || b.Salt == "" || b.Iterations < 10000 {
 				client.Send(NexusMessage{Type: "key_backup_result", Error: "invalid backup payload"})
 				continue
 			}
@@ -2734,15 +3159,18 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				username,
 			).Scan(&ct, &salt, &iters, &created)
 			if err != nil {
-				client.Send(NexusMessage{Type: "key_backup", Status: "not_found"})
+				client.Send(NexusMessage{Type: "key_backup_result", Status: "not_found", Error: "no backup found"})
 				continue
 			}
+			// Build the JSON blob string so Token-based clients (Android) can parse directly.
+			blobBytes, _ := json.Marshal(KeyBackupPayload{Ciphertext: ct, Salt: salt, Iterations: iters})
 			client.Send(NexusMessage{
-				Type:   "key_backup",
+				Type:   "key_backup_result",
 				Status: "ok",
 				KeyBackup: &KeyBackupPayload{
 					Ciphertext: ct, Salt: salt, Iterations: iters, CreatedAt: created,
 				},
+				Token: string(blobBytes),
 			})
 
 		case "key_backup_delete":
@@ -2782,7 +3210,26 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if msg.Token == "" {
 				continue
 			}
-			u, sess, approved := s.checkQRLogin(msg.Token)
+			if authTracker.isIPThrottled(client.IP) {
+				metrics.authFailure.Add(1)
+				if authTracker.shouldAutoBlock(client.IP) {
+					log.Printf("[security] auto-blocking IP %s after %d auth failures", client.IP, authIPBlockThreshold)
+					s.blockIP(client.IP)
+				}
+				client.Send(NexusMessage{Type: "link_check", Status: "pending", Error: "Too many attempts"})
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			u, sess, approved, exists := s.checkQRLogin(msg.Token)
+			if !approved {
+				if !exists {
+					metrics.authFailure.Add(1)
+					authTracker.recordFail(client.IP, "")
+				}
+				client.Send(NexusMessage{Type: "link_check", Status: "pending"})
+				continue
+			}
+			authTracker.recordSuccess(client.IP, u)
 			if approved {
 				client.Send(NexusMessage{Type: "link_check", Status: "approved", Sender: u, QRToken: sess})
 			} else {
@@ -2934,6 +3381,14 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			metrics.convoMessages.Add(1)
 			members := s.conversationMembers(msg.ConvoID)
+			var convoName string
+			_ = s.DB.QueryRow(`SELECT name FROM conversations WHERE id = ?`, msg.ConvoID).Scan(&convoName)
+			pushTitle := username
+			if convoName != "" {
+				pushTitle = username + " in " + convoName
+			}
+			pushBody := "Sent a message"
+
 			s.Mu.RLock()
 			for _, m := range members {
 				if m == username {
@@ -2959,6 +3414,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				} else {
 					s.DB.Exec(`INSERT INTO offline_messages (sender, recipient, body, msg_type, convo)
 						VALUES (?, ?, ?, 'convo_msg', ?)`, username, m, body, msg.ConvoID)
+					go s.sendWebPush(m, pushTitle, pushBody)
+					go s.sendFCMPush(m, pushTitle, pushBody)
 				}
 			}
 			s.Mu.RUnlock()
@@ -3067,9 +3524,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			s.RemoteCodesMu.Lock()
-			s.RemoteCodes[code] = username
+			s.RemoteCodes[code] = remoteCodeEntry{Username: username, CreatedAt: time.Now()}
 			s.RemoteCodesMu.Unlock()
-			log.Printf("[remote] %s registered code %s", username, code)
+			log.Printf("[remote] %s registered remote control code", username)
 			client.Send(NexusMessage{Type: "remote_registered", Body: code})
 
 		case "remote_unregister":
@@ -3078,8 +3535,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			s.RemoteCodesMu.Lock()
 			for k, v := range s.RemoteCodes {
-				if v == username {
-					log.Printf("[remote] %s unregistered code %s", username, k)
+				if v.Username == username {
+					log.Printf("[remote] %s unregistered remote control code", username)
 					delete(s.RemoteCodes, k)
 				}
 			}
@@ -3091,11 +3548,15 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			code := msg.Body
 			s.RemoteCodesMu.RLock()
-			host, ok := s.RemoteCodes[code]
+			entry, ok := s.RemoteCodes[code]
 			s.RemoteCodesMu.RUnlock()
-			log.Printf("[remote] %s looked up code %s -> found=%v host=%s (map has %d entries)", username, code, ok, host, len(s.RemoteCodes))
+			// L2: also reject expired codes
+			if ok && time.Since(entry.CreatedAt) > remoteCodeTTL {
+				ok = false
+			}
+			log.Printf("[remote] %s looked up a remote control code -> found=%v host=%s (map has %d entries)", username, ok, entry.Username, len(s.RemoteCodes))
 			if ok {
-				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "ok", Body: host})
+				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "ok", Body: entry.Username})
 			} else {
 				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "error", Error: "Invalid code — make sure the host is still sharing"})
 			}
@@ -3108,7 +3569,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if msg.Type == "remote_end" {
 				s.RemoteCodesMu.Lock()
 				for k, v := range s.RemoteCodes {
-					if v == username || v == msg.Recipient {
+					if v.Username == username || v.Username == msg.Recipient {
 						delete(s.RemoteCodes, k)
 					}
 				}
@@ -4234,27 +4695,32 @@ func (s *NexusServer) downloadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *NexusServer) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/downloads/")
+	// M6: use filepath.Base to prevent path traversal ("../../../etc/passwd").
+	name := filepath.Base(strings.TrimPrefix(r.URL.Path, "/downloads/"))
+	if name == "" || name == "." || name == "/" {
+		http.NotFound(w, r)
+		return
+	}
 
 	// Force octet-stream + attachment for every binary so mobile browsers
 	// (Samsung Internet, Chrome Android) save to Downloads instead of
 	// handing off to the package installer or a file viewer.
-	if strings.HasSuffix(path, ".apk") {
+	if strings.HasSuffix(name, ".apk") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.apk\"")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-	} else if strings.HasSuffix(path, ".exe") {
+	} else if strings.HasSuffix(name, ".exe") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.exe\"")
 		w.Header().Set("Cache-Control", "no-store")
-	} else if strings.HasSuffix(path, ".linux") {
+	} else if strings.HasSuffix(name, ".linux") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.linux\"")
 		w.Header().Set("Cache-Control", "no-store")
 	}
 
-	http.ServeFile(w, r, "public/downloads/"+path)
+	http.ServeFile(w, r, filepath.Join("public", "downloads", name))
 }
 
 func (s *NexusServer) featuresHandler(w http.ResponseWriter, r *http.Request) {
@@ -4310,17 +4776,25 @@ func (s *NexusServer) resetHandler(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Admin moderation API ----------
 
-// adminFromRequest authenticates an admin caller. Expects Authorization:
-// Bearer <session_token>. Returns "" + status code on failure (already
-// written by the helper). The session_token is the standard one issued
+// adminFromRequest authenticates an admin caller. Expects phaze_admin_token cookie
+// or Authorization: Bearer <session_token>. Returns "" + status code on failure
+// (already written by the helper). The session_token is the standard one issued
 // by /auth — there is no separate "admin token".
 func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
+	var tok string
+	if cookie, err := r.Cookie("phaze_admin_token"); err == nil {
+		tok = cookie.Value
+	}
+	if tok == "" {
+		h := r.Header.Get("Authorization")
+		if strings.HasPrefix(h, "Bearer ") {
+			tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		}
+	}
+	if tok == "" {
 		http.Error(w, "Authorization required", http.StatusUnauthorized)
 		return ""
 	}
-	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 	u := s.sessionUsername(tok)
 	if u == "" {
 		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
@@ -4337,12 +4811,20 @@ func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) s
 // role (one of "helper", "moderator", "admin", "super_admin"). Returns
 // the username + role, or "" on rejection (already responded).
 func (s *NexusServer) modFromRequest(w http.ResponseWriter, r *http.Request, minRole string) (string, string) {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
+	var tok string
+	if cookie, err := r.Cookie("phaze_admin_token"); err == nil {
+		tok = cookie.Value
+	}
+	if tok == "" {
+		h := r.Header.Get("Authorization")
+		if strings.HasPrefix(h, "Bearer ") {
+			tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		}
+	}
+	if tok == "" {
 		http.Error(w, "Authorization required", http.StatusUnauthorized)
 		return "", ""
 	}
-	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 	u := s.sessionUsername(tok)
 	if u == "" {
 		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
@@ -4593,8 +5075,36 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": target, "action": action})
 }
 
+// adminMeHandler returns the authenticated admin's username and role.
+func (s *NexusServer) adminMeHandler(w http.ResponseWriter, r *http.Request) {
+	u := s.adminFromRequest(w, r)
+	if u == "" {
+		return
+	}
+	role := s.userRole(u)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"username": u, "role": role})
+}
+
+// adminLogoutHandler clears the phaze_admin_token cookie.
+func (s *NexusServer) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "phaze_admin_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		SameSite: http.SameSiteLaxMode,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
 // adminLoginHandler authenticates an admin via username + password and
 // returns a session token usable as Bearer on every other admin endpoint.
+// Also sets the phaze_admin_token HttpOnly, Secure cookie.
 // Body JSON: { "username": "...", "password": "..." }
 func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -4623,24 +5133,71 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "phaze_admin_token",
+		Value:    tok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": tok, "username": body.Username, "role": role})
 }
 
 // adminUsersHandler returns a listing of all users with key metadata, used
 // by the admin portal to browse, ban, and promote users. Available to any
-// staff role (helper+).
+// staff role (helper+). Supports limit, offset pagination and search.
 func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if u, _ := s.modFromRequest(w, r, "helper"); u == "" {
 		return
 	}
-	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
-		FROM users ORDER BY created_at DESC LIMIT 1000`)
+
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	search := r.URL.Query().Get("search")
+
+	limit := 100
+	offset := 0
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		if l > 1000 {
+			l = 1000
+		}
+		limit = l
+	}
+	if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+		offset = o
+	}
+
+	var total int
+	var rows *sql.Rows
+	var err error
+
+	if search != "" {
+		likePattern := "%" + search + "%"
+		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE username LIKE ? OR email LIKE ? OR last_ip LIKE ? OR signup_ip LIKE ?`, likePattern, likePattern, likePattern, likePattern).Scan(&total); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		rows, err = s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
+			FROM users WHERE username LIKE ? OR email LIKE ? OR last_ip LIKE ? OR signup_ip LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?`, likePattern, likePattern, likePattern, likePattern, limit, offset)
+	} else {
+		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		rows, err = s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
+			FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+	}
+
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
+
 	type adminUser struct {
 		Username    string `json:"username"`
 		Email       string `json:"email"`
@@ -4655,13 +5212,15 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 		LastLoginAt string `json:"last_login_at"`
 		Online      bool   `json:"online"`
 	}
+
 	s.Mu.RLock()
 	onlineMap := make(map[string]bool, len(s.Clients))
 	for u := range s.Clients {
 		onlineMap[u] = true
 	}
 	s.Mu.RUnlock()
-	out := []adminUser{}
+
+	users := []adminUser{}
 	for rows.Next() {
 		var u adminUser
 		var v, b, a int
@@ -4672,10 +5231,16 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 		u.Banned = b == 1
 		u.IsAdmin = a == 1
 		u.Online = onlineMap[u.Username]
-		out = append(out, u)
+		users = append(users, u)
 	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(map[string]any{
+		"users":  users,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 
@@ -5249,7 +5814,14 @@ func (s *NexusServer) vapidKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *NexusServer) exportHandler(w http.ResponseWriter, r *http.Request) {
-	tok := r.URL.Query().Get("token")
+	// H5: prefer Authorization header; fall back to query param for backwards compat.
+	tok := ""
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	}
+	if tok == "" {
+		tok = r.URL.Query().Get("token")
+	}
 	if tok == "" {
 		http.Error(w, "token required", http.StatusUnauthorized)
 		return
@@ -5377,13 +5949,15 @@ func main() {
 		Clients:     make(map[string]*Client),
 		VoiceRooms:  make(map[string]map[string]struct{}),
 		Streams:     make(map[string]*liveStream),
-		RemoteCodes: make(map[string]string),
+		RemoteCodes: make(map[string]remoteCodeEntry),
 		wsConnCount: make(map[string]int),
 		blockedIPs:  make(map[string]bool),
 	}
 	server.initDB()
 	server.initFCM()
+	server.loadBlockedIPs() // M3: restore IP blocks from DB
 	server.ensureGlobalSpace()
+	go server.sweepRemoteCodes() // L2: expire stale remote codes
 	if bot := os.Getenv("KAI_USERNAME"); bot != "" {
 		server.autoJoinPublicSpaces(bot)
 	}
@@ -5417,6 +5991,16 @@ func main() {
 			// that strip defaults. Top-level HTTPS already allows these, but
 			// being explicit avoids edge-case "permission denied" silently.
 			w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), autoplay=(self)")
+			// M1: Content-Security-Policy for the React SPA.
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; "+
+					"connect-src 'self' wss://phazechat.world wss://*.phazechat.world https://api.github.com; "+
+					"img-src 'self' data: blob:; "+
+					"media-src 'self' blob:; "+
+					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+					"font-src 'self' https://fonts.gstatic.com; "+
+					"script-src 'self'; "+
+					"frame-ancestors 'none'")
 			rel := strings.TrimPrefix(r.URL.Path, "/web/")
 			candidate := filepath.Join(webDir, filepath.FromSlash(rel))
 			if rel != "" {
@@ -5573,6 +6157,8 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc(adminPath, adminGate)
 	http.HandleFunc(adminPath+"/", adminGate)
 	http.HandleFunc("/api/v1/admin/login", adminIPGate(adminLoginLimit(server.adminLoginHandler)))
+	http.HandleFunc("/api/v1/admin/me", adminIPGate(rateLimit(server.adminMeHandler)))
+	http.HandleFunc("/api/v1/admin/logout", adminIPGate(rateLimit(server.adminLogoutHandler)))
 	http.HandleFunc("/api/v1/admin/users", adminIPGate(rateLimit(server.adminUsersHandler)))
 	http.HandleFunc("/api/v1/admin/broadcast", adminIPGate(rateLimit(server.adminBroadcastHandler)))
 	http.HandleFunc("/api/v1/admin/ip-block", adminIPGate(rateLimit(server.adminIPBlockHandler)))
@@ -5581,11 +6167,18 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/stats", adminIPGate(rateLimit(server.adminStatsHandler)))
 	http.HandleFunc("/api/v1/admin/logs", adminIPGate(rateLimit(server.adminLogsHandler)))
 	http.HandleFunc("/api/v1/admin/geo", adminIPGate(rateLimit(server.adminGeoHandler)))
-	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
-	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
-	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve
-	http.HandleFunc("/api/v1/admin/users/", rateLimit(server.adminBanHandler))             // /{username}/(ban|unban|role)
-	http.HandleFunc("/api/v1/admin/banned", rateLimit(server.adminBannedUsersHandler))
+	// C1: All admin endpoints must go through adminIPGate to enforce PHAZE_ADMIN_IPS.
+	// These 5 were previously missing the IP gate, allowing access from any IP with a valid token.
+	http.HandleFunc("/api/v1/admin/pending-verifications", adminIPGate(rateLimit(server.adminPendingVerificationsHandler)))
+	http.HandleFunc("/api/v1/admin/reports", adminIPGate(rateLimit(server.adminReportsHandler)))
+	http.HandleFunc("/api/v1/admin/reports/", adminIPGate(rateLimit(server.adminResolveReportHandler))) // /{id}/resolve
+	http.HandleFunc("/api/v1/admin/users/", adminIPGate(rateLimit(server.adminBanHandler)))             // /{username}/(ban|unban|role)
+	http.HandleFunc("/api/v1/admin/banned", adminIPGate(rateLimit(server.adminBannedUsersHandler)))
+	http.HandleFunc("/api/v1/admin/supporters", adminIPGate(rateLimit(server.adminSupportersHandler)))
+	http.HandleFunc("/api/v1/admin/supporters/", adminIPGate(rateLimit(server.adminSupporterActionHandler))) // /{id}/(grant|dismiss)
+
+	// Public: opt-in supporter form behind the "Support Phaze" button.
+	http.HandleFunc("/api/v1/support/request", rateLimit(server.supportRequestHandler))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
@@ -5668,16 +6261,18 @@ func (s *NexusServer) profileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var displayName, mood string
-	err := s.DB.QueryRow("SELECT display_name, mood FROM users WHERE username = ?", username).Scan(&displayName, &mood)
+	var supporter int
+	err := s.DB.QueryRow("SELECT display_name, mood, COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&displayName, &mood, &supporter)
 	if err != nil {
 		http.Error(w, "User not found", 404)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"username":     username,
 		"display_name": displayName,
 		"mood":         mood,
+		"supporter":    supporter == 1,
 	})
 }
 
@@ -5770,6 +6365,30 @@ func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "file type not allowed", http.StatusUnsupportedMediaType)
 		return
+	}
+
+	// Magic-byte validation for image types: reject extension-spoofed executables.
+	// Read the first 512 bytes for MIME sniffing without consuming the reader.
+	headBuf := make([]byte, 512)
+	n, _ := io.ReadFull(file, headBuf)
+	file.Seek(0, io.SeekStart) // rewind for the actual copy
+	detected := http.DetectContentType(headBuf[:n])
+	switch {
+	case strings.HasPrefix(ext, ".png") || strings.HasPrefix(ext, ".jpg") ||
+		strings.HasPrefix(ext, ".jpeg") || strings.HasPrefix(ext, ".gif") ||
+		strings.HasPrefix(ext, ".webp") || strings.HasPrefix(ext, ".bmp"):
+		// Image extensions must have image/* MIME
+		if !strings.HasPrefix(detected, "image/") {
+			log.Printf("[upload] rejected %s: ext=%s detected=%s uploader=%s", hdr.Filename, ext, detected, uploader)
+			http.Error(w, "file content does not match extension", http.StatusUnsupportedMediaType)
+			return
+		}
+	case ext == ".pdf":
+		if detected != "application/pdf" {
+			log.Printf("[upload] rejected %s: ext=%s detected=%s uploader=%s", hdr.Filename, ext, detected, uploader)
+			http.Error(w, "file content does not match extension", http.StatusUnsupportedMediaType)
+			return
+		}
 	}
 
 	if err := os.MkdirAll(uploadDir(), 0o755); err != nil {

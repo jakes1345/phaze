@@ -145,24 +145,53 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: native_client/go.sum
 
       - name: Install brew deps + fyne CLI
         run: |
           brew install libvpx pkg-config
-          go install fyne.io/fyne/v2/cmd/fyne@latest
+          go install fyne.io/tools/cmd/fyne@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Package macOS app (unsigned)
+      - name: Build macOS binaries (amd64 + arm64)
+        working-directory: native_client
+        run: |
+          mkdir -p ../bin/macos
+          # amd64 (Intel Macs)
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 \
+            go build -ldflags "-s -w" -o ../bin/macos/phaze-darwin-amd64 .
+          # arm64 (Apple Silicon M1/M2/M3)
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 \
+            go build -ldflags "-s -w" -o ../bin/macos/phaze-darwin-arm64 .
+          # Create a universal binary with lipo
+          lipo -create -output ../bin/macos/Phaze \
+            ../bin/macos/phaze-darwin-amd64 \
+            ../bin/macos/phaze-darwin-arm64
+          chmod +x ../bin/macos/Phaze
+          ls -lh ../bin/macos/
+
+      - name: Try fyne .app bundle (best-effort)
         working-directory: native_client
         continue-on-error: true
         run: |
-          fyne package -os darwin --src . --id world.phazechat.app --name Phaze --icon assets/Icon.png
-          mkdir -p ../bin/macos
-          [ -d Phaze.app ] && tar -czf ../bin/macos/Phaze-macos.tar.gz Phaze.app || echo "no Phaze.app produced"
+          fyne package -os darwin --src . --id world.phazechat.app \
+            --name Phaze --icon assets/Icon.png
+          if [ -d Phaze.app ]; then
+            tar -czf ../bin/macos/Phaze-macos.tar.gz Phaze.app
+            echo "✅ .app bundle created"
+          fi
+
+      - name: Create plain tar.gz if no .app bundle
+        run: |
+          if [ ! -f bin/macos/Phaze-macos.tar.gz ]; then
+            tar -czf bin/macos/Phaze-macos.tar.gz -C bin/macos Phaze
+            echo "📦 Created plain binary archive (no .app bundle)"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: phaze-macos
           path: bin/macos/
           retention-days: 21
-          if-no-files-found: warn
+          if-no-files-found: error

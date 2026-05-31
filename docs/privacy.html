@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Phaze</title>
+  <meta name="description" content="Phaze privacy policy. Learn what data Phaze collects, how it is used, and your rights." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #2dd4bf;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --link: #58a6ff;
+      --max: 760px;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      padding: 2rem 1rem 4rem;
+    }
+    header {
+      max-width: var(--max);
+      margin: 0 auto 3rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header .logo {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    header .meta {
+      margin-left: auto;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    main {
+      max-width: var(--max);
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 0.4rem;
+    }
+    .effective {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 2.5rem;
+    }
+    h2 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 2rem 0 0.6rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
+    }
+    p { margin-bottom: 0.9rem; }
+    ul {
+      margin: 0 0 1rem 1.4rem;
+    }
+    ul li { margin-bottom: 0.35rem; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .callout {
+      background: var(--surface);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 1rem 1.2rem;
+      margin: 1.2rem 0;
+      font-size: 0.95rem;
+    }
+    footer {
+      max-width: var(--max);
+      margin: 3rem auto 0;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">Phaze</span>
+  <span class="meta">Privacy Policy</span>
+</header>
+
+<main>
+  <h1>Privacy Policy</h1>
+  <p class="effective">Effective date: May 28, 2026 &nbsp;·&nbsp; Last updated: May 28, 2026</p>
+
+  <div class="callout">
+    <strong>Short version:</strong> Phaze is built around end-to-end encryption. Your messages are
+    encrypted on your device before they ever reach our servers. We cannot read your private
+    conversations. We collect only what is strictly necessary to operate the service.
+  </div>
+
+  <h2>1. Who we are</h2>
+  <p>
+    Phaze ("we", "us", "our") is an independent encrypted messaging application operated by the
+    Phaze project. The service is accessible at
+    <a href="https://phazechat.world">phazechat.world</a> and through the Phaze mobile and
+    desktop clients.
+  </p>
+  <p>
+    For privacy questions contact: <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a>
+  </p>
+
+  <h2>2. What data we collect</h2>
+
+  <p><strong>Account information</strong></p>
+  <ul>
+    <li><strong>Username</strong> — required to identify you on the network.</li>
+    <li><strong>Email address</strong> — used for account verification and password recovery only.
+        Not shared with third parties and not used for marketing.</li>
+    <li><strong>Hashed password</strong> — stored as a salted bcrypt hash. We never store or
+        transmit your plaintext password.</li>
+  </ul>
+
+  <p><strong>Messages and calls</strong></p>
+  <ul>
+    <li>Direct messages are <strong>end-to-end encrypted</strong> using NaCl (libsodium) box
+        encryption. The server relays ciphertext only — we cannot decrypt your messages.</li>
+    <li>Voice and video calls are negotiated peer-to-peer via WebRTC. Call audio and video are
+        <strong>never stored or recorded</strong> by our servers.</li>
+    <li>Message metadata (sender, recipient, timestamp) is stored to support offline delivery
+        and is purged after delivery or after 30 days, whichever comes first.</li>
+  </ul>
+
+  <p><strong>Files and media</strong></p>
+  <ul>
+    <li>Files you send as attachments are uploaded to our server temporarily to support delivery
+        to offline recipients. Files are deleted automatically after 7 days.</li>
+    <li>Stories (photos/videos) you post are stored until you delete them or after 24 hours.</li>
+  </ul>
+
+  <p><strong>Device and connection information</strong></p>
+  <ul>
+    <li>Your IP address and device model string ("android/Model") are logged for fraud prevention
+        and are retained for a maximum of 30 days.</li>
+    <li>Firebase Cloud Messaging (FCM) token — used to deliver push notifications to your Android
+        device. This token is provided by Google and subject to Google's privacy policy.</li>
+    <li>Session tokens — used to keep you logged in. Stored only on your device and our server.
+        You can invalidate all sessions by signing out.</li>
+  </ul>
+
+  <p><strong>Cryptographic public keys</strong></p>
+  <ul>
+    <li>Your NaCl public key is shared with contacts so they can encrypt messages to you. This
+        is intentional and required for E2EE to work.</li>
+    <li>Key backups (optional): if you use the key backup feature, your private key is encrypted
+        with a PIN on your device before upload. We store the ciphertext only and cannot access
+        your private key.</li>
+  </ul>
+
+  <h2>3. What we do NOT collect</h2>
+  <ul>
+    <li>We do not read, scan, or analyse the content of your encrypted messages.</li>
+    <li>We do not sell, rent, or share your personal data with advertisers or data brokers.</li>
+    <li>We do not use your data to train AI or machine-learning models.</li>
+    <li>We do not collect location data.</li>
+    <li>We do not use third-party analytics SDKs (no Google Analytics, Mixpanel, etc.).</li>
+  </ul>
+
+  <h2>4. Third-party services</h2>
+  <p>Phaze uses a limited set of third-party services:</p>
+  <ul>
+    <li><strong>Firebase Cloud Messaging (Google)</strong> — delivers push notifications.
+        Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+    <li><strong>TURN/STUN relay servers</strong> — used to establish peer-to-peer calls when
+        direct connections are blocked by NAT. TURN servers see encrypted RTP packets; they
+        cannot decrypt call content.</li>
+  </ul>
+
+  <h2>5. Data retention</h2>
+  <ul>
+    <li>Account data: retained for the lifetime of your account, or 90 days after deletion
+        request.</li>
+    <li>Message metadata: 30 days after delivery.</li>
+    <li>File attachments: 7 days after upload.</li>
+    <li>Stories: 24 hours or until manually deleted.</li>
+    <li>Connection logs (IP, device): 30 days.</li>
+  </ul>
+
+  <h2>6. Your rights</h2>
+  <p>Depending on your jurisdiction you may have rights to:</p>
+  <ul>
+    <li><strong>Access</strong> — request a copy of the data we hold about you.</li>
+    <li><strong>Deletion</strong> — request that your account and associated data be deleted.</li>
+    <li><strong>Correction</strong> — update your username or email.</li>
+    <li><strong>Portability</strong> — receive your data in a machine-readable format.</li>
+    <li><strong>Withdraw consent</strong> — delete your account at any time from Settings → Sign Out → Delete Account.</li>
+  </ul>
+  <p>
+    To exercise any of these rights, email
+    <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a>.
+    We will respond within 30 days.
+  </p>
+
+  <h2>7. Security</h2>
+  <p>
+    All data in transit is encrypted with TLS 1.2 or higher. Private messages use an additional
+    layer of NaCl end-to-end encryption. Passwords are stored as bcrypt hashes with a cost factor
+    of 12. The server database is stored on encrypted storage.
+  </p>
+
+  <h2>8. Children</h2>
+  <p>
+    Phaze is not directed at children under the age of 13 (or 16 in the European Union). We do
+    not knowingly collect data from children. If you believe a child has created an account,
+    contact us at <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a> and we
+    will delete the account.
+  </p>
+
+  <h2>9. Changes to this policy</h2>
+  <p>
+    We may update this policy from time to time. Material changes will be announced in the app.
+    The "Last updated" date at the top of this page reflects the most recent revision. Continued
+    use of Phaze after changes constitutes acceptance of the updated policy.
+  </p>
+
+  <h2>10. Contact</h2>
+  <p>
+    Phaze Project<br />
+    Email: <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a><br />
+    Website: <a href="https://phazechat.world">https://phazechat.world</a>
+  </p>
+</main>
+
+<footer>
+  <p>© 2026 Phaze Project. Phaze is not affiliated with Microsoft or Skype.</p>
+  <p style="margin-top:0.3rem">
+    <a href="https://phazechat.world">Home</a> &nbsp;·&nbsp;
+    <a href="https://github.com/jakes1345/skype7-reborn">Source Code</a>
+  </p>
+</footer>
+
+</body>
+</html>

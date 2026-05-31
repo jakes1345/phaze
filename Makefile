@@ -1,6 +1,6 @@
 # Phaze™ build system
 
-.PHONY: all desktop android ios iossim nexus clean help test vet verify web-build build-all phaze-assets
+.PHONY: all desktop android android-aab ios iossim nexus clean help test vet verify web-build build-all phaze-assets
 
 APP_NAME=Phaze
 PACKAGE_ID=world.phazechat.app
@@ -53,6 +53,19 @@ android: ## Build Android arm64 APK via fyne package → bin/Phaze-android-arm64
 	apk=$$(ls *.apk 2>/dev/null | head -1); \
 	if [ -z "$$apk" ]; then echo "fyne package did not produce an .apk in native_client/"; exit 1; fi; \
 	mv "$$apk" ../bin/Phaze-android-arm64.apk && echo "[Phaze] APK → bin/Phaze-android-arm64.apk"
+
+android-aab: ## Build signed release AAB for Google Play Store → bin/Phaze-release.aab
+	@echo "[Phaze] Building Android App Bundle (AAB) for Play Store..."
+	@if [ ! -f android/local.properties ]; then \
+		echo "ERROR: android/local.properties missing."; \
+		echo "Copy android/local.properties.example → android/local.properties and fill in signing keys."; \
+		exit 1; fi
+	@mkdir -p bin
+	cd android && ./gradlew bundleRelease --no-daemon
+	cp android/app/build/outputs/bundle/release/app-release.aab bin/Phaze-release.aab
+	@echo "[Phaze] AAB → bin/Phaze-release.aab  (upload this to Google Play Console)"
+	@echo "[Phaze] Tip: verify locally with:"
+	@echo "  bundletool build-apks --bundle=bin/Phaze-release.aab --output=/tmp/phaze.apks --mode=universal"
 
 ios: ## iOS / simulator build on macOS only (fyne package)
 	@echo "[Phaze] iOS packaging (requires macOS + Xcode)..."

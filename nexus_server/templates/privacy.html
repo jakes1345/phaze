@@ -36,6 +36,9 @@
         .legal-body ul { padding-left: 24px; margin-bottom: 18px; }
         .legal-body code { background: var(--bg-light); padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
         .callout { background: var(--bg-light); border-left: 4px solid var(--brand); padding: 16px 20px; border-radius: 4px; margin: 20px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 0.9rem; }
+        th { background: var(--bg-light); text-align: left; padding: 10px 12px; border-bottom: 2px solid #e8e8e8; font-weight: 600; }
+        td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
 
         .footer { background: #1a1a1a; color: #999; padding: 30px 0; text-align: center; font-size: 0.8rem; }
         .footer a { color: #bbb; }
@@ -51,57 +54,93 @@
 
     <section class="legal-hero"><div class="container">
         <h1><strong>Privacy</strong> Policy</h1>
-        <div class="updated">Last updated: 2026-04-19</div>
+        <div class="updated">Effective: May 28, 2026 &nbsp;·&nbsp; Last updated: May 28, 2026</div>
     </div></section>
 
     <section class="legal-body"><div class="container">
         <div class="callout">
-            <strong>Short version:</strong> Your messages and calls are end-to-end encrypted. We can't read them. We run a relay, not a surveillance network.
+            <strong>Short version:</strong> Your messages and calls are end-to-end encrypted. We can't read them. We run a relay, not a surveillance network. We don't sell your data, serve ads, or use third-party analytics.
         </div>
 
-        <h2>1. What we collect</h2>
+        <h2>1. Who we are</h2>
+        <p>Phaze ("we", "us", "our") is an independent encrypted messaging application available at <a href="https://phazechat.world">phazechat.world</a> and on Android via Google Play. For privacy questions: <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a>.</p>
+
+        <h2>2. What we collect</h2>
         <p>When you register an account, we store:</p>
         <ul>
-            <li>Your <strong>username</strong>, a <strong>bcrypt hash</strong> of your password, and your <strong>email address</strong> (used for verification and password reset).</li>
-            <li>Optionally, your <strong>display name</strong>, <strong>mood</strong> text, and <strong>phone number</strong> if you link one.</li>
+            <li>Your <strong>username</strong>, a <strong>bcrypt hash</strong> of your password, and your <strong>email address</strong> (used for verification and password reset only — never for marketing).</li>
+            <li>Optionally, your <strong>display name</strong> and <strong>mood</strong> text.</li>
             <li>Your <strong>friends list</strong> and <strong>block list</strong> so we can route messages.</li>
-            <li>Connection metadata (IP address) transiently, for rate-limiting. We do not persist IP logs.</li>
+            <li>Your NaCl <strong>public key</strong> — shared with contacts so they can encrypt messages to you.</li>
+            <li>A <strong>Firebase Cloud Messaging (FCM) token</strong> — used to deliver push notifications to your Android device. See Section 5 for details.</li>
+            <li>Connection metadata (IP address, device model string) transiently for rate-limiting and fraud prevention — retained for a maximum of 30 days.</li>
         </ul>
 
-        <h2>2. What we do not collect</h2>
+        <h2>3. Messages, calls, and files</h2>
         <ul>
-            <li>The contents of your messages, calls, or file transfers — they are end-to-end encrypted with <code>NaCl SecretBox</code> (XSalsa20 + Poly1305) before they leave your device. The Phaze Nexus only sees encrypted blobs.</li>
-            <li>Your contacts' phone numbers, address-book, or device identifiers.</li>
-            <li>Browsing history, telemetry, or analytics. There are no third-party trackers in Phaze.</li>
+            <li><strong>Direct messages</strong> are end-to-end encrypted with <code>NaCl box</code> (Curve25519 + XSalsa20 + Poly1305) before they leave your device. The Phaze Nexus relay only sees ciphertext — we cannot decrypt your messages.</li>
+            <li><strong>Voice and video calls</strong> are negotiated peer-to-peer via WebRTC. Call audio and video are never stored or recorded by our servers.</li>
+            <li><strong>File attachments</strong> are uploaded temporarily to support offline delivery and deleted automatically after <strong>7 days</strong>.</li>
+            <li><strong>Stories</strong> (photos/videos) are stored until you delete them or after <strong>24 hours</strong>.</li>
+            <li><strong>Key backups</strong> (optional): if you use the key backup feature, your private key is encrypted with a PIN on-device before upload. We store the ciphertext only and cannot access your private key.</li>
         </ul>
 
-        <h2>3. Third parties</h2>
+        <h2>4. What we do NOT collect</h2>
         <ul>
-            <li><strong>Email delivery:</strong> verification and password-reset emails are delivered via an SMTP provider. The provider sees your email address and the subject line.</li>
-            <li><strong>SMS delivery</strong> (if you opt in to phone verification): handled via Twilio. Twilio sees your phone number and the OTP.</li>
-            <li><strong>Hosting:</strong> <code>phazechat.world</code> runs on a commercial hosting provider. Your IP is visible to the provider for as long as your connection is open.</li>
+            <li>The plaintext content of your messages or calls.</li>
+            <li>Your contacts' phone numbers or address book.</li>
+            <li>Location data.</li>
+            <li>Advertising identifiers or browsing history.</li>
+            <li>Any data for advertising, profiling, or sale to third parties.</li>
+            <li>Any data to train AI or machine-learning models.</li>
         </ul>
 
-        <h2>4. Encryption</h2>
-        <p>Every pairwise conversation is encrypted with keys generated on-device using <code>x/crypto/nacl/box</code> (Curve25519). Keys are pinned on first contact (Trust On First Use). We do not hold, escrow, or have any access to your private keys.</p>
-
-        <h2>5. Your rights</h2>
+        <h2>5. Third-party services</h2>
         <ul>
-            <li><strong>Delete your account:</strong> email <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a> and we will purge your row from our database.</li>
-            <li><strong>Export:</strong> your local SQLite database is yours. Back it up anywhere.</li>
-            <li><strong>Change email/password:</strong> from the app's Settings panel.</li>
+            <li><strong>Firebase Cloud Messaging (Google):</strong> used to deliver push notifications to Android devices. Google receives your FCM device token. Subject to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+            <li><strong>Email delivery:</strong> verification and password-reset emails are delivered via an SMTP provider, which sees your email address and subject line.</li>
+            <li><strong>SMS (optional):</strong> if you opt into phone verification, handled via Twilio. Twilio sees your phone number and the OTP.</li>
+            <li><strong>TURN/STUN relay:</strong> used to establish peer-to-peer calls when direct connections are blocked by NAT. TURN servers relay encrypted RTP packets and cannot decrypt call content.</li>
+            <li><strong>Hosting:</strong> <code>phazechat.world</code> runs on a commercial hosting provider. Your IP is visible to the provider for the duration of your connection.</li>
         </ul>
 
-        <h2>6. Law enforcement requests</h2>
-        <p>We publish our practice transparently: we will respond to lawful process in the jurisdiction of our hosting provider. Because messages are E2EE, we cannot hand over content we do not have. We can hand over the metadata in Section 1.</p>
+        <h2>6. Data retention</h2>
+        <table>
+            <tr><th>Data type</th><th>Retention period</th></tr>
+            <tr><td>Account data (username, email, hashed password)</td><td>Lifetime of account, or 90 days after deletion request</td></tr>
+            <tr><td>Message metadata (sender, recipient, timestamp)</td><td>30 days after delivery</td></tr>
+            <tr><td>File attachments</td><td>7 days after upload</td></tr>
+            <tr><td>Stories</td><td>24 hours or until manually deleted</td></tr>
+            <tr><td>Connection logs (IP, device model)</td><td>30 days</td></tr>
+            <tr><td>FCM push tokens</td><td>Until you sign out or uninstall</td></tr>
+        </table>
 
-        <h2>7. Changes</h2>
-        <p>If we change this policy, we will update the "Last updated" date and note the change. Material changes will be announced to all verified email addresses at least 7 days before taking effect.</p>
+        <h2>7. Encryption</h2>
+        <p>All data in transit uses TLS 1.2 or higher. Private messages use an additional layer of NaCl end-to-end encryption keyed to Curve25519 key pairs generated on-device. We do not hold, escrow, or have any access to your private keys. Passwords are stored as bcrypt hashes (cost factor 12).</p>
 
-        <h2>8. Contact</h2>
-        <p>Questions or complaints: <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a>.</p>
+        <h2>8. Your rights</h2>
+        <ul>
+            <li><strong>Access:</strong> request a copy of the data we hold about you.</li>
+            <li><strong>Deletion:</strong> email <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a> to have your account and associated data purged.</li>
+            <li><strong>Correction:</strong> update your username or email from the app's Settings.</li>
+            <li><strong>Portability:</strong> your local message history is stored on your device and is yours.</li>
+        </ul>
+        <p>We will respond to rights requests within 30 days.</p>
+
+        <h2>9. Children</h2>
+        <p>Phaze is not directed at children under the age of 13 (or 16 in the EU). We do not knowingly collect data from children. If you believe a child has created an account, contact <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a> and we will delete it.</p>
+
+        <h2>10. Law enforcement requests</h2>
+        <p>We respond to lawful process in the jurisdiction of our hosting provider. Because messages are E2EE, we cannot hand over content we do not have. We can produce the account metadata described in Section 2.</p>
+
+        <h2>11. Changes to this policy</h2>
+        <p>If we make material changes, we will update the "Last updated" date above and announce the change in the app. Continued use of Phaze after changes constitutes acceptance of the updated policy.</p>
+
+        <h2>12. Contact</h2>
+        <p>Questions or complaints: <a href="mailto:privacy@phazechat.world">privacy@phazechat.world</a><br>
+        Website: <a href="https://phazechat.world">https://phazechat.world</a></p>
     </div></section>
 
-    <footer class="footer"><div class="container">© 2024–2026 Phaze · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · Not affiliated with Microsoft.</div></footer>
+    <footer class="footer"><div class="container">© 2024–2026 Phaze · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · Not affiliated with Microsoft or Skype.</div></footer>
 </body>
 </html>

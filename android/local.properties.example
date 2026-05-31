@@ -1,0 +1,12 @@
+# Copy this file to local.properties (which is gitignored) and fill in your values.
+# Do NOT commit local.properties — it contains secrets.
+
+# Android SDK path (set by Android Studio on first run)
+sdk.dir=/home/YOUR_USER/Android/Sdk
+
+# ─── Release signing (required for `make android-aab`) ───────────────────────
+# Path is relative to the android/app/ directory.
+KEYSTORE_PATH=app/phaze-release.keystore
+KEYSTORE_PASS=YOUR_KEYSTORE_PASSWORD
+KEY_ALIAS=phaze
+KEY_PASS=YOUR_KEY_PASSWORD

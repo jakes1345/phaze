@@ -1,0 +1,88 @@
+=====================================================
+PLAY CONSOLE — COPY-PASTE CHEAT SHEET
+=====================================================
+
+STEP 1: DISCARD your current release draft (the one
+asking for foreground service video). Hit the trash/
+discard button on that draft.
+
+STEP 2: Create a NEW closed testing release.
+
+STEP 3: Upload bin/Phaze-release.aab (versionCode 7)
+
+STEP 4: Fill in these fields:
+
+-----------------------------------------------------
+RELEASE NAME:
+-----------------------------------------------------
+1.1.0 (7)
+
+-----------------------------------------------------
+RELEASE NOTES (paste inside the <en-US> tags):
+-----------------------------------------------------
+First beta release
+
+• End-to-end encrypted messaging (NaCl/libsodium)
+• Voice and video calls over WebRTC
+• Spaces — group channels for communities
+• Stories, file sharing, voice messages
+• QR code device linking and encrypted key backup
+• Push notifications via Firebase
+
+-----------------------------------------------------
+IF IT ASKS ABOUT READ_MEDIA_IMAGES:
+-----------------------------------------------------
+Users select images from their gallery to send as attachments in encrypted chats and to post Stories. Access is only triggered by explicit user action via the attachment button.
+
+-----------------------------------------------------
+IF IT ASKS ABOUT READ_MEDIA_VIDEO:
+-----------------------------------------------------
+Users select videos from their gallery to send as attachments in encrypted chats and to post Stories. Access is only triggered by explicit user action via the attachment button.
+
+-----------------------------------------------------
+IF IT ASKS ABOUT FOREGROUND_SERVICE:
+-----------------------------------------------------
+THIS SHOULD NOT APPEAR WITH VERSIONCODE 7.
+If it does, you uploaded the wrong AAB.
+The correct file is: bin/Phaze-release.aab
+It should be ~6-7 MB and dated today.
+
+=====================================================
+STORE LISTING (separate page)
+=====================================================
+
+-----------------------------------------------------
+SHORT DESCRIPTION (80 char max):
+-----------------------------------------------------
+Encrypted, private messaging and voice calls — your keys, your conversations.
+
+-----------------------------------------------------
+FULL DESCRIPTION:
+-----------------------------------------------------
+Phaze is an end-to-end encrypted messenger built for privacy-first communication. Your messages are encrypted on your device using NaCl (libsodium) box encryption before they ever leave your phone — even we can't read them.
+
+🔐 TRUE END-TO-END ENCRYPTION
+• NaCl public-key encryption for all direct messages
+• Cryptographic key fingerprints you can verify with contacts
+• Optional encrypted key backup protected by a PIN only you know
+• No ads. No tracking. No data mining.
+
+💬 EVERYTHING YOU NEED
+• 1-on-1 encrypted chat with file and voice message support
+• Voice and video calls over WebRTC
+• Spaces — group channels for teams, communities, and friends
+• Stories — share photos and short videos with your contacts
+• QR code device linking — sign in on a new device without a password
+
+📱 BUILT FOR ANDROID
+• Clean, modern Material You design
+• Push notifications via Firebase so you never miss a message
+• Works great on Android 8.0 and above
+• Also available on Windows, macOS, and Linux
+
+🌐 OPEN & INDEPENDENT
+• Open-source on GitHub
+• Self-hostable — run your own Phaze relay server
+• No vendor lock-in; your data stays under your control
+
+Phaze is currently in beta. Core features are fully functional. Feedback welcome via GitHub Issues.

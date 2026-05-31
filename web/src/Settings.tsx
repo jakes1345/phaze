@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import QRCode from 'qrcode'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
@@ -232,6 +233,33 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [qrToken, setQrToken] = useState('')
   const [qrMsg, setQrMsg] = useState('')
 
+  // Local QR Code states
+  const [totpQrCodeDataUrl, setTotpQrCodeDataUrl] = useState('')
+  const [qrLoginQrCodeDataUrl, setQrLoginQrCodeDataUrl] = useState('')
+  const [approveCodeInput, setApproveCodeInput] = useState('')
+  const [approveBusy, setApproveBusy] = useState(false)
+  const [approveMsg, setApproveMsg] = useState('')
+
+  useEffect(() => {
+    if (totpUri) {
+      QRCode.toDataURL(totpUri, { margin: 1, width: 200 })
+        .then(url => setTotpQrCodeDataUrl(url))
+        .catch(err => console.error(err))
+    } else {
+      setTotpQrCodeDataUrl('')
+    }
+  }, [totpUri])
+
+  useEffect(() => {
+    if (qrToken) {
+      QRCode.toDataURL(`phaze://login?token=${qrToken}`, { margin: 1, width: 200 })
+        .then(url => setQrLoginQrCodeDataUrl(url))
+        .catch(err => console.error(err))
+    } else {
+      setQrLoginQrCodeDataUrl('')
+    }
+  }, [qrToken])
+
   const handleSetPin = async () => {
     setBackupMsg('')
     if (backupPin1.length < 4) { setBackupMsg('PIN must be at least 4 characters'); return }
@@ -277,6 +305,19 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
         }, 2500)
         setLinkPollBusy(true)
         ;(window as unknown as { __phazeLinkPoll?: ReturnType<typeof setInterval> }).__phazeLinkPoll = poll
+      }
+      if (m.type === 'link_result' && m.status !== 'ok' && m.status !== 'approved') {
+        // If it's a link_result response for link_approve, handle it:
+        setApproveBusy(false)
+        if (m.error) {
+          setApproveMsg(m.error)
+        }
+      }
+      if (m.type === 'link_result' && m.status === 'approved') {
+        // This could be for link_approve response:
+        setApproveBusy(false)
+        setApproveMsg('✓ Device approved successfully.')
+        setApproveCodeInput('')
       }
       if (m.type === 'link_check' && m.status === 'approved') {
         const poll = (window as unknown as { __phazeLinkPoll?: ReturnType<typeof setInterval> }).__phazeLinkPoll
@@ -415,13 +456,17 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
                 <div className="settings-totp-uri">
                   <p className="settings-label">Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.):</p>
                   <div style={{ textAlign: 'center', margin: '16px 0' }}>
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(totpUri)}`}
-                      alt="2FA QR Code"
-                      width={200}
-                      height={200}
-                      style={{ borderRadius: 8, border: '2px solid #232328' }}
-                    />
+                    {totpQrCodeDataUrl ? (
+                      <img
+                        src={totpQrCodeDataUrl}
+                        alt="2FA QR Code"
+                        width={200}
+                        height={200}
+                        style={{ borderRadius: 8, border: '2px solid #232328', background: '#fff' }}
+                      />
+                    ) : (
+                      <div style={{ width: 200, height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', background: '#232328', borderRadius: 8 }}>Generating QR code...</div>
+                    )}
                   </div>
                   <details style={{ marginBottom: 12 }}>
                     <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: '#888' }}>Can't scan? Copy the key manually</summary>
@@ -482,11 +527,24 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
 
               <h3 className="settings-section-title">QR login code</h3>
               <p className="settings-empty">
-                Generate a one-time QR login code. Enter the token on the new device's "Sign in with link code" screen, or use a QR scanner pointing to the <code>phaze://login?token=…</code> URL.
+                Generate a one-time QR login code. Scan it with a signed-in device, enter the token on the new device's "Sign in with link code" screen, or use a QR scanner pointing to the <code>phaze://login?token=…</code> URL.
               </p>
               {qrMsg && <p className="settings-msg ok">{qrMsg}</p>}
               {qrToken ? (
                 <>
+                  <div style={{ textAlign: 'center', margin: '16px 0' }}>
+                    {qrLoginQrCodeDataUrl ? (
+                      <img
+                        src={qrLoginQrCodeDataUrl}
+                        alt="QR Login Code"
+                        width={200}
+                        height={200}
+                        style={{ borderRadius: 8, border: '2px solid #232328', background: '#fff' }}
+                      />
+                    ) : (
+                      <div style={{ width: 200, height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', background: '#232328', borderRadius: 8 }}>Generating QR code...</div>
+                    )}
+                  </div>
                   <code className="settings-totp-code-block" style={{ fontSize: '1.1rem', letterSpacing: '0.05em', textAlign: 'center', wordBreak: 'break-all' }}>{qrToken}</code>
                   <p className="settings-empty" style={{ fontSize: '0.75rem' }}>Deep link: <code>phaze://login?token={qrToken}</code></p>
                   <button className="settings-btn-secondary" onClick={() => { setQrToken(''); setQrMsg('') }}>Clear</button>
@@ -498,6 +556,38 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
                   send({ type: 'qr_login_create', sender: me })
                 }}>Show QR login code</button>
               )}
+
+              <hr className="settings-divider" />
+
+              <h3 className="settings-section-title">Approve another device</h3>
+              <p className="settings-empty">
+                Enter the Link Code or QR token displayed on the other device to authorize it to sign in.
+              </p>
+              <div className="invite-link-box">
+                <input
+                  className="settings-input"
+                  placeholder="Enter Link Code or QR Token"
+                  value={approveCodeInput}
+                  onChange={(e) => setApproveCodeInput(e.target.value)}
+                />
+                <button
+                  className="settings-btn"
+                  disabled={!approveCodeInput.trim() || approveBusy}
+                  onClick={() => {
+                    const token = approveCodeInput.trim()
+                    let tok = token
+                    if (tok.includes('token=')) {
+                      tok = tok.split('token=')[1].split('&')[0]
+                    }
+                    setApproveBusy(true)
+                    setApproveMsg('')
+                    send({ type: 'link_approve', token: tok, device_info: `web/${window.location.hostname}` })
+                  }}
+                >
+                  {approveBusy ? 'Approving...' : 'Approve Device'}
+                </button>
+              </div>
+              {approveMsg && <p className={`settings-msg ${approveMsg.startsWith('✓') ? 'ok' : 'err'}`}>{approveMsg}</p>}
             </div>
           )}
 
