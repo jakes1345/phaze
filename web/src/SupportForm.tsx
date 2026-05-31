@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 interface Props {
-  me?: string
+  me?: string | null
   bmcUrl: string
   onClose: () => void
 }
