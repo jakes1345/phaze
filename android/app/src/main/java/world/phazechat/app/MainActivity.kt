@@ -53,6 +53,17 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val channelMessages by vm.channelMessages.collectAsState()
     val callState by vm.callState.collectAsState()
     val stories by vm.stories.collectAsState()
+    val typingFrom by vm.typingFrom.collectAsState()
+    val searchResults by vm.searchResults.collectAsState()
+    val actionStatus by vm.actionStatus.collectAsState()
+
+    val toastCtx = LocalContext.current
+    LaunchedEffect(actionStatus) {
+        actionStatus?.let {
+            android.widget.Toast.makeText(toastCtx, it, android.widget.Toast.LENGTH_SHORT).show()
+            vm.clearActionStatus()
+        }
+    }
 
     var viewingStoryAuthor by remember { mutableStateOf<String?>(null) }
 
@@ -235,6 +246,13 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onCall = { vm.startCall(peer) },
                 onAttachFile = { filePicker.launch("*/*") },
                 onVoiceRecord = { startVoiceRecord() },
+                typing = typingFrom == peer,
+                onTyping = { vm.sendTyping() },
+                onBlock = { vm.blockUser(peer) },
+                onReport = { reason, detail -> vm.reportUser(peer, reason, detail) },
+                onEdit = { id, text -> vm.editMessage(id, text) },
+                onDelete = { id -> vm.deleteMessage(id) },
+                onReact = { id, emoji -> vm.reactMessage(id, emoji) },
             )
         }
         return
@@ -270,6 +288,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onAcceptFriend = { vm.acceptFriend(it) },
                     onViewStory = { viewingStoryAuthor = it },
                     onAddStory = { storyPicker.launch("image/*") },
+                    searchResults = searchResults,
+                    onSearch = { vm.searchUsers(it) },
+                    onClearSearch = { vm.clearSearch() },
                 )
                 1 -> SpacesScreen(
                     spaces = spaces, activeSpace = activeSpace, channels = channels,
@@ -280,6 +301,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onCreateSpace = { name, vis -> vm.createSpace(name, vis) },
                     onJoinSpace = { vm.joinSpace(it) },
                     onBack = { vm.selectSpace("") },
+                    onCreateChannel = { sid, name, kind -> vm.createChannel(sid, name, kind) },
                 )
                 2 -> {
                     val linkCode by vm.activeLinkCode.collectAsState()

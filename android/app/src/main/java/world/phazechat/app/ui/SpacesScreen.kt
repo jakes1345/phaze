@@ -39,11 +39,15 @@ fun SpacesScreen(
     onCreateSpace: (String, String) -> Unit,
     onJoinSpace: (String) -> Unit,
     onBack: () -> Unit,
+    onCreateChannel: (String, String, String) -> Unit = { _, _, _ -> },
 ) {
     var createOpen by remember { mutableStateOf(false) }
     var joinOpen by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var joinCode by remember { mutableStateOf("") }
+    var createChannelOpen by remember { mutableStateOf(false) }
+    var newChannelName by remember { mutableStateOf("") }
+    var newChannelVoice by remember { mutableStateOf(false) }
 
     val activeSpaceInfo = spaces.find { it.id == activeSpace }
     val activeChannelInfo = channels[activeSpace]?.find { it.id == activeChannel }
@@ -68,6 +72,11 @@ fun SpacesScreen(
                 TopAppBar(
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                     title = { Text(activeSpaceInfo.name, fontWeight = FontWeight.Bold) },
+                    actions = {
+                        if (activeSpaceInfo.role == "owner" || activeSpaceInfo.role == "admin") {
+                            IconButton(onClick = { createChannelOpen = true }) { Icon(Icons.Default.Add, "Add channel") }
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                 )
             },
@@ -166,6 +175,41 @@ fun SpacesScreen(
                 Button(onClick = { if (newName.isNotBlank()) { onCreateSpace(newName.trim(), "private"); newName = ""; createOpen = false } }) { Text("Create") }
             },
             dismissButton = { TextButton(onClick = { createOpen = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (createChannelOpen && activeSpace != null) {
+        AlertDialog(
+            onDismissRequest = { createChannelOpen = false; newChannelName = "" },
+            title = { Text("New channel") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newChannelName,
+                        onValueChange = { newChannelName = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '-' || c == '_' } },
+                        label = { Text("channel-name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = newChannelVoice, onCheckedChange = { newChannelVoice = it })
+                        Text("Voice channel")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newChannelName.isNotBlank()) {
+                            onCreateChannel(activeSpace, newChannelName.trim(), if (newChannelVoice) "voice" else "text")
+                            newChannelName = ""; newChannelVoice = false; createChannelOpen = false
+                        }
+                    },
+                    enabled = newChannelName.isNotBlank(),
+                ) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { createChannelOpen = false; newChannelName = "" }) { Text("Cancel") } },
         )
     }
 

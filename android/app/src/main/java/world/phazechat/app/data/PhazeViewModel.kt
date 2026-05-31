@@ -21,6 +21,9 @@ data class ChatLine(
     val kind: String? = null,
     val fileUrl: String? = null,
     val fileName: String? = null,
+    val edited: Boolean = false,
+    val deleted: Boolean = false,
+    val reaction: String? = null,
 )
 
 data class FriendInfo(
@@ -101,6 +104,20 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     val chatLog = _chatLog.asStateFlow()
     private val _unread = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unread = _unread.asStateFlow()
+    // Who is currently typing to me (the peer's username), auto-cleared.
+    private val _typingFrom = MutableStateFlow<String?>(null)
+    val typingFrom = _typingFrom.asStateFlow()
+    private var typingClearJob: kotlinx.coroutines.Job? = null
+    private var lastTypingSentAt = 0L
+
+    // User search
+    private val _searchResults = MutableStateFlow<List<String>>(emptyList())
+    val searchResults = _searchResults.asStateFlow()
+
+    // Transient status for block/report/channel actions (shown as a snackbar/toast).
+    private val _actionStatus = MutableStateFlow<String?>(null)
+    val actionStatus = _actionStatus.asStateFlow()
+    fun clearActionStatus() { _actionStatus.value = null }
 
     // Spaces
     private val _spaces = MutableStateFlow<List<SpaceInfo>>(emptyList())
@@ -298,6 +315,70 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val msgId = "${username}-${System.nanoTime()}"
         nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
         appendChat(ChatLine(id = msgId, from = username, text = text, me = true))
+    }
+
+    // ── User search ──────────────────────────────────────────────
+    fun searchUsers(query: String) {
+        val q = query.trim()
+        if (q.isBlank()) { _searchResults.value = emptyList(); return }
+        nexus.send(NexusMessage(type = "search", body = q))
+    }
+    fun clearSearch() { _searchResults.value = emptyList() }
+
+    // ── Block / Report (Google Play requires these for social apps) ──
+    fun blockUser(user: String) {
+        nexus.send(NexusMessage(type = "block", recipient = user))
+    }
+    fun unblockUser(user: String) {
+        nexus.send(NexusMessage(type = "unblock", recipient = user))
+    }
+    fun reportUser(subject: String, reason: String, detail: String) {
+        nexus.send(NexusMessage(type = "report_abuse", recipient = subject, status = reason, body = detail))
+        _actionStatus.value = "Report submitted. Thanks for keeping Phaze safe."
+    }
+
+    // ── Channels ─────────────────────────────────────────────────
+    fun createChannel(serverId: String, name: String, kind: String = "text") {
+        val n = name.trim().lowercase()
+        if (n.isBlank()) return
+        nexus.send(NexusMessage(type = "channel_create", serverId = serverId, channelName = n, kind = kind))
+    }
+
+    // ── Message edit / delete / react (DMs) ──────────────────────
+    fun editMessage(msgId: String, newText: String) {
+        val peer = _selectedChat.value ?: return
+        val peerPub = peerKeys[peer]
+        val body = if (peerPub != null) encryptForPeer(newText, peerPub, keyPair.secretKey) else newText
+        nexus.send(NexusMessage(type = "msg_edit", recipient = peer, msgId = msgId, body = body))
+        _chatLog.value = _chatLog.value.map { if (it.id == msgId) it.copy(text = newText, edited = true) else it }
+    }
+    fun deleteMessage(msgId: String) {
+        val peer = _selectedChat.value ?: return
+        nexus.send(NexusMessage(type = "msg_delete", recipient = peer, msgId = msgId))
+        _chatLog.value = _chatLog.value.map { if (it.id == msgId) it.copy(text = "", deleted = true) else it }
+    }
+    fun reactMessage(msgId: String, emoji: String) {
+        val peer = _selectedChat.value ?: return
+        nexus.send(NexusMessage(type = "msg_react", recipient = peer, msgId = msgId, reaction = emoji))
+        _chatLog.value = _chatLog.value.map {
+            if (it.id == msgId) it.copy(reaction = if (it.reaction == emoji) null else emoji) else it
+        }
+    }
+
+    // ── Typing indicator (throttled to ~1/sec) ───────────────────
+    fun sendTyping() {
+        val peer = _selectedChat.value ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSentAt < 1000) return
+        lastTypingSentAt = now
+        nexus.send(NexusMessage(type = "typing", recipient = peer))
+    }
+
+    // Remove a user from the local chat/friend lists (after blocking).
+    private fun dropChat(user: String) {
+        _friends.value = _friends.value.toMutableMap().apply { remove(user) }
+        _unread.value = _unread.value.toMutableMap().apply { remove(user) }
+        if (_selectedChat.value == user) { _selectedChat.value = null; _chatLog.value = emptyList() }
     }
 
     fun sendFile(uri: android.net.Uri) {
@@ -799,10 +880,59 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
             // Spaces
             "server_list_result" -> handleServerList(msg)
-            "server_channels_result" -> handleChannels(msg)
+            "server_info_result", "server_channels_updated" -> handleChannels(msg)
             "channel_history_result" -> handleChannelHistory(msg)
             "channel_msg" -> handleChannelMsg(msg)
             "server_created", "server_joined" -> loadSpaces()
+            "channel_result" -> { msg.error?.let { _actionStatus.value = "Channel: $it" } }
+
+            // Search
+            "search_results" -> _searchResults.value = msg.results ?: emptyList()
+
+            // Block / report confirmations
+            "block_result" -> {
+                when (msg.status) {
+                    "blocked" -> { _actionStatus.value = "Blocked ${msg.recipient}"; msg.recipient?.let { dropChat(it) } }
+                    "unblocked" -> _actionStatus.value = "Unblocked ${msg.recipient}"
+                    else -> msg.error?.let { _actionStatus.value = "Block: $it" }
+                }
+            }
+            "report_result" -> {
+                if (msg.status == "received") _actionStatus.value = "Report received. Thank you."
+                else msg.error?.let { _actionStatus.value = "Report: $it" }
+            }
+
+            // Typing indicator from a peer
+            "typing" -> {
+                val from = msg.sender ?: return
+                if (_selectedChat.value == from) {
+                    _typingFrom.value = from
+                    typingClearJob?.cancel()
+                    typingClearJob = viewModelScope.launch {
+                        kotlinx.coroutines.delay(4000)
+                        _typingFrom.value = null
+                    }
+                }
+            }
+
+            // Live edit / delete / react relays for DMs
+            "msg_edit" -> {
+                val id = msg.msgId ?: return
+                val sender = msg.sender ?: return
+                val text = decrypt(msg.body, sender)
+                _chatLog.value = _chatLog.value.map { if (it.id == id) it.copy(text = text, edited = true) else it }
+            }
+            "msg_delete" -> {
+                val id = msg.msgId ?: return
+                _chatLog.value = _chatLog.value.map { if (it.id == id) it.copy(text = "", deleted = true) else it }
+            }
+            "msg_react" -> {
+                val id = msg.msgId ?: return
+                val emoji = msg.reaction
+                _chatLog.value = _chatLog.value.map {
+                    if (it.id == id) it.copy(reaction = if (it.reaction == emoji) null else emoji) else it
+                }
+            }
 
             // Call signaling
             "call_offer" -> {
