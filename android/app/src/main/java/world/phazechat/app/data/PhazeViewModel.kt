@@ -161,9 +161,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         keyPair = loadOrCreateKeys()
-        nexus.connect()
         observeMessages()
-        autoLogin()
+        observeConnection()   // (re)authenticate on every connect — survives socket drops
+        nexus.connect()
     }
 
     private fun loadOrCreateKeys(): NaClKeyPair {
@@ -182,12 +182,21 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         return kp
     }
 
-    private fun autoLogin() {
-        val tok = _sessionToken.value ?: return
+    // Re-authenticate on EVERY transition to CONNECTED, not just the first.
+    // OkHttp transparently reconnects after a dropped socket (idle timeout,
+    // network blip, app resume); without re-auth that new socket is
+    // unauthenticated and the server silently drops every action (search,
+    // DMs, messages to the Kai bot), making the app appear frozen until a
+    // manual restart. Collecting the state flow re-sends session_auth each
+    // time we reconnect, which the auth_result handler uses to reload state.
+    private fun observeConnection() {
         viewModelScope.launch {
-            nexus.state.first { it == ConnState.CONNECTED }
-            val device = "android/${Build.MODEL}"
-            nexus.send(NexusMessage(type = "session_auth", qrToken = tok, deviceInfo = device))
+            nexus.state.collect { st ->
+                if (st == ConnState.CONNECTED) {
+                    val tok = _sessionToken.value ?: return@collect
+                    nexus.send(NexusMessage(type = "session_auth", qrToken = tok, deviceInfo = "android/${Build.MODEL}"))
+                }
+            }
         }
     }
 
