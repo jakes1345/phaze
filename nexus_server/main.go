@@ -6262,7 +6262,7 @@ func (s *NexusServer) profileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var displayName, mood string
 	var supporter int
-	err := s.DB.QueryRow("SELECT display_name, mood, COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&displayName, &mood, &supporter)
+	err := s.DB.QueryRow("SELECT COALESCE(display_name, ''), COALESCE(mood, ''), COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&displayName, &mood, &supporter)
 	if err != nil {
 		http.Error(w, "User not found", 404)
 		return
