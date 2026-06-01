@@ -4,7 +4,13 @@
 
 APP_NAME=Phaze
 PACKAGE_ID=world.phazechat.app
-VERSION=1.0.0
+# Single source of truth: repo-root VERSION file. Bump it once and every Go
+# build (nexus server, desktop client) stamps the new version automatically
+# via -ldflags. Android reads its version from android/app/build.gradle.kts
+# (versionCode must still increment by hand for Play) and shows it in-app via
+# BuildConfig.VERSION_NAME.
+VERSION=$(shell cat VERSION 2>/dev/null || echo dev)
+GO_LDFLAGS=-X main.Version=$(VERSION)
 # Android SDK (default). Override with env or copy local.mk.example → local.mk
 ANDROID_HOME ?= $(HOME)/Android/Sdk
 -include local.mk
@@ -28,7 +34,7 @@ web-build: ## Production build of web/ (requires npm)
 desktop: ## Build native desktop binaries for current OS
 	@echo "[Phaze] Building native desktop binary..."
 	@mkdir -p bin
-	cd native_client && go build -o ../bin/$(APP_NAME) .
+	cd native_client && go build -ldflags="$(GO_LDFLAGS)" -o ../bin/$(APP_NAME) .
 
 windows: ## Cross-compile for Windows
 	@echo "[Phaze] Building Windows binary (x64)..."
@@ -84,7 +90,7 @@ iossim: ## iOS Simulator build on macOS (often friendlier for CI than device sig
 nexus: ## Build the Nexus Relay Server
 	@echo "[Phaze] Building Nexus Relay Server..."
 	@mkdir -p bin
-	cd nexus_server && go build -o ../bin/phaze-nexus .
+	cd nexus_server && go build -ldflags="$(GO_LDFLAGS)" -o ../bin/phaze-nexus .
 
 ## 🛡️ Maintenance
 phaze-assets: ## Regenerate WAVs, PNG emoticons, branding, spritesheet → Nexus public + native_client/assets/
