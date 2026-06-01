@@ -521,6 +521,14 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         nexus.connect()
     }
 
+    // Permanently erase the account (GDPR right-to-erasure). The server
+    // requires the current password as confirmation. On success the
+    // delete_account_result handler signs the user out.
+    fun deleteAccount(password: String) {
+        if (password.isBlank()) { _actionStatus.value = "Enter your password to confirm"; return }
+        nexus.send(NexusMessage(type = "delete_account", body = password))
+    }
+
     // Spaces
     fun loadSpaces() { nexus.send(NexusMessage(type = "server_list")) }
 
@@ -917,6 +925,16 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             "report_result" -> {
                 if (msg.status == "received") _actionStatus.value = "Report received. Thank you."
                 else msg.error?.let { _actionStatus.value = "Report: $it" }
+            }
+
+            // Account deletion confirmation
+            "delete_account_result" -> {
+                if (msg.status == "ok") {
+                    _actionStatus.value = "Your account has been deleted."
+                    signOut()
+                } else {
+                    _actionStatus.value = msg.error ?: "Couldn't delete account. Try again."
+                }
             }
 
             // Typing indicator from a peer
