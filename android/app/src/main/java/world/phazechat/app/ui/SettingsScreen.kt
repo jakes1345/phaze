@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.net.Uri
+import world.phazechat.app.BuildConfig
 
 @Composable
 fun SettingsScreen(
@@ -39,6 +40,7 @@ fun SettingsScreen(
     onBackupKeys: ((String) -> Unit)? = null,
     onRestoreKeys: ((String) -> Unit)? = null,
     onClearKeyBackupStatus: (() -> Unit)? = null,
+    onDeleteAccount: ((String) -> Unit)? = null,
 ) {
     var editMood by remember { mutableStateOf(mood) }
     var editName by remember { mutableStateOf(displayName.ifEmpty { me }) }
@@ -364,9 +366,58 @@ fun SettingsScreen(
             Text("Sign Out")
         }
 
+        if (onDeleteAccount != null) {
+            Spacer(Modifier.height(12.dp))
+            var showDelete by remember { mutableStateOf(false) }
+            TextButton(
+                onClick = { showDelete = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.textButtonColors(contentColor = PhazeDanger),
+            ) {
+                Text("Delete Account")
+            }
+
+            if (showDelete) {
+                var pw by remember { mutableStateOf("") }
+                AlertDialog(
+                    onDismissRequest = { showDelete = false },
+                    title = { Text("Delete account?") },
+                    text = {
+                        Column {
+                            Text(
+                                "This permanently erases your account, messages, and data. " +
+                                    "This cannot be undone. Enter your password to confirm.",
+                                fontSize = 14.sp,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = pw,
+                                onValueChange = { pw = it },
+                                label = { Text("Password") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { onDeleteAccount(pw); showDelete = false },
+                            enabled = pw.isNotBlank(),
+                            colors = ButtonDefaults.textButtonColors(contentColor = PhazeDanger),
+                        ) { Text("Delete forever") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDelete = false }) { Text("Cancel") }
+                    },
+                )
+            }
+        }
+
         Spacer(Modifier.height(32.dp))
         Text(
-            "Phaze v1.0.0 · Encrypted chat for everyone",
+            "Phaze v${BuildConfig.VERSION_NAME} · Encrypted chat for everyone",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.align(Alignment.CenterHorizontally),

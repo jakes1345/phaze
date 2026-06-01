@@ -163,6 +163,10 @@ func clientIP(r *http.Request) string {
 var globalLimiter = newIPLimiter(rate.Limit(10), 30)      // 10 req/s, burst 30 per IP
 var adminLimiter = newIPLimiter(rate.Limit(0.05), 3)     // 3 attempts per minute per IP
 
+// Version is stamped at build time via -ldflags "-X main.Version=$(VERSION)"
+// (see Makefile, sourced from the repo-root VERSION file). Defaults to "dev".
+var Version = "dev"
+
 // ---------- Auth brute-force protection ----------
 
 // authFailTracker tracks per-IP and per-user consecutive failed auth attempts.
@@ -6189,7 +6193,7 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 		bindAddr = "0.0.0.0"
 	}
 
-	log.Printf("Phaze Nexus Server v1.0.0 starting on %s:%s...", bindAddr, port)
+	log.Printf("Phaze Nexus Server v%s starting on %s:%s...", Version, bindAddr, port)
 	log.Printf("  WebSocket endpoint: ws://%s:%s/ws", bindAddr, port)
 	log.Printf("  Health check: http://%s:%s/health", bindAddr, port)
 

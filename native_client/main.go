@@ -85,8 +85,12 @@ func humanSize(n int) string {
 	return fmt.Sprintf("%.1f GB", float64(n)/(k*k*k))
 }
 
+// Version is stamped at build time via -ldflags "-X main.Version=$(VERSION)"
+// (see Makefile, sourced from the repo-root VERSION file). Defaults to "dev"
+// for ad-hoc `go build` runs.
+var Version = "dev"
+
 const (
-	Version        = "1.0.0"
 	keyringService = "phaze-sovereign"
 )
 

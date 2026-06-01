@@ -340,6 +340,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onBackupKeys = { pin -> vm.backupKeys(pin) },
                         onRestoreKeys = { pin -> vm.restoreKeys(pin) },
                         onClearKeyBackupStatus = { vm.clearKeyBackupStatus() },
+                        onDeleteAccount = { pw -> vm.deleteAccount(pw) },
                     )
                 }
             }
