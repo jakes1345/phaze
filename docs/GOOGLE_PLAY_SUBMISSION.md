@@ -90,10 +90,9 @@ a way to request deletion — both "Yes".)
 **Does your app collect or share any of the required user data types?** → Yes
 **Is all user data encrypted in transit?** → Yes
 **Do you provide a way for users to request that their data be deleted?** → Yes
-  (Deletion is via email request to privacy@phazechat.world. There is currently
-  NO in-app "delete account" button on Android — the Settings "danger" button is
-  just Sign Out. Email-based deletion is accepted by Google, but adding an in-app
-  delete-account flow later is stronger. Do NOT claim in-app deletion.)
+  (BOTH available: in-app deletion — Settings → ACCOUNT → "Delete Account"
+  (password-confirmed, GDPR erasure cascade) — AND email request to
+  privacy@phazechat.world. Safe to claim in-app deletion as of v1.2.3.)
 
 ### Data types — collected (not shared with third parties for their own use):
 
@@ -179,9 +178,8 @@ Restricted access → reviewer login:
 - **COVID-19 contact tracing/status:** No.
 - **Government app:** No.
 - **Financial features:** No.
-- **Data deletion (account):** Users request deletion via
-  privacy@phazechat.world (email-based; accepted by Google). There is no in-app
-  delete-account button yet — don't claim one.
+- **Data deletion (account):** In-app — Settings → ACCOUNT → "Delete Account"
+  (password-confirmed) — and via email to privacy@phazechat.world.
 
 ---
 
