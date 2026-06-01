@@ -56,6 +56,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val typingFrom by vm.typingFrom.collectAsState()
     val searchResults by vm.searchResults.collectAsState()
     val actionStatus by vm.actionStatus.collectAsState()
+    val globalNotice by vm.globalNotice.collectAsState()
 
     val toastCtx = LocalContext.current
     LaunchedEffect(actionStatus) {
@@ -63,6 +64,17 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             android.widget.Toast.makeText(toastCtx, it, android.widget.Toast.LENGTH_SHORT).show()
             vm.clearActionStatus()
         }
+    }
+
+    // Admin global notice — overlays every screen (placed before the early
+    // returns below so it shows during calls, chats, stories, etc.).
+    globalNotice?.let { gn ->
+        AlertDialog(
+            onDismissRequest = { vm.clearGlobalNotice() },
+            title = { Text("📢 Phaze Announcement") },
+            text = { Text(gn.message) },
+            confirmButton = { Button(onClick = { vm.clearGlobalNotice() }) { Text("Got it") } },
+        )
     }
 
     var viewingStoryAuthor by remember { mutableStateOf<String?>(null) }
