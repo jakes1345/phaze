@@ -132,7 +132,14 @@ func callGemini(apiKey, prompt string) (string, error) {
 		},
 		"generationConfig": map[string]any{
 			"temperature":     0.9,
-			"maxOutputTokens": 150,
+			"maxOutputTokens": 400,
+			// gemini-2.5-flash spends output tokens on internal "thinking"
+			// before emitting text; with a tight budget that truncated Kai's
+			// replies mid-sentence. Disable thinking so the whole budget goes
+			// to the actual message (the prompt already keeps replies short).
+			"thinkingConfig": map[string]any{
+				"thinkingBudget": 0,
+			},
 		},
 	}
 	data, _ := json.Marshal(body)
