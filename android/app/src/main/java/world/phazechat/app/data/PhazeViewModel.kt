@@ -59,6 +59,9 @@ data class ChannelMsg(
     val deleted: Boolean = false,
 )
 
+// GlobalNotice is an admin broadcast shown as a popup on every connected client.
+data class GlobalNotice(val from: String, val message: String)
+
 class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
@@ -118,6 +121,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _actionStatus = MutableStateFlow<String?>(null)
     val actionStatus = _actionStatus.asStateFlow()
     fun clearActionStatus() { _actionStatus.value = null }
+
+    // Admin global notice popup — broadcast from the admin portal to every client.
+    private val _globalNotice = MutableStateFlow<GlobalNotice?>(null)
+    val globalNotice = _globalNotice.asStateFlow()
+    fun clearGlobalNotice() { _globalNotice.value = null }
 
     // Spaces
     private val _spaces = MutableStateFlow<List<SpaceInfo>>(emptyList())
@@ -922,6 +930,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         _typingFrom.value = null
                     }
                 }
+            }
+
+            // Admin broadcast popup to every connected client
+            "global_notice" -> {
+                val text = msg.body ?: return
+                _globalNotice.value = GlobalNotice(from = msg.sender ?: "Phaze", message = text)
             }
 
             // Live edit / delete / react relays for DMs

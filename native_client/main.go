@@ -1187,6 +1187,16 @@ func (s *PhazeApp) HandleIncomingMessage(msg NexusMessage) {
 			})
 		}
 
+	case "global_notice":
+		// Admin broadcast to every connected client — show a popup.
+		if msg.Body != "" {
+			body := msg.Body
+			fyne.Do(func() {
+				s.PlaySound("MessageReceived.wav")
+				dialog.ShowInformation("📢 Phaze Announcement", body, s.MainWindow)
+			})
+		}
+
 	case "search_results":
 		s.Discovered = msg.Results
 		if s.SearchResult != nil {
