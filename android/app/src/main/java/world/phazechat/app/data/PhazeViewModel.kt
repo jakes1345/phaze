@@ -148,6 +148,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val isIncoming: Boolean = false,
         val isMuted: Boolean = false,
         val isCameraOn: Boolean = false,
+        val isVideo: Boolean = false,
+        val isScreenSharing: Boolean = false,
+        val hasRemoteVideo: Boolean = false,
         val incomingSdp: String? = null,
     )
     private val _callState = MutableStateFlow<CallState?>(null)
@@ -639,11 +642,15 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val me = _me.value ?: return
         val cm = CallManager(getApplication())
         callManager = cm
-        _callState.value = CallState(peer = peer, status = "ringing", isCameraOn = withVideo)
+        _callState.value = CallState(peer = peer, status = "ringing", isCameraOn = withVideo, isVideo = withVideo)
 
         val iceServers = buildIceServers()
         cm.createPeerConnection(iceServers)
         cm.startLocalMedia(getApplication(), withVideo)
+
+        cm.onRemoteVideoTrack = {
+            _callState.value = _callState.value?.copy(hasRemoteVideo = true)
+        }
 
         cm.onIceCandidate = { candidate ->
             nexus.send(NexusMessage(
@@ -679,13 +686,19 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val cs = _callState.value ?: return
         val me = _me.value ?: return
         val sdp = cs.incomingSdp ?: return
+        // Honor video: if the caller's offer advertises a video m-line, answer with video too.
+        val withVideo = sdp.contains("m=video")
         val cm = CallManager(getApplication())
         callManager = cm
-        _callState.value = cs.copy(status = "connecting")
+        _callState.value = cs.copy(status = "connecting", isVideo = withVideo, isCameraOn = withVideo)
 
         val iceServers = buildIceServers()
         cm.createPeerConnection(iceServers)
-        cm.startLocalMedia(getApplication(), false)
+        cm.startLocalMedia(getApplication(), withVideo)
+
+        cm.onRemoteVideoTrack = {
+            _callState.value = _callState.value?.copy(hasRemoteVideo = true)
+        }
 
         cm.onIceCandidate = { candidate ->
             nexus.send(NexusMessage(
@@ -741,6 +754,19 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleCallCamera() {
         val on = callManager?.toggleCamera() ?: return
         _callState.value = _callState.value?.copy(isCameraOn = on)
+    }
+
+    /** Begin screen sharing with the Intent returned by the MediaProjection permission prompt. */
+    fun startScreenShare(projectionData: android.content.Intent) {
+        val cm = callManager ?: return
+        cm.startScreenShare(projectionData)
+        _callState.value = _callState.value?.copy(isScreenSharing = true)
+    }
+
+    fun stopScreenShare() {
+        val cm = callManager ?: return
+        cm.stopScreenShare(getApplication())
+        _callState.value = _callState.value?.copy(isScreenSharing = cm.isScreenSharing)
     }
 
     private fun buildIceServers(): List<org.webrtc.PeerConnection.IceServer> {
@@ -978,7 +1004,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             // Call signaling
             "call_offer" -> {
                 val from = msg.sender ?: return
-                _callState.value = CallState(peer = from, status = "ringing", isIncoming = true, incomingSdp = msg.sdp)
+                _callState.value = CallState(peer = from, status = "ringing", isIncoming = true, incomingSdp = msg.sdp, isVideo = (msg.sdp?.contains("m=video") == true))
             }
             "call_answer" -> {
                 val sdp = msg.sdp ?: return
