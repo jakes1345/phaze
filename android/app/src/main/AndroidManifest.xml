@@ -14,9 +14,11 @@
     <!-- Push notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Screen sharing during calls (MediaProjection requires a foreground service) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <!-- Strip permissions that libraries merge in but we don't use directly -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
-        tools:node="remove" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"
         tools:node="remove" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -57,6 +59,12 @@
             android:name=".QRScannerActivity"
             android:exported="false"
             android:theme="@style/Theme.Phaze" />
+
+        <!-- Foreground service for screen sharing during calls. -->
+        <service
+            android:name=".ScreenShareService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- Firebase Cloud Messaging — handles push notification delivery only. -->
         <service

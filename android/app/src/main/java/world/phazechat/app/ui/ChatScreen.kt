@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ fun ChatScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
     onAttachFile: (() -> Unit)? = null,
     onVoiceRecord: (() -> Unit)? = null,
     typing: Boolean = false,
@@ -99,7 +101,12 @@ fun ChatScreen(
                 actions = {
                     if (onCall != null) {
                         IconButton(onClick = onCall) {
-                            Icon(Icons.Default.Call, "Call", tint = PhazeBrandDark)
+                            Icon(Icons.Default.Call, "Voice call", tint = PhazeBrandDark)
+                        }
+                    }
+                    if (onVideoCall != null) {
+                        IconButton(onClick = onVideoCall) {
+                            Icon(Icons.Default.PlayArrow, "Video call", tint = PhazeBrandDark)
                         }
                     }
                     IconButton(onClick = { menuOpen = true }) {

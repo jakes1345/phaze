@@ -1,7 +1,10 @@
 package world.phazechat.app
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.media.MediaRecorder
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,15 +12,29 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import world.phazechat.app.data.PhazeViewModel
 import world.phazechat.app.ui.*
@@ -146,6 +163,20 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         uri?.let { vm.sendFile(it) }
     }
 
+    // Screen-share (MediaProjection) permission flow for video calls.
+    val mediaProjectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    val screenShareLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            ScreenShareService.start(context)
+            vm.startScreenShare(data)
+        }
+    }
+
     // Voice recording state
     var recording by remember { mutableStateOf(false) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
@@ -202,12 +233,27 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     // Call overlay
     if (callState != null) {
         val cs = callState!!
+        val cm = vm.callManager
         CallScreen(
             peer = cs.peer, isIncoming = cs.isIncoming, callStatus = cs.status,
             isMuted = cs.isMuted, isCameraOn = cs.isCameraOn,
+            isVideo = cs.isVideo, isScreenSharing = cs.isScreenSharing,
+            hasRemoteVideo = cs.hasRemoteVideo,
+            eglContext = cm?.eglContext,
+            localVideoTrack = cm?.localVideoTrack,
+            remoteVideoTrack = cm?.remoteVideoTrack,
             onAnswer = { vm.answerCall() }, onReject = { vm.rejectCall() },
-            onHangUp = { vm.endCall() }, onToggleMute = { vm.toggleCallMute() },
+            onHangUp = { ScreenShareService.stop(context); vm.endCall() },
+            onToggleMute = { vm.toggleCallMute() },
             onToggleCamera = { vm.toggleCallCamera() },
+            onToggleScreenShare = {
+                if (cs.isScreenSharing) {
+                    vm.stopScreenShare()
+                    ScreenShareService.stop(context)
+                } else {
+                    screenShareLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                }
+            },
         )
         return
     }
@@ -243,12 +289,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onSend = { vm.sendMessage(it) },
                 onCall = { vm.startCall(peer) },
             )
-            // TODO: overlay recording UI — for now the send/cancel is on stop
-            AlertDialog(
-                onDismissRequest = { stopVoiceRecord(false) },
-                title = { Text("Recording voice message...") },
-                confirmButton = { Button(onClick = { stopVoiceRecord(true) }) { Text("Send") } },
-                dismissButton = { TextButton(onClick = { stopVoiceRecord(false) }) { Text("Cancel") } },
+            VoiceRecordingOverlay(
+                onSend = { stopVoiceRecord(true) },
+                onCancel = { stopVoiceRecord(false) },
             )
         } else {
             ChatScreen(
@@ -256,6 +299,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onBack = { vm.selectChat("") },
                 onSend = { vm.sendMessage(it) },
                 onCall = { vm.startCall(peer) },
+                onVideoCall = { vm.startCall(peer, withVideo = true) },
                 onAttachFile = { filePicker.launch("*/*") },
                 onVoiceRecord = { startVoiceRecord() },
                 typing = typingFrom == peer,
@@ -343,6 +387,50 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onDeleteAccount = { pw -> vm.deleteAccount(pw) },
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Bottom overlay shown while a voice message is recording: pulsing dot, timer, Cancel/Send. */
+@Composable
+fun VoiceRecordingOverlay(onSend: () -> Unit, onCancel: () -> Unit) {
+    var elapsed by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            elapsed++
+        }
+    }
+    val pulse = rememberInfiniteTransition(label = "rec")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f, targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "dot",
+    )
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE53935))
+                        .alpha(dotAlpha),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Recording  %d:%02d".format(elapsed / 60, elapsed % 60), fontSize = 15.sp)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                Spacer(Modifier.width(4.dp))
+                Button(onClick = onSend) { Text("Send") }
             }
         }
     }
