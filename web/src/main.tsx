@@ -22,6 +22,17 @@ if (dsn) {
   })
 }
 
+// Register the service worker for the offline app shell. This is independent of
+// push: push subscription is requested later, on user opt-in, in Settings. We
+// skip it in dev so Vite's HMR isn't shadowed by a cached shell.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/web/sw.js', { scope: '/web/' })
+      .catch((e) => console.warn('[sw] registration failed', e))
+  })
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Sentry.ErrorBoundary fallback={<div style={{ padding: 24, fontFamily: 'Inter, system-ui, sans-serif' }}>Something broke. Refresh to retry.</div>}>
