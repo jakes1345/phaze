@@ -152,7 +152,7 @@
         <div class="container">
             <h2>Pick your platform</h2>
             <p style="text-align:center;color:var(--text-light);font-size:0.9rem;max-width:680px;margin:0 auto 28px;">
-                Honest status: <strong>web client</strong> is the production-ready surface. Native binaries are pre-1.0 and shipped without code-signing — your OS may warn you. macOS and iOS are deferred (no Apple hardware available for the build pipeline yet).
+                Honest status: <strong>web client</strong> is the production-ready surface. Native binaries are pre-1.0 and shipped without code-signing — your OS may warn you. <strong>macOS and iOS are out of reach right now</strong> — building and signing them requires a Mac, and we don't have any Apple hardware at all. Until that changes, the <a href="/web/" style="color:var(--brand);">web client</a> is your Phaze on Apple devices (and it has every feature).
             </p>
             <div class="platform-grid" id="platforms">
                 <div class="platform-card" id="card-web">
@@ -185,15 +185,26 @@
                 <div class="platform-card soon" id="card-macos">
                     <span class="platform-icon">🍎</span>
                     <div class="platform-name">macOS</div>
-                    <div class="platform-detail">Deferred — no Apple build hardware yet</div>
+                    <div class="platform-detail">Out of reach — building &amp; signing a Mac app needs a Mac, and we have zero Apple hardware</div>
                     <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
                 </div>
                 <div class="platform-card soon" id="card-ios">
                     <span class="platform-icon"></span>
                     <div class="platform-name">iOS</div>
-                    <div class="platform-detail">Deferred — App Store + signing needs Mac hardware</div>
+                    <div class="platform-detail">Out of reach — App Store + code-signing needs a Mac we don't have</div>
                     <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
                 </div>
+            </div>
+
+            <div style="max-width:680px;margin:36px auto 0;padding:22px 26px;border:1px dashed var(--brand);border-radius:14px;background:rgba(0,175,240,0.04);text-align:center;">
+                <div style="font-size:1.6rem;margin-bottom:8px;">🛠️🍎</div>
+                <h3 style="font-size:1.15rem;font-weight:700;margin:0 0 8px;">Got a Mac? Help us ship macOS</h3>
+                <p style="color:var(--text-light);font-size:0.9rem;margin:0 0 16px;">
+                    The whole desktop app is open Go (Fyne) — it <em>should</em> cross-compile for macOS, we just can't build, sign, or test it without Apple hardware. If you've got a MacBook and you're willing to compile our shit on GitHub Actions (or locally) and hook us up with a working build, that would be dope af. You'd basically be the reason Mac users get a native Phaze.
+                </p>
+                <a href="https://github.com/jakes1345/skype7-reborn" class="platform-btn" data-mac-help style="background:var(--brand);color:#fff;">Open a PR on GitHub</a>
+                <a href="mailto:hello@phazechat.world?subject=I%20can%20help%20build%20Phaze%20for%20macOS" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);margin-left:8px;">Email us</a>
+                <p style="font-size:0.72rem;color:var(--text-light);margin:12px 0 0;">Same goes for iOS down the line — but that one also needs a paid Apple Developer account + signing, so Mac desktop is the realistic first win.</p>
             </div>
         </div>
     </section>
