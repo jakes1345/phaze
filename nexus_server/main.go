@@ -12,14 +12,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"bytes"
 	"io"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -31,9 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	webpush "github.com/SherClockHolmes/webpush-go"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/otp/totp"
@@ -78,14 +76,14 @@ type limiterEntry struct {
 }
 
 type ipLimiter struct {
-	mu       sync.Mutex
-	entries  map[string]*limiterEntry
-	r        rate.Limit
-	burst    int
-	idleTTL  time.Duration
-	maxSize  int
-	lastGC   time.Time
-	gcEvery  time.Duration
+	mu      sync.Mutex
+	entries map[string]*limiterEntry
+	r       rate.Limit
+	burst   int
+	idleTTL time.Duration
+	maxSize int
+	lastGC  time.Time
+	gcEvery time.Duration
 }
 
 func newIPLimiter(r rate.Limit, burst int) *ipLimiter {
@@ -160,8 +158,8 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-var globalLimiter = newIPLimiter(rate.Limit(10), 30)      // 10 req/s, burst 30 per IP
-var adminLimiter = newIPLimiter(rate.Limit(0.05), 3)     // 3 attempts per minute per IP
+var globalLimiter = newIPLimiter(rate.Limit(10), 30) // 10 req/s, burst 30 per IP
+var adminLimiter = newIPLimiter(rate.Limit(0.05), 3) // 3 attempts per minute per IP
 
 // Version is stamped at build time via -ldflags "-X main.Version=$(VERSION)"
 // (see Makefile, sourced from the repo-root VERSION file). Defaults to "dev".
@@ -172,9 +170,9 @@ var Version = "dev"
 // authFailTracker tracks per-IP and per-user consecutive failed auth attempts.
 // When thresholds are breached, connections are throttled or blocked entirely.
 type authFailTracker struct {
-	mu         sync.Mutex
-	ipFails    map[string]*authFail // keyed by IP
-	userFails  map[string]*authFail // keyed by username
+	mu        sync.Mutex
+	ipFails   map[string]*authFail // keyed by IP
+	userFails map[string]*authFail // keyed by username
 }
 
 type authFail struct {
@@ -190,15 +188,15 @@ var authTracker = &authFailTracker{
 
 const (
 	// Per-IP: after 5 fails in 15 min, impose progressive delay. At 50, auto-block.
-	authIPFailThreshold    = 5
-	authIPBlockThreshold   = 50
-	authIPWindow           = 15 * time.Minute
+	authIPFailThreshold  = 5
+	authIPBlockThreshold = 50
+	authIPWindow         = 15 * time.Minute
 	// Per-user: lock account after 10 consecutive fails in 30 min.
-	authUserLockThreshold  = 10
-	authUserWindow         = 30 * time.Minute
+	authUserLockThreshold = 10
+	authUserWindow        = 30 * time.Minute
 	// TOTP: max 5 attempts per 10 min.
-	totpMaxAttempts        = 5
-	totpWindow             = 10 * time.Minute
+	totpMaxAttempts = 5
+	totpWindow      = 10 * time.Minute
 )
 
 func (t *authFailTracker) recordFail(ip, username string) {
@@ -423,19 +421,19 @@ type NexusMessage struct {
 	KeyFingerprint string `json:"key_fingerprint,omitempty"`
 
 	// --- Servers + Channels (Discord-style "Spaces") ---
-	ServerID    string             `json:"server_id,omitempty"`
-	ChannelID   string             `json:"channel_id,omitempty"`
-	ServerName  string             `json:"server_name,omitempty"`
-	ChannelName string             `json:"channel_name,omitempty"`
-	Topic       string             `json:"topic,omitempty"`
-	Kind        string             `json:"kind,omitempty"`  // "text" | "voice"
-	Role        string             `json:"role,omitempty"`  // member | admin | owner
-	Visibility  string             `json:"visibility,omitempty"` // public | private
-	InviteCode  string             `json:"invite_code,omitempty"`
-	Servers     []ServerSummary    `json:"servers,omitempty"`
-	Channels    []ChannelInfo      `json:"channels,omitempty"`
-	Messages    []ChannelMsg       `json:"messages,omitempty"`
-	HistoryFrom int64              `json:"history_from,omitempty"` // id cursor (return messages with id < this)
+	ServerID    string          `json:"server_id,omitempty"`
+	ChannelID   string          `json:"channel_id,omitempty"`
+	ServerName  string          `json:"server_name,omitempty"`
+	ChannelName string          `json:"channel_name,omitempty"`
+	Topic       string          `json:"topic,omitempty"`
+	Kind        string          `json:"kind,omitempty"`       // "text" | "voice"
+	Role        string          `json:"role,omitempty"`       // member | admin | owner
+	Visibility  string          `json:"visibility,omitempty"` // public | private
+	InviteCode  string          `json:"invite_code,omitempty"`
+	Servers     []ServerSummary `json:"servers,omitempty"`
+	Channels    []ChannelInfo   `json:"channels,omitempty"`
+	Messages    []ChannelMsg    `json:"messages,omitempty"`
+	HistoryFrom int64           `json:"history_from,omitempty"` // id cursor (return messages with id < this)
 
 	// DMHistory is the response payload for "dm_history" requests:
 	// durable cross-device history of DMs between the requester and Recipient.
@@ -541,10 +539,10 @@ func (c *Client) Send(m NexusMessage) error {
 }
 
 type NexusServer struct {
-	DB         *sql.DB
-	Clients    map[string]*Client
-	Mu         sync.RWMutex
-	fcmClient  *messaging.Client
+	DB        *sql.DB
+	Clients   map[string]*Client
+	Mu        sync.RWMutex
+	fcmClient *messaging.Client
 
 	// VoiceRooms tracks who is currently in each voice channel.
 	// channel_id -> set of usernames.
@@ -1328,149 +1326,6 @@ func (s *NexusServer) verifyUser(username, code string) bool {
 	}
 	_, err = s.DB.Exec("UPDATE users SET is_verified = 1, verification_code = NULL WHERE username = ?", username)
 	return err == nil
-}
-
-func (s *NexusServer) sendEmail(to, subject, body string) error {
-	// Preference order: Resend (no IP allowlist) → Brevo → SMTP. Each one
-	// is opt-in via its env var; users can run with whichever they have.
-	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
-		return sendEmailResend(apiKey, to, subject, body)
-	}
-	if apiKey := os.Getenv("BREVO_API_KEY"); apiKey != "" {
-		return sendEmailBrevo(apiKey, to, subject, body)
-	}
-	return sendEmailSMTP(to, subject, body)
-}
-
-// sendEmailResend posts to Resend's HTTP API. No IP allowlist, no SMTP
-// fragility — just an API key. Free tier covers 100 emails/day, plenty
-// for verification flows. https://resend.com/docs/api-reference/emails/send-email
-func sendEmailResend(apiKey, to, subject, body string) error {
-	from := os.Getenv("RESEND_SENDER")
-	if from == "" {
-		// Resend requires the sender to be from a verified domain. Default
-		// to onboarding@resend.dev (Resend's built-in sandbox sender) so
-		// the first run works without any DNS setup; users override with
-		// RESEND_SENDER="Phaze <noreply@phazechat.world>" once their
-		// custom domain is verified in the Resend dashboard.
-		from = "Phaze <onboarding@resend.dev>"
-	}
-	payload := map[string]any{
-		"from":    from,
-		"to":      []string{to},
-		"subject": subject,
-		"html":    body,
-	}
-	buf, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("resend api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-}
-
-// sendEmailBrevo posts to Brevo's transactional API. Preferred over SMTP — auth
-// is a single header, no port 587, and bounces/opens come back via webhooks.
-func sendEmailBrevo(apiKey, to, subject, body string) error {
-	fromEmail := os.Getenv("BREVO_SENDER_EMAIL")
-	if fromEmail == "" {
-		fromEmail = os.Getenv("SMTP_FROM")
-	}
-	if fromEmail == "" {
-		fromEmail = "noreply@phazechat.world"
-	}
-	fromName := os.Getenv("BREVO_SENDER_NAME")
-	if fromName == "" {
-		fromName = "Phaze"
-	}
-
-	payload := map[string]any{
-		"sender":      map[string]string{"name": fromName, "email": fromEmail},
-		"to":          []map[string]string{{"email": to}},
-		"subject":     subject,
-		"htmlContent": body,
-	}
-	buf, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("api-key", apiKey)
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("accept", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("brevo api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-}
-
-func sendEmailSMTP(to, subject, body string) error {
-	host := os.Getenv("SMTP_HOST")
-	port := os.Getenv("SMTP_PORT")
-	user := os.Getenv("SMTP_USER")
-	pass := os.Getenv("SMTP_PASS")
-
-	if host == "" || user == "" || pass == "" {
-		log.Printf("[MAIL-SIM] To: %s | Subject: %s | Body: %s", to, subject, body)
-		return nil
-	}
-
-	from := os.Getenv("SMTP_FROM")
-	if from == "" {
-		from = user
-	}
-	auth := smtp.PlainAuth("", user, pass, host)
-	// C4: sanitize header values — strip CR/LF to prevent SMTP header injection.
-	sanitizeHeader := func(s string) string {
-		return strings.NewReplacer("\r", "", "\n", "").Replace(s)
-	}
-	msg := []byte("From: Phaze <" + sanitizeHeader(from) + ">\r\n" +
-		"To: " + sanitizeHeader(to) + "\r\n" +
-		"Subject: " + sanitizeHeader(subject) + "\r\n" +
-		"MIME-version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n" +
-		"\r\n" +
-		body + "\r\n")
-
-	addr := fmt.Sprintf("%s:%s", host, port)
-	if port == "" {
-		addr = host + ":587"
-	}
-
-	return smtp.SendMail(addr, auth, user, []string{to}, msg)
-}
-
-// sendEmailLogged wraps sendEmail for 'go'-launched calls so SMTP failures
-// land in logs instead of vanishing silently. Use this any time email
-// delivery is not on the caller's synchronous response path.
-func (s *NexusServer) sendEmailLogged(to, subject, body string) {
-	if err := s.sendEmail(to, subject, body); err != nil {
-		log.Printf("[mail] send to %s subject %q failed: %v", to, subject, err)
-	}
 }
 
 func (s *NexusServer) authenticateUser(username, password string) bool {
@@ -5247,7 +5102,6 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-
 // adminBroadcastHandler posts a message to the global Phaze Hub
 // #announcements channel as the authenticated admin user.
 func (s *NexusServer) adminBroadcastHandler(w http.ResponseWriter, r *http.Request) {
@@ -6144,9 +5998,9 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 			bmc = "https://buymeacoffee.com/phazeworld"
 		}
 		json.NewEncoder(w).Encode(map[string]string{
-			"bmc_url":     bmc,
+			"bmc_url":       bmc,
 			"support_email": os.Getenv("PHAZE_SUPPORT_EMAIL"),
-			"version":     "1.0.0-Phaze",
+			"version":       "1.0.0-Phaze",
 		})
 	}))
 	// Admin portal — hidden path, not /admin. Set PHAZE_ADMIN_PATH env var
