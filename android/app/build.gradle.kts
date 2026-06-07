@@ -100,6 +100,9 @@ dependencies {
     implementation("com.goterl:lazysodium-android:5.1.0@aar")
     implementation("net.java.dev.jna:jna:5.14.0@aar")
 
+    // Core (NotificationCompat for the screen-share foreground service)
+    implementation("androidx.core:core-ktx:1.13.1")
+
     // WebRTC
     implementation("io.getstream:stream-webrtc-android:1.2.2")
 
