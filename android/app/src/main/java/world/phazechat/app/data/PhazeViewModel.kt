@@ -7,7 +7,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import world.phazechat.app.crypto.*
@@ -21,12 +21,16 @@ data class ChatLine(
     val kind: String? = null,
     val fileUrl: String? = null,
     val fileName: String? = null,
+    val edited: Boolean = false,
+    val deleted: Boolean = false,
+    val reaction: String? = null,
 )
 
 data class FriendInfo(
     val username: String,
     val status: String = "Offline",
     val mood: String? = null,
+    val supporter: Boolean = false,
 )
 
 data class SpaceInfo(
@@ -55,6 +59,9 @@ data class ChannelMsg(
     val deleted: Boolean = false,
 )
 
+// GlobalNotice is an admin broadcast shown as a popup on every connected client.
+data class GlobalNotice(val from: String, val message: String)
+
 class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
@@ -73,6 +80,20 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _authError = MutableStateFlow<String?>(null)
     val authError = _authError.asStateFlow()
 
+    // Device Linking State
+    private val _activeLinkCode = MutableStateFlow<String?>(null)
+    val activeLinkCode = _activeLinkCode.asStateFlow()
+    private val _linkStatus = MutableStateFlow<String?>(null)
+    val linkStatus = _linkStatus.asStateFlow()
+    private val _linkError = MutableStateFlow<String?>(null)
+    val linkError = _linkError.asStateFlow()
+
+    // Key Backup State
+    private val _keyBackupStatus = MutableStateFlow<String?>(null)
+    val keyBackupStatus = _keyBackupStatus.asStateFlow()
+    private val _keyBackupError = MutableStateFlow<String?>(null)
+    val keyBackupError = _keyBackupError.asStateFlow()
+
     // Friends
     private val _friends = MutableStateFlow<Map<String, FriendInfo>>(emptyMap())
     val friends = _friends.asStateFlow()
@@ -86,6 +107,25 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     val chatLog = _chatLog.asStateFlow()
     private val _unread = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unread = _unread.asStateFlow()
+    // Who is currently typing to me (the peer's username), auto-cleared.
+    private val _typingFrom = MutableStateFlow<String?>(null)
+    val typingFrom = _typingFrom.asStateFlow()
+    private var typingClearJob: kotlinx.coroutines.Job? = null
+    private var lastTypingSentAt = 0L
+
+    // User search
+    private val _searchResults = MutableStateFlow<List<String>>(emptyList())
+    val searchResults = _searchResults.asStateFlow()
+
+    // Transient status for block/report/channel actions (shown as a snackbar/toast).
+    private val _actionStatus = MutableStateFlow<String?>(null)
+    val actionStatus = _actionStatus.asStateFlow()
+    fun clearActionStatus() { _actionStatus.value = null }
+
+    // Admin global notice popup — broadcast from the admin portal to every client.
+    private val _globalNotice = MutableStateFlow<GlobalNotice?>(null)
+    val globalNotice = _globalNotice.asStateFlow()
+    fun clearGlobalNotice() { _globalNotice.value = null }
 
     // Spaces
     private val _spaces = MutableStateFlow<List<SpaceInfo>>(emptyList())
@@ -108,6 +148,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val isIncoming: Boolean = false,
         val isMuted: Boolean = false,
         val isCameraOn: Boolean = false,
+        val isVideo: Boolean = false,
+        val isScreenSharing: Boolean = false,
+        val hasRemoteVideo: Boolean = false,
         val incomingSdp: String? = null,
     )
     private val _callState = MutableStateFlow<CallState?>(null)
@@ -129,9 +172,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         keyPair = loadOrCreateKeys()
-        nexus.connect()
         observeMessages()
-        autoLogin()
+        observeConnection()   // (re)authenticate on every connect — survives socket drops
+        nexus.connect()
     }
 
     private fun loadOrCreateKeys(): NaClKeyPair {
@@ -150,19 +193,126 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         return kp
     }
 
-    private fun autoLogin() {
-        val tok = _sessionToken.value ?: return
+    // Re-authenticate on EVERY transition to CONNECTED, not just the first.
+    // OkHttp transparently reconnects after a dropped socket (idle timeout,
+    // network blip, app resume); without re-auth that new socket is
+    // unauthenticated and the server silently drops every action (search,
+    // DMs, messages to the Kai bot), making the app appear frozen until a
+    // manual restart. Collecting the state flow re-sends session_auth each
+    // time we reconnect, which the auth_result handler uses to reload state.
+    private fun observeConnection() {
         viewModelScope.launch {
-            nexus.state.first { it == ConnState.CONNECTED }
-            val device = "android/${Build.MODEL}"
-            nexus.send(NexusMessage(type = "session_auth", qrToken = tok, deviceInfo = device))
+            nexus.state.collect { st ->
+                if (st == ConnState.CONNECTED) {
+                    val tok = _sessionToken.value ?: return@collect
+                    nexus.send(NexusMessage(type = "session_auth", qrToken = tok, deviceInfo = "android/${Build.MODEL}"))
+                }
+            }
         }
     }
+
+    private var linkPollJob: Job? = null
 
     fun login(username: String, password: String) {
         _authError.value = null
         nexus.send(NexusMessage(type = "auth", sender = username, body = password, deviceInfo = "android/${Build.MODEL}"))
     }
+
+    fun loginWithLinkCode(code: String) {
+        linkPollJob?.cancel()
+        _authError.value = "Waiting for approval on another device..."
+        var tok = code.trim()
+        if (tok.contains("token=")) {
+            tok = tok.substringAfter("token=").substringBefore("&")
+        }
+        val finalToken = tok
+        linkPollJob = viewModelScope.launch {
+            nexus.state.first { it == ConnState.CONNECTED }
+            while (me.value == null && _authError.value?.contains("Waiting") == true) {
+                nexus.send(NexusMessage(type = "link_check", token = finalToken))
+                delay(2500)
+            }
+        }
+    }
+
+    fun cancelLinkLogin() {
+        linkPollJob?.cancel()
+        linkPollJob = null
+        _authError.value = null
+    }
+
+    fun generateLinkCode() {
+        _linkError.value = null
+        _linkStatus.value = "Generating Link Code..."
+        nexus.send(NexusMessage(type = "link_create", sender = _me.value))
+    }
+
+    fun approveDevice(code: String) {
+        _linkError.value = null
+        _linkStatus.value = "Approving..."
+        var tok = code.trim()
+        if (tok.contains("token=")) {
+            tok = tok.substringAfter("token=").substringBefore("&")
+        }
+        val device = "android/${Build.MODEL}"
+        nexus.send(NexusMessage(type = "link_approve", token = tok, deviceInfo = device, sender = _me.value))
+    }
+
+    fun clearLinkStatus() {
+        _linkStatus.value = null
+        _linkError.value = null
+        _activeLinkCode.value = null
+    }
+
+    fun clearKeyBackupStatus() {
+        _keyBackupStatus.value = null
+        _keyBackupError.value = null
+    }
+
+    /** Encrypt this device's NaCl keypair with [pin] and upload to server. */
+    fun backupKeys(pin: String) {
+        if (pin.length < 4) {
+            _keyBackupError.value = "PIN must be at least 4 characters"
+            return
+        }
+        _keyBackupError.value = null
+        _keyBackupStatus.value = "Encrypting & uploading backup…"
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            try {
+                val blob = world.phazechat.app.crypto.KeyBackup.encryptKeypair(
+                    keyPair.publicKey, keyPair.secretKey, pin
+                )
+                val payload = org.json.JSONObject().apply {
+                    put("ciphertext", blob.ciphertext)
+                    put("salt", blob.salt)
+                    put("iterations", blob.iterations)
+                }.toString()
+                nexus.send(NexusMessage(
+                    type = "key_backup_put",
+                    sender = _me.value,
+                    token = payload,
+                ))
+            } catch (e: Exception) {
+                _keyBackupStatus.value = null
+                _keyBackupError.value = "Backup failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Fetch the encrypted keypair backup from server and decrypt with [pin]. */
+    fun restoreKeys(pin: String) {
+        if (pin.length < 4) {
+            _keyBackupError.value = "PIN must be at least 4 characters"
+            return
+        }
+        _keyBackupError.value = null
+        _keyBackupStatus.value = "Fetching backup from server…"
+        // Store pin for use when the async result comes back
+        pendingRestorePin = pin
+        nexus.send(NexusMessage(type = "key_backup_get", sender = _me.value))
+    }
+
+    private var pendingRestorePin: String? = null
 
     fun register(username: String, email: String, password: String) {
         _authError.value = null
@@ -185,6 +335,70 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val msgId = "${username}-${System.nanoTime()}"
         nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
         appendChat(ChatLine(id = msgId, from = username, text = text, me = true))
+    }
+
+    // ── User search ──────────────────────────────────────────────
+    fun searchUsers(query: String) {
+        val q = query.trim()
+        if (q.isBlank()) { _searchResults.value = emptyList(); return }
+        nexus.send(NexusMessage(type = "search", body = q))
+    }
+    fun clearSearch() { _searchResults.value = emptyList() }
+
+    // ── Block / Report (Google Play requires these for social apps) ──
+    fun blockUser(user: String) {
+        nexus.send(NexusMessage(type = "block", recipient = user))
+    }
+    fun unblockUser(user: String) {
+        nexus.send(NexusMessage(type = "unblock", recipient = user))
+    }
+    fun reportUser(subject: String, reason: String, detail: String) {
+        nexus.send(NexusMessage(type = "report_abuse", recipient = subject, status = reason, body = detail))
+        _actionStatus.value = "Report submitted. Thanks for keeping Phaze safe."
+    }
+
+    // ── Channels ─────────────────────────────────────────────────
+    fun createChannel(serverId: String, name: String, kind: String = "text") {
+        val n = name.trim().lowercase()
+        if (n.isBlank()) return
+        nexus.send(NexusMessage(type = "channel_create", serverId = serverId, channelName = n, kind = kind))
+    }
+
+    // ── Message edit / delete / react (DMs) ──────────────────────
+    fun editMessage(msgId: String, newText: String) {
+        val peer = _selectedChat.value ?: return
+        val peerPub = peerKeys[peer]
+        val body = if (peerPub != null) encryptForPeer(newText, peerPub, keyPair.secretKey) else newText
+        nexus.send(NexusMessage(type = "msg_edit", recipient = peer, msgId = msgId, body = body))
+        _chatLog.value = _chatLog.value.map { if (it.id == msgId) it.copy(text = newText, edited = true) else it }
+    }
+    fun deleteMessage(msgId: String) {
+        val peer = _selectedChat.value ?: return
+        nexus.send(NexusMessage(type = "msg_delete", recipient = peer, msgId = msgId))
+        _chatLog.value = _chatLog.value.map { if (it.id == msgId) it.copy(text = "", deleted = true) else it }
+    }
+    fun reactMessage(msgId: String, emoji: String) {
+        val peer = _selectedChat.value ?: return
+        nexus.send(NexusMessage(type = "msg_react", recipient = peer, msgId = msgId, reaction = emoji))
+        _chatLog.value = _chatLog.value.map {
+            if (it.id == msgId) it.copy(reaction = if (it.reaction == emoji) null else emoji) else it
+        }
+    }
+
+    // ── Typing indicator (throttled to ~1/sec) ───────────────────
+    fun sendTyping() {
+        val peer = _selectedChat.value ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSentAt < 1000) return
+        lastTypingSentAt = now
+        nexus.send(NexusMessage(type = "typing", recipient = peer))
+    }
+
+    // Remove a user from the local chat/friend lists (after blocking).
+    private fun dropChat(user: String) {
+        _friends.value = _friends.value.toMutableMap().apply { remove(user) }
+        _unread.value = _unread.value.toMutableMap().apply { remove(user) }
+        if (_selectedChat.value == user) { _selectedChat.value = null; _chatLog.value = emptyList() }
     }
 
     fun sendFile(uri: android.net.Uri) {
@@ -310,6 +524,14 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         nexus.connect()
     }
 
+    // Permanently erase the account (GDPR right-to-erasure). The server
+    // requires the current password as confirmation. On success the
+    // delete_account_result handler signs the user out.
+    fun deleteAccount(password: String) {
+        if (password.isBlank()) { _actionStatus.value = "Enter your password to confirm"; return }
+        nexus.send(NexusMessage(type = "delete_account", body = password))
+    }
+
     // Spaces
     fun loadSpaces() { nexus.send(NexusMessage(type = "server_list")) }
 
@@ -318,7 +540,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _activeSpace.value = id
         _activeChannel.value = null
         _channelMessages.value = emptyList()
-        nexus.send(NexusMessage(type = "server_channels", serverId = id))
+        nexus.send(NexusMessage(type = "server_info", serverId = id))
     }
 
     fun selectChannel(id: String) {
@@ -335,11 +557,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun createSpace(name: String, visibility: String) {
-        nexus.send(NexusMessage(type = "server_create", serverName = name, body = visibility))
+        nexus.send(NexusMessage(type = "server_create", serverName = name, visibility = visibility))
     }
 
     fun joinSpace(code: String) {
-        nexus.send(NexusMessage(type = "server_join", body = code))
+        nexus.send(NexusMessage(type = "server_join", inviteCode = code))
     }
 
     // Stories
@@ -420,11 +642,15 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val me = _me.value ?: return
         val cm = CallManager(getApplication())
         callManager = cm
-        _callState.value = CallState(peer = peer, status = "ringing", isCameraOn = withVideo)
+        _callState.value = CallState(peer = peer, status = "ringing", isCameraOn = withVideo, isVideo = withVideo)
 
         val iceServers = buildIceServers()
         cm.createPeerConnection(iceServers)
         cm.startLocalMedia(getApplication(), withVideo)
+
+        cm.onRemoteVideoTrack = {
+            _callState.value = _callState.value?.copy(hasRemoteVideo = true)
+        }
 
         cm.onIceCandidate = { candidate ->
             nexus.send(NexusMessage(
@@ -460,13 +686,19 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val cs = _callState.value ?: return
         val me = _me.value ?: return
         val sdp = cs.incomingSdp ?: return
+        // Honor video: if the caller's offer advertises a video m-line, answer with video too.
+        val withVideo = sdp.contains("m=video")
         val cm = CallManager(getApplication())
         callManager = cm
-        _callState.value = cs.copy(status = "connecting")
+        _callState.value = cs.copy(status = "connecting", isVideo = withVideo, isCameraOn = withVideo)
 
         val iceServers = buildIceServers()
         cm.createPeerConnection(iceServers)
-        cm.startLocalMedia(getApplication(), false)
+        cm.startLocalMedia(getApplication(), withVideo)
+
+        cm.onRemoteVideoTrack = {
+            _callState.value = _callState.value?.copy(hasRemoteVideo = true)
+        }
 
         cm.onIceCandidate = { candidate ->
             nexus.send(NexusMessage(
@@ -524,6 +756,19 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _callState.value = _callState.value?.copy(isCameraOn = on)
     }
 
+    /** Begin screen sharing with the Intent returned by the MediaProjection permission prompt. */
+    fun startScreenShare(projectionData: android.content.Intent) {
+        val cm = callManager ?: return
+        cm.startScreenShare(projectionData)
+        _callState.value = _callState.value?.copy(isScreenSharing = true)
+    }
+
+    fun stopScreenShare() {
+        val cm = callManager ?: return
+        cm.stopScreenShare(getApplication())
+        _callState.value = _callState.value?.copy(isScreenSharing = cm.isScreenSharing)
+    }
+
     private fun buildIceServers(): List<org.webrtc.PeerConnection.IceServer> {
         val servers = mutableListOf(
             org.webrtc.PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
@@ -559,6 +804,51 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun handleMessage(msg: NexusMessage) {
         when (msg.type) {
+            "link_check" -> {
+                if (msg.status == "approved" && msg.qrToken != null) {
+                    linkPollJob?.cancel()
+                    _me.value = msg.sender
+                    _authError.value = null
+                    _sessionToken.value = msg.qrToken
+                    prefs.edit().putString("session_token", msg.qrToken).apply()
+                    msg.sender?.let { prefs.edit().putString("username", it).apply() }
+                    
+                    if (msg.turnUrl != null) {
+                        turnUrl = msg.turnUrl; turnUsername = msg.turnUsername; turnPassword = msg.turnPassword
+                    }
+                    nexus.send(NexusMessage(
+                        type = "presence", sender = msg.sender, status = "Online",
+                        publicKey = encodePublicKeyB64(keyPair.publicKey),
+                        keyFingerprint = fingerprint(keyPair.publicKey),
+                    ))
+                    loadSpaces()
+                } else if (msg.error != null) {
+                    linkPollJob?.cancel()
+                    _authError.value = msg.error
+                }
+            }
+
+            "link_result" -> {
+                if (msg.status == "ok") {
+                    _activeLinkCode.value = msg.token
+                    _linkStatus.value = "Link Code generated. Share it with your new device."
+                } else if (msg.status == "approved") {
+                    _linkStatus.value = "Device approved successfully."
+                    _activeLinkCode.value = null
+                } else if (msg.error != null) {
+                    _linkError.value = msg.error
+                    _activeLinkCode.value = null
+                }
+            }
+
+            "qr_login_result" -> {
+                if (msg.status == "approved") {
+                    _linkStatus.value = "Device approved successfully."
+                } else if (msg.error != null) {
+                    _linkError.value = msg.error
+                }
+            }
+
             "auth_result" -> {
                 if (msg.status == "ok") {
                     _me.value = msg.sender
@@ -594,7 +884,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 msg.sender?.let { sender ->
                     _friends.value = _friends.value.toMutableMap().apply {
                         val existing = get(sender)
-                        put(sender, FriendInfo(sender, msg.status ?: "Offline", existing?.mood))
+                        put(sender, FriendInfo(sender, msg.status ?: "Offline", existing?.mood, msg.supporter || (existing?.supporter ?: false)))
                     }
                     msg.publicKey?.let { pk -> decodePublicKeyB64(pk)?.let { peerKeys[sender] = it } }
                 }
@@ -641,15 +931,80 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
             // Spaces
             "server_list_result" -> handleServerList(msg)
-            "server_channels_result" -> handleChannels(msg)
+            "server_info_result", "server_channels_updated" -> handleChannels(msg)
             "channel_history_result" -> handleChannelHistory(msg)
             "channel_msg" -> handleChannelMsg(msg)
             "server_created", "server_joined" -> loadSpaces()
+            "channel_result" -> { msg.error?.let { _actionStatus.value = "Channel: $it" } }
+
+            // Search
+            "search_results" -> _searchResults.value = msg.results ?: emptyList()
+
+            // Block / report confirmations
+            "block_result" -> {
+                when (msg.status) {
+                    "blocked" -> { _actionStatus.value = "Blocked ${msg.recipient}"; msg.recipient?.let { dropChat(it) } }
+                    "unblocked" -> _actionStatus.value = "Unblocked ${msg.recipient}"
+                    else -> msg.error?.let { _actionStatus.value = "Block: $it" }
+                }
+            }
+            "report_result" -> {
+                if (msg.status == "received") _actionStatus.value = "Report received. Thank you."
+                else msg.error?.let { _actionStatus.value = "Report: $it" }
+            }
+
+            // Account deletion confirmation
+            "delete_account_result" -> {
+                if (msg.status == "ok") {
+                    _actionStatus.value = "Your account has been deleted."
+                    signOut()
+                } else {
+                    _actionStatus.value = msg.error ?: "Couldn't delete account. Try again."
+                }
+            }
+
+            // Typing indicator from a peer
+            "typing" -> {
+                val from = msg.sender ?: return
+                if (_selectedChat.value == from) {
+                    _typingFrom.value = from
+                    typingClearJob?.cancel()
+                    typingClearJob = viewModelScope.launch {
+                        kotlinx.coroutines.delay(4000)
+                        _typingFrom.value = null
+                    }
+                }
+            }
+
+            // Admin broadcast popup to every connected client
+            "global_notice" -> {
+                val text = msg.body ?: return
+                _globalNotice.value = GlobalNotice(from = msg.sender ?: "Phaze", message = text)
+            }
+
+            // Live edit / delete / react relays for DMs
+            "msg_edit" -> {
+                val id = msg.msgId ?: return
+                val sender = msg.sender ?: return
+                val text = decrypt(msg.body, sender)
+                _chatLog.value = _chatLog.value.map { if (it.id == id) it.copy(text = text, edited = true) else it }
+            }
+            "msg_delete" -> {
+                val id = msg.msgId ?: return
+                _chatLog.value = _chatLog.value.map { if (it.id == id) it.copy(text = "", deleted = true) else it }
+            }
+            "msg_react" -> {
+                val id = msg.msgId ?: return
+                val emoji = msg.reaction
+                _chatLog.value = _chatLog.value.map {
+                    if (it.id == id) it.copy(reaction = if (it.reaction == emoji) null else emoji) else it
+                }
+            }
 
             // Call signaling
             "call_offer" -> {
                 val from = msg.sender ?: return
-                _callState.value = CallState(peer = from, status = "ringing", isIncoming = true, incomingSdp = msg.sdp)
+                _callState.value = CallState(peer = from, status = "ringing", isIncoming = true, incomingSdp = msg.sdp, isVideo = (msg.sdp?.contains("m=video") == true))
             }
             "call_answer" -> {
                 val sdp = msg.sdp ?: return
@@ -673,6 +1028,60 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 callManager?.hangUp()
                 callManager = null
                 _callState.value = null
+            }
+
+            "key_backup_result" -> handleKeyBackupResult(msg)
+        }
+    }
+
+    private fun handleKeyBackupResult(msg: NexusMessage) {
+        when {
+            // Server acknowledged a successful put (status = "stored")
+            msg.status == "stored" -> {
+                pendingRestorePin = null
+                _keyBackupStatus.value = "✓ Key backup saved successfully"
+            }
+            // Server says no backup exists
+            msg.status == "not_found" -> {
+                pendingRestorePin = null
+                _keyBackupStatus.value = null
+                _keyBackupError.value = "No backup found on server. Back up your keys first."
+            }
+            // Server returned the backup blob (status = "ok", token field contains JSON blob)
+            msg.status == "ok" && msg.token != null -> {
+                val pin = pendingRestorePin ?: run {
+                    _keyBackupError.value = "No PIN found for restoration"
+                    _keyBackupStatus.value = null
+                    return
+                }
+                pendingRestorePin = null
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    try {
+                        val j = org.json.JSONObject(msg.token)
+                        val blob = world.phazechat.app.crypto.KeyBackupBlob(
+                            ciphertext = j.getString("ciphertext"),
+                            salt = j.getString("salt"),
+                            iterations = j.getInt("iterations"),
+                        )
+                        val restored = world.phazechat.app.crypto.KeyBackup.decryptKeypair(blob, pin)
+                        // Persist and activate restored keypair
+                        keyPair = restored
+                        prefs.edit()
+                            .putString("nacl_pub", world.phazechat.app.crypto.encodePublicKeyB64(restored.publicKey))
+                            .putString("nacl_sec", world.phazechat.app.crypto.encodePublicKeyB64(restored.secretKey))
+                            .apply()
+                        _keyBackupStatus.value = "✓ Keys restored successfully"
+                        _keyBackupError.value = null
+                    } catch (e: Exception) {
+                        _keyBackupStatus.value = null
+                        _keyBackupError.value = "Restore failed: ${e.message}"
+                    }
+                }
+            }
+            msg.error != null -> {
+                pendingRestorePin = null
+                _keyBackupStatus.value = null
+                _keyBackupError.value = msg.error
             }
         }
     }
@@ -706,7 +1115,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun handleServerList(msg: NexusMessage) {
-        val raw = msg.toJson().optString("raw_servers", null) ?: return
+        val raw = msg.rawServers ?: return
         try {
             val arr = JSONArray(raw)
             _spaces.value = (0 until arr.length()).map { i ->
@@ -724,7 +1133,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun handleChannels(msg: NexusMessage) {
         val serverId = msg.serverId ?: return
-        val raw = msg.toJson().optString("raw_channels", null) ?: return
+        val raw = msg.rawChannels ?: return
         try {
             val arr = JSONArray(raw)
             val list = (0 until arr.length()).map { i ->
@@ -739,7 +1148,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun handleChannelHistory(msg: NexusMessage) {
-        val raw = msg.toJson().optString("raw_messages", null) ?: return
+        val raw = msg.rawMessages ?: return
         try {
             val arr = JSONArray(raw)
             _channelMessages.value = (0 until arr.length()).map { i ->

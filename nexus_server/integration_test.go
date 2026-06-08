@@ -36,6 +36,10 @@ func newTestServer(t *testing.T) (*NexusServer, *httptest.Server, string) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", srv.handleConnections)
+	mux.HandleFunc("/api/v1/admin/login", srv.adminLoginHandler)
+	mux.HandleFunc("/api/v1/admin/me", srv.adminMeHandler)
+	mux.HandleFunc("/api/v1/admin/logout", srv.adminLogoutHandler)
+	mux.HandleFunc("/api/v1/admin/users", srv.adminUsersHandler)
 	mux.HandleFunc("/api/v1/admin/reports", srv.adminReportsHandler)
 	mux.HandleFunc("/api/v1/admin/reports/", srv.adminResolveReportHandler)
 	mux.HandleFunc("/api/v1/admin/users/", srv.adminBanHandler)
@@ -682,5 +686,180 @@ func TestSmoke_ServersAndChannels(t *testing.T) {
 	ar := readUntil(t, alice, func(m NexusMessage) bool { return m.Type == "server_leave_result" })
 	if ar.Error == "" {
 		t.Fatalf("owner leave should be refused: %+v", ar)
+	}
+}
+
+func TestAudit_CookieAuthPaginationAndIsolation(t *testing.T) {
+	srv, ts, wsBase := newTestServer(t)
+	defer ts.Close()
+
+	// Register admin user
+	registerAndVerify(t, srv, "admin", "adminpass123")
+	// Make them admin in database
+	if _, err := srv.DB.Exec("UPDATE users SET is_admin = 1, role = 'admin' WHERE username = 'admin'"); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
+
+	// Also register a few other users to test pagination
+	registerAndVerify(t, srv, "user1", "password123")
+	registerAndVerify(t, srv, "user2", "password123")
+	registerAndVerify(t, srv, "user3", "password123")
+
+	// 1. POST to /api/v1/admin/login
+	loginJSON := `{"username":"admin","password":"adminpass123"}`
+	resp, err := http.Post(ts.URL+"/api/v1/admin/login", "application/json", strings.NewReader(loginJSON))
+	if err != nil {
+		t.Fatalf("login post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status: %d", resp.StatusCode)
+	}
+
+	// Check if the cookie was set
+	cookies := resp.Cookies()
+	var adminCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "phaze_admin_token" {
+			adminCookie = c
+			break
+		}
+	}
+	if adminCookie == nil {
+		t.Fatalf("expected phaze_admin_token cookie in login response")
+	}
+	if !adminCookie.HttpOnly {
+		t.Fatalf("cookie should be HttpOnly")
+	}
+
+	// 2. GET to /api/v1/admin/me using the cookie
+	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/me", nil)
+	req.AddCookie(adminCookie)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("me request: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("me status: %d", resp2.StatusCode)
+	}
+	var meRes map[string]string
+	json.NewDecoder(resp2.Body).Decode(&meRes)
+	if meRes["username"] != "admin" || meRes["role"] != "admin" {
+		t.Fatalf("unexpected me response: %+v", meRes)
+	}
+
+	// 3. GET to /api/v1/admin/users using cookie (Pagination check)
+	req3, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/users?limit=2&offset=1", nil)
+	req3.AddCookie(adminCookie)
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatalf("users paginated request: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("users paginated status: %d", resp3.StatusCode)
+	}
+	var usersRes map[string]any
+	json.NewDecoder(resp3.Body).Decode(&usersRes)
+	usersList, ok := usersRes["users"].([]any)
+	if !ok {
+		t.Fatalf("expected users array in response: %+v", usersRes)
+	}
+	if len(usersList) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(usersList))
+	}
+	if int(usersRes["total"].(float64)) != 4 { // admin + user1 + user2 + user3 = 4
+		t.Fatalf("expected total 4, got %v", usersRes["total"])
+	}
+
+	// 4. GET to /api/v1/admin/users (Search check)
+	req4, _ := http.NewRequest("GET", ts.URL+"/api/v1/admin/users?search=user2", nil)
+	req4.AddCookie(adminCookie)
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil {
+		t.Fatalf("users search request: %v", err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("users search status: %d", resp4.StatusCode)
+	}
+	var searchRes map[string]any
+	json.NewDecoder(resp4.Body).Decode(&searchRes)
+	searchList := searchRes["users"].([]any)
+	if len(searchList) != 1 {
+		t.Fatalf("expected 1 search result, got %d", len(searchList))
+	}
+
+	// 5. Test email vs phone verification code isolation (M9)
+	// Register user "iso_user" (unverified, has verification_code)
+	cCode, err := srv.registerUser("iso_user", "iso@example.com", "", "password123")
+	if err != nil {
+		t.Fatalf("register iso_user: %v", err)
+	}
+	if cCode == "" {
+		t.Fatalf("expected email verification code")
+	}
+
+	// Verify it is in database
+	var dbEmailCode, dbPhoneCode sql.NullString
+	srv.DB.QueryRow("SELECT verification_code, phone_verification_code FROM users WHERE username = 'iso_user'").Scan(&dbEmailCode, &dbPhoneCode)
+	if !dbEmailCode.Valid || dbEmailCode.String != cCode {
+		t.Fatalf("expected email verification code %s, got %v", cCode, dbEmailCode)
+	}
+	if dbPhoneCode.Valid {
+		t.Fatalf("expected phone verification code to be NULL initially, got %v", dbPhoneCode)
+	}
+
+	// Connect to WS and request phone link for "iso_user"
+	wsConn := dial(t, wsBase)
+	defer wsConn.Close()
+	// Authenticate over WS
+	if _, err := srv.DB.Exec("UPDATE users SET is_verified = 1 WHERE username = 'iso_user'"); err != nil {
+		t.Fatalf("manually verify user: %v", err)
+	}
+	auth(t, wsConn, "iso_user", "password123")
+
+	// Send request_phone_link
+	if err := wsConn.WriteJSON(NexusMessage{Type: "request_phone_link", Body: "+15555555555"}); err != nil {
+		t.Fatalf("request_phone_link write: %v", err)
+	}
+	readUntil(t, wsConn, func(m NexusMessage) bool { return m.Type == "phone_link_result" && m.Status == "code_sent" })
+
+	// Check database: verification_code and phone_verification_code should be separate!
+	srv.DB.QueryRow("SELECT verification_code, phone_verification_code FROM users WHERE username = 'iso_user'").Scan(&dbEmailCode, &dbPhoneCode)
+	if !dbEmailCode.Valid || dbEmailCode.String != cCode {
+		t.Fatalf("email verification code was overwritten or cleared: got %v", dbEmailCode)
+	}
+	if !dbPhoneCode.Valid || dbPhoneCode.String == "" {
+		t.Fatalf("phone verification code was not generated")
+	}
+
+	// 6. POST to /api/v1/admin/logout
+	req5, _ := http.NewRequest("POST", ts.URL+"/api/v1/admin/logout", nil)
+	req5.AddCookie(adminCookie)
+	resp5, err := http.DefaultClient.Do(req5)
+	if err != nil {
+		t.Fatalf("logout request: %v", err)
+	}
+	defer resp5.Body.Close()
+	if resp5.StatusCode != http.StatusOK {
+		t.Fatalf("logout status: %d", resp5.StatusCode)
+	}
+	// Check if cookie is expired
+	logoutCookies := resp5.Cookies()
+	var logoutCookie *http.Cookie
+	for _, c := range logoutCookies {
+		if c.Name == "phaze_admin_token" {
+			logoutCookie = c
+			break
+		}
+	}
+	if logoutCookie == nil {
+		t.Fatalf("expected phaze_admin_token cookie in logout response")
+	}
+	if logoutCookie.MaxAge != -1 {
+		t.Fatalf("expected cookie MaxAge = -1, got %d", logoutCookie.MaxAge)
 	}
 }

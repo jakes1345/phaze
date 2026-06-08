@@ -1,7 +1,10 @@
 package world.phazechat.app
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.media.MediaRecorder
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,15 +12,29 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import world.phazechat.app.data.PhazeViewModel
 import world.phazechat.app.ui.*
@@ -53,6 +70,29 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val channelMessages by vm.channelMessages.collectAsState()
     val callState by vm.callState.collectAsState()
     val stories by vm.stories.collectAsState()
+    val typingFrom by vm.typingFrom.collectAsState()
+    val searchResults by vm.searchResults.collectAsState()
+    val actionStatus by vm.actionStatus.collectAsState()
+    val globalNotice by vm.globalNotice.collectAsState()
+
+    val toastCtx = LocalContext.current
+    LaunchedEffect(actionStatus) {
+        actionStatus?.let {
+            android.widget.Toast.makeText(toastCtx, it, android.widget.Toast.LENGTH_SHORT).show()
+            vm.clearActionStatus()
+        }
+    }
+
+    // Admin global notice — overlays every screen (placed before the early
+    // returns below so it shows during calls, chats, stories, etc.).
+    globalNotice?.let { gn ->
+        AlertDialog(
+            onDismissRequest = { vm.clearGlobalNotice() },
+            title = { Text("📢 Phaze Announcement") },
+            text = { Text(gn.message) },
+            confirmButton = { Button(onClick = { vm.clearGlobalNotice() }) { Text("Got it") } },
+        )
+    }
 
     var viewingStoryAuthor by remember { mutableStateOf<String?>(null) }
 
@@ -65,9 +105,76 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
 
     val context = LocalContext.current
 
+    var scannedLinkCode by remember { mutableStateOf("") }
+
+    val scannerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val code = result.data?.getStringExtra("scanned_code")
+            if (!code.isNullOrBlank()) {
+                var tok = code.trim()
+                if (tok.contains("token=")) {
+                    tok = tok.substringAfter("token=").substringBefore("&")
+                }
+                scannedLinkCode = tok
+                vm.loginWithLinkCode(tok)
+            }
+        }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val code = try {
+                val inputStream = context.contentResolver.openInputStream(it)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmap != null) {
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    val pixels = IntArray(width * height)
+                    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                    val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+                    val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+                    com.google.zxing.MultiFormatReader().decode(binaryBitmap).text
+                } else null
+            } catch (e: Exception) {
+                android.util.Log.e("PhazeRoot", "Failed to decode gallery QR: ${e.message}")
+                null
+            }
+
+            if (!code.isNullOrBlank()) {
+                var tok = code.trim()
+                if (tok.contains("token=")) {
+                    tok = tok.substringAfter("token=").substringBefore("&")
+                }
+                scannedLinkCode = tok
+                vm.loginWithLinkCode(tok)
+            } else {
+                android.widget.Toast.makeText(context, "No QR code found in selected image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // File picker
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { vm.sendFile(it) }
+    }
+
+    // Screen-share (MediaProjection) permission flow for video calls.
+    val mediaProjectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    val screenShareLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            ScreenShareService.start(context)
+            vm.startScreenShare(data)
+        }
     }
 
     // Voice recording state
@@ -126,12 +233,27 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     // Call overlay
     if (callState != null) {
         val cs = callState!!
+        val cm = vm.callManager
         CallScreen(
             peer = cs.peer, isIncoming = cs.isIncoming, callStatus = cs.status,
             isMuted = cs.isMuted, isCameraOn = cs.isCameraOn,
+            isVideo = cs.isVideo, isScreenSharing = cs.isScreenSharing,
+            hasRemoteVideo = cs.hasRemoteVideo,
+            eglContext = cm?.eglContext,
+            localVideoTrack = cm?.localVideoTrack,
+            remoteVideoTrack = cm?.remoteVideoTrack,
             onAnswer = { vm.answerCall() }, onReject = { vm.rejectCall() },
-            onHangUp = { vm.endCall() }, onToggleMute = { vm.toggleCallMute() },
+            onHangUp = { ScreenShareService.stop(context); vm.endCall() },
+            onToggleMute = { vm.toggleCallMute() },
             onToggleCamera = { vm.toggleCallCamera() },
+            onToggleScreenShare = {
+                if (cs.isScreenSharing) {
+                    vm.stopScreenShare()
+                    ScreenShareService.stop(context)
+                } else {
+                    screenShareLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                }
+            },
         )
         return
     }
@@ -141,6 +263,16 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             error = authError,
             onLogin = { u, p -> vm.login(u, p) },
             onRegister = { u, e, p -> vm.register(u, e, p) },
+            onLoginWithLinkCode = { vm.loginWithLinkCode(it) },
+            onCancelLinkLogin = { vm.cancelLinkLogin() },
+            scannedLinkCode = scannedLinkCode,
+            onScanQR = {
+                val intent = android.content.Intent(context, QRScannerActivity::class.java)
+                scannerLauncher.launch(intent)
+            },
+            onScanGallery = {
+                galleryLauncher.launch("image/*")
+            }
         )
         return
     }
@@ -157,12 +289,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onSend = { vm.sendMessage(it) },
                 onCall = { vm.startCall(peer) },
             )
-            // TODO: overlay recording UI — for now the send/cancel is on stop
-            AlertDialog(
-                onDismissRequest = { stopVoiceRecord(false) },
-                title = { Text("Recording voice message...") },
-                confirmButton = { Button(onClick = { stopVoiceRecord(true) }) { Text("Send") } },
-                dismissButton = { TextButton(onClick = { stopVoiceRecord(false) }) { Text("Cancel") } },
+            VoiceRecordingOverlay(
+                onSend = { stopVoiceRecord(true) },
+                onCancel = { stopVoiceRecord(false) },
             )
         } else {
             ChatScreen(
@@ -170,8 +299,16 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onBack = { vm.selectChat("") },
                 onSend = { vm.sendMessage(it) },
                 onCall = { vm.startCall(peer) },
+                onVideoCall = { vm.startCall(peer, withVideo = true) },
                 onAttachFile = { filePicker.launch("*/*") },
                 onVoiceRecord = { startVoiceRecord() },
+                typing = typingFrom == peer,
+                onTyping = { vm.sendTyping() },
+                onBlock = { vm.blockUser(peer) },
+                onReport = { reason, detail -> vm.reportUser(peer, reason, detail) },
+                onEdit = { id, text -> vm.editMessage(id, text) },
+                onDelete = { id -> vm.deleteMessage(id) },
+                onReact = { id, emoji -> vm.reactMessage(id, emoji) },
             )
         }
         return
@@ -207,6 +344,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onAcceptFriend = { vm.acceptFriend(it) },
                     onViewStory = { viewingStoryAuthor = it },
                     onAddStory = { storyPicker.launch("image/*") },
+                    searchResults = searchResults,
+                    onSearch = { vm.searchUsers(it) },
+                    onClearSearch = { vm.clearSearch() },
                 )
                 1 -> SpacesScreen(
                     spaces = spaces, activeSpace = activeSpace, channels = channels,
@@ -217,14 +357,80 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onCreateSpace = { name, vis -> vm.createSpace(name, vis) },
                     onJoinSpace = { vm.joinSpace(it) },
                     onBack = { vm.selectSpace("") },
+                    onCreateChannel = { sid, name, kind -> vm.createChannel(sid, name, kind) },
                 )
-                2 -> SettingsScreen(
-                    me = me!!,
-                    onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
-                    onEnable2FA = { vm.enable2FA() },
-                    onDisable2FA = { vm.disable2FA() },
-                    onSignOut = { vm.signOut() },
+                2 -> {
+                    val linkCode by vm.activeLinkCode.collectAsState()
+                    val linkStatus by vm.linkStatus.collectAsState()
+                    val linkError by vm.linkError.collectAsState()
+                    val keyBackupStatus by vm.keyBackupStatus.collectAsState()
+                    val keyBackupError by vm.keyBackupError.collectAsState()
+                    SettingsScreen(
+                        me = me!!,
+                        mood = friends[me]?.mood ?: "",
+                        displayName = "",
+                        onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
+                        onEnable2FA = { vm.enable2FA() },
+                        onDisable2FA = { vm.disable2FA() },
+                        onSignOut = { vm.signOut() },
+                        linkCode = linkCode,
+                        linkStatus = linkStatus,
+                        linkError = linkError,
+                        onGenerateLinkCode = { vm.generateLinkCode() },
+                        onApproveDevice = { vm.approveDevice(it) },
+                        onClearLinkStatus = { vm.clearLinkStatus() },
+                        keyBackupStatus = keyBackupStatus,
+                        keyBackupError = keyBackupError,
+                        onBackupKeys = { pin -> vm.backupKeys(pin) },
+                        onRestoreKeys = { pin -> vm.restoreKeys(pin) },
+                        onClearKeyBackupStatus = { vm.clearKeyBackupStatus() },
+                        onDeleteAccount = { pw -> vm.deleteAccount(pw) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Bottom overlay shown while a voice message is recording: pulsing dot, timer, Cancel/Send. */
+@Composable
+fun VoiceRecordingOverlay(onSend: () -> Unit, onCancel: () -> Unit) {
+    var elapsed by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            elapsed++
+        }
+    }
+    val pulse = rememberInfiniteTransition(label = "rec")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f, targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "dot",
+    )
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE53935))
+                        .alpha(dotAlpha),
                 )
+                Spacer(Modifier.width(10.dp))
+                Text("Recording  %d:%02d".format(elapsed / 60, elapsed % 60), fontSize = 15.sp)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                Spacer(Modifier.width(4.dp))
+                Button(onClick = onSend) { Text("Send") }
             }
         }
     }

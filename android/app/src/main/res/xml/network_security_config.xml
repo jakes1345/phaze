@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Config — enforces HTTPS-only for all connections.
+    phazechat.world is the sole production endpoint; cleartext is blocked app-wide.
+    See: https://developer.android.com/training/articles/security-config
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Trust system CAs only (no user-installed certificates) -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Production endpoint — TLS 1.2+ enforced by server -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">phazechat.world</domain>
+    </domain-config>
+</network-security-config>

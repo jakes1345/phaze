@@ -10,9 +10,12 @@ WORKDIR /src
 # Bring in just the Go module first so the dependency download caches well.
 COPY nexus_server/go.mod nexus_server/go.sum ./nexus_server/
 RUN cd nexus_server && go mod download
+# VERSION is the repo-root single source of truth; stamp it into the binary.
+COPY VERSION ./VERSION
 COPY nexus_server/ ./nexus_server/
 RUN cd nexus_server \
- && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/nexus-server . \
+ && VER="$(cat /src/VERSION)" \
+ && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VER" -o /out/nexus-server . \
  && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/seed-admin ./cmd/seed-admin
 
 # Build Kai bot

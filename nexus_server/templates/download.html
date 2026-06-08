@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Download Phaze — Free Encrypted Chat & Video Calls</title>
-    <meta name="description" content="Download Phaze for Windows, Mac, Linux, and Android. Free encrypted video calls, voice calls, group spaces, and instant messaging. No ads, no tracking.">
+    <meta name="description" content="Phaze for Android and Web. Free encrypted video calls, voice calls, group spaces, and instant messaging. No ads, no tracking.">
     <meta name="theme-color" content="#863bff">
     <link rel="canonical" href="https://phazechat.world/download">
     <link rel="icon" type="image/svg+xml" href="/web/favicon.svg">
@@ -12,12 +12,12 @@
     <link rel="apple-touch-icon" sizes="192x192" href="/web/icon-192.png">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Download Phaze — Free Encrypted Chat & Calls">
-    <meta property="og:description" content="Download Phaze for Windows, Mac, Linux, and Android. Free encrypted video calls, voice calls, and messaging.">
+    <meta property="og:description" content="Phaze for Android and Web. Free encrypted video calls, voice calls, and messaging.">
     <meta property="og:url" content="https://phazechat.world/download">
     <meta property="og:image" content="https://phazechat.world/web/icon-512.png">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Download Phaze">
-    <meta name="twitter:description" content="Free encrypted chat, voice, video calls. Windows, Mac, Linux, Android, Web.">
+    <meta name="twitter:description" content="Free encrypted chat, voice, video calls. Android and Web.">
     <meta name="twitter:image" content="https://phazechat.world/web/icon-512.png">
     <script type="application/ld+json">
     {
@@ -26,7 +26,7 @@
       "name": "Phaze",
       "url": "https://phazechat.world/download",
       "applicationCategory": "CommunicationApplication",
-      "operatingSystem": "Windows, macOS, Linux, Android",
+      "operatingSystem": "Android, Web",
       "description": "Free encrypted chat, voice calls, video calls, group spaces, and livestreams.",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "downloadUrl": "https://phazechat.world/download"
@@ -144,7 +144,7 @@
     <section class="dl-hero">
         <div class="container">
             <h1><strong>Download Phaze</strong></h1>
-            <p>Native apps for Linux, Windows and Android. Or just open the web client — it has every feature.</p>
+            <p>Get the Android app, or just open the web client — it runs in any browser, installs as an app, and has every feature.</p>
         </div>
     </section>
 
@@ -152,47 +152,21 @@
         <div class="container">
             <h2>Pick your platform</h2>
             <p style="text-align:center;color:var(--text-light);font-size:0.9rem;max-width:680px;margin:0 auto 28px;">
-                Honest status: <strong>web client</strong> is the production-ready surface. Native binaries are pre-1.0 and shipped without code-signing — your OS may warn you. macOS and iOS are deferred (no Apple hardware available for the build pipeline yet).
+                Phaze ships on two surfaces: the <strong>web client</strong> (installable PWA, runs in any browser including on iPhone and Mac) and the <strong>Android app</strong>. Desktop and iOS are web-only for now — the web client has every feature.
             </p>
             <div class="platform-grid" id="platforms">
-                <div class="platform-card" id="card-web">
+                <div class="platform-card recommended" id="card-web">
                     <span class="platform-icon">🌐</span>
                     <div class="platform-name">Web</div>
-                    <div class="platform-detail">Any modern browser · works on phone too</div>
+                    <div class="platform-detail">Any browser · installable · desktop, iPhone &amp; Mac</div>
                     <a href="/web/" class="platform-btn" style="background:var(--brand);color:#fff;">Open Phaze Web</a>
-                </div>
-                <div class="platform-card" id="card-linux">
-                    <span class="platform-icon">🐧</span>
-                    <div class="platform-name">Linux</div>
-                    <div class="platform-detail">x86_64 binary · Ubuntu 24.04+ / Fedora 40+ tested</div>
-                    <a href="/downloads/Phaze.linux" download="Phaze.linux" class="platform-btn" data-dl="linux">Download binary</a>
-                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">After download: <code>chmod +x Phaze.linux &amp;&amp; ./Phaze.linux</code></p>
-                </div>
-                <div class="platform-card" id="card-windows">
-                    <span class="platform-icon">🪟</span>
-                    <div class="platform-name">Windows</div>
-                    <div class="platform-detail">Windows 10+ · x64 · unsigned</div>
-                    <a href="/downloads/Phaze.exe" download="Phaze.exe" class="platform-btn" data-dl="windows">Download .exe</a>
-                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">SmartScreen may warn — click "More info → Run anyway".</p>
                 </div>
                 <div class="platform-card" id="card-android">
                     <span class="platform-icon">📱</span>
                     <div class="platform-name">Android</div>
-                    <div class="platform-detail">Android 10+ · ARM64</div>
+                    <div class="platform-detail">Android 8.0+ · video calls, screen share, push</div>
                     <a href="/downloads/Phaze.apk" download="Phaze.apk" class="platform-btn" data-dl="android">Download .apk</a>
-                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">Enable "Install unknown apps" for your browser, then open the .apk.</p>
-                </div>
-                <div class="platform-card soon" id="card-macos">
-                    <span class="platform-icon">🍎</span>
-                    <div class="platform-name">macOS</div>
-                    <div class="platform-detail">Deferred — no Apple build hardware yet</div>
-                    <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
-                </div>
-                <div class="platform-card soon" id="card-ios">
-                    <span class="platform-icon"></span>
-                    <div class="platform-name">iOS</div>
-                    <div class="platform-detail">Deferred — App Store + signing needs Mac hardware</div>
-                    <a href="/web/" class="platform-btn" style="background:transparent;border:1px solid var(--brand);color:var(--brand);">Use Web instead</a>
+                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">Enable "Install unknown apps" for your browser, then open the .apk. (Google Play listing coming soon.)</p>
                 </div>
             </div>
         </div>
@@ -203,42 +177,21 @@
             <h3>System Requirements</h3>
             <div class="req-grid">
                 <div class="req-card">
-                    <h4>Windows</h4>
+                    <h4>Web</h4>
                     <ul>
-                        <li>Windows 10 or later</li>
-                        <li>64-bit processor</li>
-                        <li>2 GB RAM minimum</li>
-                        <li>200 MB disk space</li>
-                        <li>Webcam for video calls</li>
-                    </ul>
-                </div>
-                <div class="req-card">
-                    <h4>Linux</h4>
-                    <ul>
-                        <li>Ubuntu 24.04+ / Fedora 40+ (libvpx 9)</li>
-                        <li>x86_64 architecture</li>
-                        <li>OpenGL 2.0+ support</li>
-                        <li>PulseAudio or PipeWire</li>
-                        <li>200 MB disk space</li>
-                    </ul>
-                </div>
-                <div class="req-card">
-                    <h4>macOS</h4>
-                    <ul>
-                        <li>macOS 13 Ventura or later</li>
-                        <li>Intel or Apple Silicon</li>
-                        <li>2 GB RAM minimum</li>
-                        <li>200 MB disk space</li>
-                        <li>Webcam for video calls</li>
+                        <li>Any modern browser (Chrome, Safari, Firefox, Edge)</li>
+                        <li>Works on desktop, iPhone &amp; Mac</li>
+                        <li>Installable as a PWA</li>
+                        <li>Camera &amp; mic permissions for calls</li>
                     </ul>
                 </div>
                 <div class="req-card">
                     <h4>Android</h4>
                     <ul>
-                        <li>Android 10 (API 29) or later</li>
-                        <li>ARM64 Architecture</li>
+                        <li>Android 8.0 (API 26) or later</li>
+                        <li>ARM64 architecture</li>
                         <li>100 MB disk space</li>
-                        <li>Camera & Mic permissions</li>
+                        <li>Camera &amp; mic permissions</li>
                     </ul>
                 </div>
             </div>
@@ -253,26 +206,16 @@
                 <a href="https://github.com/jakes1345/skype7-reborn/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>
                 (SHA-256 per asset). The list below is illustrative only; always trust the checksum file shipped with the release you downloaded.
             </p>
-            <div style="background:#fff7e6;border-left:4px solid #ffa500;padding:16px 20px;border-radius:4px;margin:0 0 30px;font-size:0.9rem;color:#333;">
-                <strong>Windows SmartScreen / "unknown publisher" warning?</strong><br>
-                Phaze is code-signed by the project, not by Microsoft's cert-cartel. Windows will say
-                "Windows protected your PC." That's expected. Click <strong>More info</strong> &rarr;
-                <strong>Run anyway</strong>. Confirm the SHA-256 below matches your download before running.
-                Checksums are how you verify; signatures are how Microsoft charges $200/year for a green badge.
-            </div>
             <div style="background:#f0f7ff;border-left:4px solid var(--brand);padding:16px 20px;border-radius:4px;margin:0 0 30px;font-size:0.9rem;color:#333;">
-                <strong>How to verify the hash:</strong><br>
-                Windows (PowerShell): <code>Get-FileHash Phaze.exe -Algorithm SHA256</code><br>
-                Linux / macOS: <code>sha256sum Phaze.linux</code> or <code>shasum -a 256 Phaze.apk</code>
+                <strong>Verify the APK before installing:</strong><br>
+                Compare the SHA-256 of your download against the value published on the
+                <a href="https://github.com/jakes1345/skype7-reborn/releases/latest" target="_blank" rel="noopener noreferrer">latest GitHub release</a>.<br>
+                Linux / macOS: <code>sha256sum Phaze.apk</code> · Windows (PowerShell): <code>Get-FileHash Phaze.apk -Algorithm SHA256</code>
             </div>
             <div class="verify-grid">
                 <div class="verify-item">
-                    <strong>checksums.txt (authoritative)</strong>
-                    <code>Open the release → download checksums.txt → match the line for your file (e.g. Phaze_windows_amd64.zip, Phaze.apk).</code>
-                </div>
-                <div class="verify-item">
-                    <strong>Example commands</strong>
-                    <code>Windows: Get-FileHash .\Phaze_windows_amd64.zip -Algorithm SHA256 · Linux/macOS: sha256sum Phaze_linux_amd64.tar.gz</code>
+                    <strong>Why "unknown app" on Android?</strong>
+                    <code>The APK is signed by the Phaze project key, not distributed through Play (yet). Enable "Install unknown apps" for your browser, then open the .apk. The Google Play listing is coming.</code>
                 </div>
             </div>
         </div>

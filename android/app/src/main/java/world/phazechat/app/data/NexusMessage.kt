@@ -16,6 +16,7 @@ data class NexusMessage(
     val email: String? = null,
     val mood: String? = null,
     val displayName: String? = null,
+    val supporter: Boolean = false,
     val convoId: String? = null,
     val convoName: String? = null,
     val members: List<String>? = null,
@@ -36,6 +37,13 @@ data class NexusMessage(
     val channelId: String? = null,
     val serverName: String? = null,
     val channelName: String? = null,
+    val token: String? = null,
+    val visibility: String? = null,
+    val topic: String? = null,
+    val inviteCode: String? = null,
+    val rawServers: String? = null,
+    val rawChannels: String? = null,
+    val rawMessages: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("type", type)
@@ -64,6 +72,13 @@ data class NexusMessage(
         channelName?.let { put("channel_name", it) }
         candidate?.let { put("candidate", it) }
         sdp?.let { put("sdp", it) }
+        token?.let { put("token", it) }
+        visibility?.let { put("visibility", it) }
+        topic?.let { put("topic", it) }
+        inviteCode?.let { put("invite_code", it) }
+        rawServers?.let { put("raw_servers", it) }
+        rawChannels?.let { put("raw_channels", it) }
+        rawMessages?.let { put("raw_messages", it) }
     }
 
     companion object {
@@ -111,6 +126,7 @@ data class NexusMessage(
                 email = j.str("email"),
                 mood = j.str("mood"),
                 displayName = j.str("display_name"),
+                supporter = j.optBoolean("supporter", false),
                 convoId = j.str("convo_id"),
                 convoName = j.str("convo_name"),
                 members = members,
@@ -131,6 +147,13 @@ data class NexusMessage(
                 channelId = j.str("channel_id"),
                 serverName = j.str("server_name"),
                 channelName = j.str("channel_name"),
+                token = j.str("token"),
+                visibility = j.str("visibility"),
+                topic = j.str("topic"),
+                inviteCode = j.str("invite_code"),
+                rawServers = j.optJSONArray("servers")?.toString(),
+                rawChannels = j.optJSONArray("channels")?.toString(),
+                rawMessages = j.optJSONArray("messages")?.toString(),
             )
         }
     }
