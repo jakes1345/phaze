@@ -32,6 +32,9 @@ fun ChatsScreen(
     onAcceptFriend: (String) -> Unit,
     onViewStory: (String) -> Unit = {},
     onAddStory: () -> Unit = {},
+    searchResults: List<String> = emptyList(),
+    onSearch: (String) -> Unit = {},
+    onClearSearch: () -> Unit = {},
 ) {
     var addDialogOpen by remember { mutableStateOf(false) }
     var addName by remember { mutableStateOf("") }
@@ -101,25 +104,52 @@ fun ChatsScreen(
     }
 
     if (addDialogOpen) {
+        val closeAdd = { addDialogOpen = false; addName = ""; onClearSearch() }
         AlertDialog(
-            onDismissRequest = { addDialogOpen = false },
-            title = { Text("Add Friend") },
+            onDismissRequest = closeAdd,
+            title = { Text("Find people") },
             text = {
-                OutlinedTextField(
-                    value = addName,
-                    onValueChange = { addName = it },
-                    label = { Text("Username") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Column {
+                    OutlinedTextField(
+                        value = addName,
+                        onValueChange = { addName = it; onSearch(it.trim()) },
+                        label = { Text("Search by username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (searchResults.isEmpty() && addName.isNotBlank()) {
+                        Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 220.dp)) {
+                        items(searchResults.filter { it != me }, key = { it }) { user ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Avatar(user, 32)
+                                Spacer(Modifier.width(10.dp))
+                                Text(user, modifier = Modifier.weight(1f), fontSize = 14.sp)
+                                if (friends.containsKey(user)) {
+                                    Text("✓ friend", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                } else {
+                                    Button(
+                                        onClick = { onAddFriend(user) },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    ) { Text("Add", fontSize = 13.sp) }
+                                }
+                            }
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Button(onClick = {
-                    if (addName.isNotBlank()) { onAddFriend(addName.trim()); addName = ""; addDialogOpen = false }
+                    if (addName.isNotBlank()) { onAddFriend(addName.trim()); closeAdd() }
                 }) { Text("Send Request") }
             },
             dismissButton = {
-                TextButton(onClick = { addDialogOpen = false }) { Text("Cancel") }
+                TextButton(onClick = closeAdd) { Text("Cancel") }
             },
         )
     }
@@ -137,7 +167,13 @@ fun FriendRow(friend: FriendInfo, unreadCount: Int, onClick: () -> Unit) {
         Avatar(friend.username, 48, friend.status)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(friend.username, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(friend.username, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                if (friend.supporter) {
+                    Spacer(Modifier.width(4.dp))
+                    Text("💜", fontSize = 13.sp) // 💜 supporter badge
+                }
+            }
             Text(
                 friend.mood ?: friend.status,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

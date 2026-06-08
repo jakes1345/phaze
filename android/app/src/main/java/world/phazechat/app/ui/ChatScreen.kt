@@ -1,6 +1,8 @@
 package world.phazechat.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,11 +12,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,15 +35,48 @@ fun ChatScreen(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
     onAttachFile: (() -> Unit)? = null,
     onVoiceRecord: (() -> Unit)? = null,
+    typing: Boolean = false,
+    onTyping: () -> Unit = {},
+    onBlock: () -> Unit = {},
+    onReport: (String, String) -> Unit = { _, _ -> },
+    onEdit: (String, String) -> Unit = { _, _ -> },
+    onDelete: (String) -> Unit = {},
+    onReact: (String, String) -> Unit = { _, _ -> },
 ) {
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    var menuOpen by remember { mutableStateOf(false) }
+    var reportOpen by remember { mutableStateOf(false) }
+    var blockConfirm by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<ChatLine?>(null) }
+
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    }
+
+    if (reportOpen) {
+        ReportDialog(peer = peer, onDismiss = { reportOpen = false }, onSubmit = { reason, detail ->
+            onReport(reason, detail); reportOpen = false
+        })
+    }
+    if (blockConfirm) {
+        AlertDialog(
+            onDismissRequest = { blockConfirm = false },
+            title = { Text("Block $peer?") },
+            text = { Text("They won't be able to message you, and this chat will be removed.") },
+            confirmButton = { Button(onClick = { onBlock(); blockConfirm = false }) { Text("Block") } },
+            dismissButton = { TextButton(onClick = { blockConfirm = false }) { Text("Cancel") } },
+        )
+    }
+    editing?.let { line ->
+        EditDialog(initial = line.text, onDismiss = { editing = null }, onSave = { newText ->
+            onEdit(line.id, newText); editing = null
+        })
     }
 
     Scaffold(
@@ -52,14 +90,37 @@ fun ChatScreen(
                 title = {
                     Column {
                         Text(peer, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(peerStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            if (typing) "typing…" else peerStatus,
+                            fontSize = 12.sp,
+                            color = if (typing) PhazeBrandDark else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontStyle = if (typing) FontStyle.Italic else FontStyle.Normal,
+                        )
                     }
                 },
                 actions = {
                     if (onCall != null) {
                         IconButton(onClick = onCall) {
-                            Icon(Icons.Default.Call, "Call", tint = PhazeBrandDark)
+                            Icon(Icons.Default.Call, "Voice call", tint = PhazeBrandDark)
                         }
+                    }
+                    if (onVideoCall != null) {
+                        IconButton(onClick = onVideoCall) {
+                            Icon(Icons.Default.PlayArrow, "Video call", tint = PhazeBrandDark)
+                        }
+                    }
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, "More")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Report $peer") },
+                            onClick = { menuOpen = false; reportOpen = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Block $peer", color = PhazeDanger) },
+                            onClick = { menuOpen = false; blockConfirm = true },
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -86,7 +147,7 @@ fun ChatScreen(
                     }
                     OutlinedTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { draft = it; onTyping() },
                         placeholder = { Text("Message...") },
                         modifier = Modifier.weight(1f),
                         singleLine = false,
@@ -127,7 +188,91 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
                 items(messages, key = { it.id }) { line ->
-                    MessageBubble(line)
+                    MessageBubble(
+                        line = line,
+                        onEdit = { editing = line },
+                        onDelete = { onDelete(line.id) },
+                        onReact = { emoji -> onReact(line.id, emoji) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MessageBubble(
+    line: ChatLine,
+    onEdit: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+) {
+    val align = if (line.me) Arrangement.End else Arrangement.Start
+    val bubbleColor = if (line.me) PhazeBrand else MaterialTheme.colorScheme.surfaceVariant
+    val textColor = if (line.me) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = align,
+    ) {
+        Column(horizontalAlignment = if (line.me) Alignment.End else Alignment.Start) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(bubbleColor)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { if (!line.deleted) menuOpen = true },
+                    )
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                if (!line.me) {
+                    Text(line.from, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PhazeBrandDark)
+                    Spacer(Modifier.height(2.dp))
+                }
+                if (line.deleted) {
+                    Text("🚫 message deleted", color = textColor, fontSize = 14.sp, fontStyle = FontStyle.Italic)
+                } else {
+                    Text(line.text, color = textColor, fontSize = 15.sp, lineHeight = 20.sp)
+                    if (line.edited) {
+                        Text("edited", color = textColor.copy(alpha = 0.6f), fontSize = 10.sp, fontStyle = FontStyle.Italic)
+                    }
+                }
+            }
+            if (line.reaction != null) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    Text(line.reaction, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                    REACTIONS.forEach { emoji ->
+                        Text(
+                            emoji, fontSize = 22.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .combinedClickable(onClick = { onReact(emoji); menuOpen = false })
+                                .padding(6.dp),
+                        )
+                    }
+                }
+                if (line.me) {
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("Edit") }, onClick = { menuOpen = false; onEdit() })
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = PhazeDanger) },
+                        onClick = { menuOpen = false; onDelete() },
+                    )
                 }
             }
         }
@@ -135,27 +280,55 @@ fun ChatScreen(
 }
 
 @Composable
-fun MessageBubble(line: ChatLine) {
-    val align = if (line.me) Arrangement.End else Arrangement.Start
-    val bubbleColor = if (line.me) PhazeBrand else MaterialTheme.colorScheme.surfaceVariant
-    val textColor = if (line.me) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+private fun EditDialog(initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit message") },
+        text = {
+            OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth())
+        },
+        confirmButton = {
+            Button(onClick = { if (text.isNotBlank()) onSave(text.trim()) }, enabled = text.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = align,
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(bubbleColor)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            if (!line.me) {
-                Text(line.from, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PhazeBrandDark)
-                Spacer(Modifier.height(2.dp))
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReportDialog(peer: String, onDismiss: () -> Unit, onSubmit: (String, String) -> Unit) {
+    val reasons = listOf("Spam", "Harassment", "Inappropriate content", "Impersonation", "Other")
+    var reason by remember { mutableStateOf(reasons.first()) }
+    var expanded by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Report $peer") },
+        text = {
+            Column {
+                ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+                    OutlinedTextField(
+                        value = reason, onValueChange = {}, readOnly = true,
+                        label = { Text("Reason") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        reasons.forEach { r ->
+                            DropdownMenuItem(text = { Text(r) }, onClick = { reason = r; expanded = false })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = detail, onValueChange = { detail = it },
+                    label = { Text("Details (optional)") },
+                    modifier = Modifier.fillMaxWidth(), minLines = 2,
+                )
             }
-            Text(line.text, color = textColor, fontSize = 15.sp, lineHeight = 20.sp)
-        }
-    }
+        },
+        confirmButton = { Button(onClick = { onSubmit(reason, detail.trim()) }) { Text("Submit report") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

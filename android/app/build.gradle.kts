@@ -1,9 +1,25 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.gms.google-services")
 }
+
+// ─── Signing credentials from local.properties (gitignored) ───────────────────
+// Copy local.properties.example → local.properties and fill in your values.
+// Never commit passwords to source control.
+val localProps = Properties().also { props ->
+    val f = rootProject.file("local.properties")
+    if (f.exists()) props.load(f.inputStream())
+}
+fun localProp(key: String, fallback: String = "") =
+    (localProps[key] as? String)?.takeIf { it.isNotBlank() } ?: fallback
+
+// ─── Version ──────────────────────────────────────────────────────────────────
+val appVersionCode = 16
+val appVersionName = "1.3.0"
 
 android {
     namespace = "world.phazechat.app"
@@ -13,16 +29,19 @@ android {
         applicationId = "world.phazechat.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("phaze-release.keystore")
-            storePassword = "phazekey123"
-            keyAlias = "phaze"
-            keyPassword = "phazekey123"
+            // Reads from local.properties — never hardcode credentials here.
+            // KEYSTORE_PATH is relative to the android/ project root.
+            // Default: app/phaze-release.keystore  (i.e. android/app/phaze-release.keystore)
+            storeFile = rootProject.file(localProp("KEYSTORE_PATH", "app/phaze-release.keystore"))
+            storePassword = localProp("KEYSTORE_PASS")
+            keyAlias = localProp("KEY_ALIAS", "phaze")
+            keyPassword = localProp("KEY_PASS")
         }
     }
 
@@ -33,6 +52,17 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+    }
+
+    // AAB bundle optimisations for Play Store
+    bundle {
+        language { enableSplit = true }
+        density { enableSplit = true }
+        abi { enableSplit = true }
     }
 
     compileOptions {
@@ -44,6 +74,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -69,6 +100,9 @@ dependencies {
     implementation("com.goterl:lazysodium-android:5.1.0@aar")
     implementation("net.java.dev.jna:jna:5.14.0@aar")
 
+    // Core (NotificationCompat for the screen-share foreground service)
+    implementation("androidx.core:core-ktx:1.13.1")
+
     // WebRTC
     implementation("io.getstream:stream-webrtc-android:1.2.2")
 
@@ -81,6 +115,15 @@ dependencies {
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // QR Code Scanning (ZXing)
+    implementation("com.google.zxing:core:3.5.3")
+
+    // CameraX for QR scanner
+    val cameraVersion = "1.4.1"
+    implementation("androidx.camera:camera-camera2:$cameraVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraVersion")
+    implementation("androidx.camera:camera-view:$cameraVersion")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
