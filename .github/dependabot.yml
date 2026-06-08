@@ -15,14 +15,14 @@ updates:
     commit-message:
       prefix: chore(nexus-deps)
 
-  - package-ecosystem: gomod
-    directory: /native_client
+  - package-ecosystem: gradle
+    directory: /android
     schedule:
       interval: daily
     open-pull-requests-limit: 5
-    labels: [dependencies, native]
+    labels: [dependencies, android]
     commit-message:
-      prefix: chore(native-deps)
+      prefix: chore(android-deps)
 
   - package-ecosystem: npm
     directory: /web
