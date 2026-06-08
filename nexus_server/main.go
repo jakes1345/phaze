@@ -120,6 +120,8 @@ type ServerSummary struct {
 	Visibility  string `json:"visibility"`
 	Role        string `json:"role"`
 	InviteCode  string `json:"invite_code,omitempty"`
+	MemberCount int    `json:"member_count,omitempty"`
+	IsMember    bool   `json:"is_member,omitempty"`
 }
 
 // ChannelInfo is one channel inside a server.
@@ -1001,6 +1003,34 @@ func (s *NexusServer) listUserServers(username string) ([]ServerSummary, error) 
 	for rows.Next() {
 		var ss ServerSummary
 		if err := rows.Scan(&ss.ID, &ss.Name, &ss.Description, &ss.Icon, &ss.Owner, &ss.Visibility, &ss.Role, &ss.InviteCode); err != nil {
+			continue
+		}
+		out = append(out, ss)
+	}
+	return out, nil
+}
+
+// listPublicServers powers the public discovery directory: every server with
+// visibility='public', ranked by member count, with a flag for whether the
+// requesting user is already a member.
+func (s *NexusServer) listPublicServers(forUser string) ([]ServerSummary, error) {
+	rows, err := s.DB.Query(
+		`SELECT s.id, s.name, COALESCE(s.description,''), COALESCE(s.icon,''),
+		         s.owner, s.visibility,
+		         (SELECT COUNT(*) FROM server_members m WHERE m.server_id = s.id) AS members,
+		         EXISTS(SELECT 1 FROM server_members m WHERE m.server_id = s.id AND m.username = ?) AS is_member
+		   FROM servers s
+		  WHERE s.visibility = 'public'
+		  ORDER BY members DESC, s.created_at ASC
+		  LIMIT 100`, forUser)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ServerSummary{}
+	for rows.Next() {
+		var ss ServerSummary
+		if err := rows.Scan(&ss.ID, &ss.Name, &ss.Description, &ss.Icon, &ss.Owner, &ss.Visibility, &ss.MemberCount, &ss.IsMember); err != nil {
 			continue
 		}
 		out = append(out, ss)

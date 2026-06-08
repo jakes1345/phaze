@@ -1428,20 +1428,41 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			client.Send(NexusMessage{Type: "server_list_result", Status: "ok", Servers: servers})
 
+		case "server_discover":
+			if username == "" {
+				continue
+			}
+			servers, err := s.listPublicServers(username)
+			if err != nil {
+				client.Send(NexusMessage{Type: "server_discover_result", Error: "db: " + err.Error()})
+				continue
+			}
+			client.Send(NexusMessage{Type: "server_discover_result", Status: "ok", Servers: servers})
+
 		case "server_join":
 			if username == "" {
 				continue
 			}
 			code := strings.TrimSpace(msg.InviteCode)
-			if code == "" {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "invite_code required"})
-				continue
-			}
 			var serverID, serverName string
-			err := s.DB.QueryRow(
-				`SELECT id, name FROM servers WHERE invite_code = ?`, code).Scan(&serverID, &serverName)
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "invite invalid"})
+			if code != "" {
+				// Join a private/invite-only server by its share code.
+				if err := s.DB.QueryRow(
+					`SELECT id, name FROM servers WHERE invite_code = ?`, code).Scan(&serverID, &serverName); err != nil {
+					client.Send(NexusMessage{Type: "server_join_result", Error: "invite invalid"})
+					continue
+				}
+			} else if msg.ServerID != "" {
+				// Join a PUBLIC server straight from the discovery directory —
+				// no invite code needed, but only if it's actually public.
+				if err := s.DB.QueryRow(
+					`SELECT id, name FROM servers WHERE id = ? AND visibility = 'public'`,
+					msg.ServerID).Scan(&serverID, &serverName); err != nil {
+					client.Send(NexusMessage{Type: "server_join_result", Error: "server not found or not public"})
+					continue
+				}
+			} else {
+				client.Send(NexusMessage{Type: "server_join_result", Error: "invite_code or public server_id required"})
 				continue
 			}
 			if _, err := s.DB.Exec(
