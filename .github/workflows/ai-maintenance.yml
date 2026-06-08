@@ -97,7 +97,6 @@ jobs:
               1. Create a feature branch `ai/maintenance-<short-slug>`.
               2. Run the relevant test suite:
                    cd nexus_server && go test -race -count=1 ./...
-                   cd native_client && go test ./...
                    cd web && npm ci && npm run lint && npm test
               3. ONLY if all tests pass, commit and push.
               4. Open a PR with title `chore: ai maintenance — <slug>`

@@ -1,6 +1,3 @@
 go 1.25.7
 
-use (
-	./native_client
-	./nexus_server
-)
+use ./nexus_server
