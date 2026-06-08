@@ -412,9 +412,9 @@ export default function App() {
         videoRef.current.play()
         animationFrameIdRef.current = requestAnimationFrame(tick)
       }
-    } catch (err: any) {
+    } catch (err) {
       setCameraActive(false)
-      setErr('Camera access failed: ' + (err.message || err))
+      setErr('Camera access failed: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -758,7 +758,7 @@ export default function App() {
     const screenTrack = display.getVideoTracks()[0]
     if (!screenTrack) return
 
-    let videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+    const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
     if (videoSender) {
       cameraTrackRef.current = videoSender.track ?? null
       await videoSender.replaceTrack(screenTrack)

@@ -150,10 +150,6 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
       case 'delete_account_result':
         if (msg.status !== 'ok') setDelMsg(msg.error || 'Error')
         break
-      case 'invite_result':
-        if (msg.status === 'sent') { setInviteMsg('Invite sent!'); setInviteEmail('') }
-        else setInviteMsg(msg.error || 'Failed to send')
-        break
     }
   }, [send])
 
