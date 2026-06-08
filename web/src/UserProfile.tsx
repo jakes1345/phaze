@@ -18,6 +18,7 @@ interface Profile {
   username: string
   display_name?: string
   mood?: string
+  supporter?: boolean
 }
 
 // UserProfile is the click-a-user modal: shows the target's profile and
@@ -80,6 +81,9 @@ export default function UserProfile({ username, me, friends, pendingOut = [], se
 
         <h3 className="user-profile-name">
           {profile?.display_name || username}
+          {profile?.supporter && (
+            <span className="supporter-badge" title="Phaze Supporter" aria-label="Phaze Supporter">💜</span>
+          )}
           {presence && (
             <span className={`user-profile-status ${presence === 'Online' ? 'on' : 'off'}`}>{presence}</span>
           )}

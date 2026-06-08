@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
+import jsQR from 'jsqr'
 import type { NexusMessage, TurnConfig } from './nexusTypes'
 import {
   decryptFromPeer,
@@ -16,6 +17,7 @@ import LivePage from './LivePage'
 import VoiceRoom from './VoiceRoom'
 import UserProfile from './UserProfile'
 import SupportBubble from './SupportBubble'
+import SupportForm from './SupportForm'
 import Stories from './Stories'
 import Onboarding from './Onboarding'
 import Settings from './Settings'
@@ -362,6 +364,7 @@ export default function App() {
   })
   const [mutedPeers, setMutedPeers] = useState<Set<string>>(() => loadMutedPeers())
   const [bmcUrl, setBmcUrl] = useState('https://buymeacoffee.com/phazeworld')
+  const [showSupport, setShowSupport] = useState(false)
   useEffect(() => {
     fetch('/api/v1/config')
       .then((r) => r.ok ? r.json() : null)
@@ -381,6 +384,116 @@ export default function App() {
   const [forgotEmail, setForgotEmail] = useState('')
   const [linkInput, setLinkInput] = useState('')
   const [linkBusy, setLinkBusy] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const animationFrameIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current)
+      }
+    }
+  }, [])
+
+  const startCamera = async () => {
+    try {
+      setErr('')
+      setCameraActive(true)
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.setAttribute('playsinline', 'true')
+        videoRef.current.play()
+        animationFrameIdRef.current = requestAnimationFrame(tick)
+      }
+    } catch (err) {
+      setCameraActive(false)
+      setErr('Camera access failed: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  const stopCamera = () => {
+    setCameraActive(false)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current)
+      animationFrameIdRef.current = null
+    }
+  }
+
+  const tick = () => {
+    if (!videoRef.current || videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
+      animationFrameIdRef.current = requestAnimationFrame(tick)
+      return
+    }
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      canvas.width = videoRef.current.videoWidth
+      canvas.height = videoRef.current.videoHeight
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      })
+      if (code && code.data) {
+        handleScannedToken(code.data)
+        return
+      }
+    }
+    animationFrameIdRef.current = requestAnimationFrame(tick)
+  }
+
+  const handleScannedToken = (val: string) => {
+    let tok = val.trim()
+    if (tok.includes('token=')) {
+      tok = tok.split('token=')[1].split('&')[0]
+    }
+    setLinkInput(tok)
+    stopCamera()
+    setErr('✓ Token scanned: ' + tok)
+    setLinkBusy(true)
+    const poll = setInterval(() => sendRef.current({ type: 'link_check', token: tok }), 2500)
+    sendRef.current({ type: 'link_check', token: tok })
+    setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          canvas.width = img.width
+          canvas.height = img.height
+          ctx.drawImage(img, 0, 0)
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+          const code = jsQR(imageData.data, imageData.width, imageData.height)
+          if (code && code.data) {
+            handleScannedToken(code.data)
+          } else {
+            setErr('No QR code found in the selected image.')
+          }
+        }
+      }
+      img.src = event.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  }
   const [regStep, setRegStep] = useState<'form' | 'verify' | 'done'>('form')
   const [regUser, setRegUser] = useState('')
   const [regEmail, setRegEmail] = useState('')
@@ -645,7 +758,7 @@ export default function App() {
     const screenTrack = display.getVideoTracks()[0]
     if (!screenTrack) return
 
-    let videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+    const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
     if (videoSender) {
       cameraTrackRef.current = videoSender.track ?? null
       await videoSender.replaceTrack(screenTrack)
@@ -887,28 +1000,26 @@ export default function App() {
           }
           break
 
-        case 'key_backup':
-          // Surface restore prompt only when a backup exists AND the user
-          // doesn't already appear to have any peer keys / chat history
-          // for the current device — otherwise just ignore.
-          if (msg.status === 'not_found') {
-            // User has no Recovery PIN backup — nag them to set one so they
-            // can sign in on other devices / browsers later. Respect a
-            // 7-day cooldown if they've dismissed it before.
+        case 'key_backup_result':
+          if (msg.status === 'ok' && msg.key_backup) {
+            // Server returned a backup blob. Prompt restore only if the current
+            // device doesn't already have the same public key (i.e. fresh session).
+            setRestoreBackup(msg.key_backup)
+          } else if (msg.status === 'not_found') {
+            // No backup on server — nag them to set a PIN. Respect 7-day cooldown.
             const dismissedAt = Number(localStorage.getItem(BACKUP_NAG_KEY) || '0')
             if (Date.now() - dismissedAt > BACKUP_NAG_COOLDOWN_MS) {
               setShowBackupNag(true)
             }
-          }
-          break
-
-        case 'key_backup_result':
-          if (msg.status === 'stored') {
+          } else if (msg.status === 'stored') {
             setErr('✓ Recovery PIN saved')
             setShowBackupNag(false)
             localStorage.setItem(BACKUP_NAG_KEY, String(Date.now()))
-          } else if (msg.status === 'deleted') setErr('Recovery backup removed')
-          else if (msg.error) setErr(`Backup error: ${msg.error}`)
+          } else if (msg.status === 'deleted') {
+            setErr('Recovery backup removed')
+          } else if (msg.error) {
+            setErr(`Backup error: ${msg.error}`)
+          }
           break
 
         case 'msg_edit':
@@ -1729,6 +1840,7 @@ export default function App() {
 
       {/* ── Support chat bubble (always available) ───────────────── */}
       <SupportBubble sessionToken={sessionToken} me={me} />
+      {showSupport && <SupportForm me={me} bmcUrl={bmcUrl} onClose={() => setShowSupport(false)} />}
 
       {/* ── User profile modal ───────────────────────────────────── */}
       {profileUser && me && (
@@ -1947,8 +2059,24 @@ export default function App() {
                   </div>
                 ) : mode === 'link' ? (
                   <div className="form">
-                    <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below.</p>
-                    <input placeholder="Link code" value={linkInput} onChange={(e) => setLinkInput(e.target.value.trim())} autoFocus maxLength={32} />
+                    <p className="muted small">Open Phaze on a device you're already signed into → Settings → 💾 Backup &amp; Devices → "Generate link code". Enter the code below or scan a QR code.</p>
+                    
+                    {cameraActive ? (
+                      <div className="qr-scanner-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 12 }}>
+                        <video ref={videoRef} style={{ width: '100%', maxWidth: 280, borderRadius: 8, border: '2px solid #232328', background: '#000' }} />
+                        <button type="button" className="link-btn" onClick={stopCamera} style={{ marginTop: 8 }}>Stop Camera</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12, width: '100%' }}>
+                        <button type="button" className="settings-btn" style={{ flex: 1, fontSize: '0.8rem', padding: '8px 12px' }} onClick={startCamera}>📸 Scan with Camera</button>
+                        <label className="settings-btn" style={{ flex: 1, fontSize: '0.8rem', padding: '8px 12px', textAlign: 'center', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          📂 Upload Image
+                          <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} />
+                        </label>
+                      </div>
+                    )}
+
+                    <input placeholder="Link code / Scanned token" value={linkInput} onChange={(e) => setLinkInput(e.target.value.trim())} autoFocus maxLength={200} />
                     <button type="button" disabled={linkBusy || linkInput.length < 8} onClick={() => {
                       setLinkBusy(true)
                       setErr('Waiting for approval on your other device…')
@@ -1957,7 +2085,7 @@ export default function App() {
                       sendRef.current({ type: 'link_check', token: tok })
                       setTimeout(() => clearInterval(poll), 5 * 60 * 1000)
                     }}>{linkBusy ? 'Waiting…' : 'Sign in with code'}</button>
-                    <button type="button" className="link-btn" onClick={() => { setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
+                    <button type="button" className="link-btn" onClick={() => { stopCamera(); setMode('login'); setLinkInput(''); setLinkBusy(false); setErr('') }}>Back to sign in</button>
                   </div>
                 ) : regStep === 'form' ? (
                   <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
@@ -2397,12 +2525,11 @@ export default function App() {
 
       <footer className="foot">
         <div className="foot-inner">
-          <a
-            href={bmcUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
             className="foot-cta"
-          >☕ Support Phaze</a>
+            onClick={() => setShowSupport(true)}
+          >☕ Support Phaze</button>
           <div className="foot-links">
             <a href="https://twitter.com/PhazeChatWorld" target="_blank" rel="noopener noreferrer">Twitter</a>
             <span className="foot-dot" />

@@ -5,19 +5,18 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"bytes"
 	"io"
 	"log"
 	"math/big"
-	"net"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,209 +28,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	webpush "github.com/SherClockHolmes/webpush-go"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
-	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
 	"google.golang.org/api/option"
 	_ "modernc.org/sqlite"
 )
 
-// ---------- CORS / Rate limiting ----------
-
-var allowedOrigins = func() map[string]bool {
-	raw := os.Getenv("Phaze_ALLOWED_ORIGINS")
-	if raw == "" {
-		return nil // nil = allow all (dev mode)
-	}
-	m := map[string]bool{}
-	for _, o := range strings.Split(raw, ",") {
-		m[strings.TrimSpace(o)] = true
-	}
-	return m
-}()
-
-func originAllowed(r *http.Request) bool {
-	if allowedOrigins == nil {
-		return true
-	}
-	return allowedOrigins[r.Header.Get("Origin")]
-}
-
-// pstnBridgeEnabled gates Twilio outbound PSTN. Default off so relays run
-// WebRTC-only (Phaze-to-Phaze) with no carrier or Twilio call charges.
-func pstnBridgeEnabled() bool {
-	return strings.EqualFold(os.Getenv("PHAZE_ENABLE_PSTN"), "true")
-}
-
-type limiterEntry struct {
-	lim  *rate.Limiter
-	last time.Time
-}
-
-type ipLimiter struct {
-	mu       sync.Mutex
-	entries  map[string]*limiterEntry
-	r        rate.Limit
-	burst    int
-	idleTTL  time.Duration
-	maxSize  int
-	lastGC   time.Time
-	gcEvery  time.Duration
-}
-
-func newIPLimiter(r rate.Limit, burst int) *ipLimiter {
-	return &ipLimiter{
-		entries: map[string]*limiterEntry{},
-		r:       r,
-		burst:   burst,
-		idleTTL: 10 * time.Minute,
-		maxSize: 50000,
-		gcEvery: 1 * time.Minute,
-	}
-}
-
-// gcLocked evicts idle limiters. Caller must hold l.mu.
-func (l *ipLimiter) gcLocked(now time.Time) {
-	if now.Sub(l.lastGC) < l.gcEvery && len(l.entries) < l.maxSize {
-		return
-	}
-	cutoff := now.Add(-l.idleTTL)
-	for ip, e := range l.entries {
-		if e.last.Before(cutoff) {
-			delete(l.entries, ip)
-		}
-	}
-	// If still over cap, drop oldest opportunistically.
-	if len(l.entries) > l.maxSize {
-		for ip := range l.entries {
-			delete(l.entries, ip)
-			if len(l.entries) <= l.maxSize*9/10 {
-				break
-			}
-		}
-	}
-	l.lastGC = now
-}
-
-func (l *ipLimiter) allow(ip string) bool {
-	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.gcLocked(now)
-	e, ok := l.entries[ip]
-	if !ok {
-		e = &limiterEntry{lim: rate.NewLimiter(l.r, l.burst)}
-		l.entries[ip] = e
-	}
-	e.last = now
-	return e.lim.Allow()
-}
-
-// trustedProxyHeader is set when the server runs behind a known reverse proxy
-// (Fly.io edge, Cloudflare, nginx). Empty = ignore X-Forwarded-For entirely so
-// attackers cannot spoof a source IP to bypass per-IP rate limits.
-var trustedProxyHeader = strings.TrimSpace(os.Getenv("PHAZE_TRUST_PROXY_HEADER"))
-
-func clientIP(r *http.Request) string {
-	if trustedProxyHeader != "" {
-		if v := strings.TrimSpace(r.Header.Get(trustedProxyHeader)); v != "" {
-			// Take leftmost entry (original client). Edge proxies append on the right.
-			if i := strings.Index(v, ","); i >= 0 {
-				v = strings.TrimSpace(v[:i])
-			}
-			if v != "" {
-				return v
-			}
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-var globalLimiter = newIPLimiter(rate.Limit(10), 30)      // 10 req/s, burst 30 per IP
-var adminLimiter = newIPLimiter(rate.Limit(0.05), 3)     // 3 attempts per minute per IP
-
-// adminIPGate restricts admin endpoints to allowed IPs when PHAZE_ADMIN_IPS
-// is set (comma-separated CIDRs or IPs). If unset, all IPs are allowed.
-func adminIPGate(next http.HandlerFunc) http.HandlerFunc {
-	raw := strings.TrimSpace(os.Getenv("PHAZE_ADMIN_IPS"))
-	if raw == "" {
-		return next
-	}
-	allowed := strings.Split(raw, ",")
-	for i := range allowed {
-		allowed[i] = strings.TrimSpace(allowed[i])
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
-		ok := false
-		for _, a := range allowed {
-			if a == ip || a == "0.0.0.0" {
-				ok = true
-				break
-			}
-			if strings.Contains(a, "/") {
-				_, cidr, err := net.ParseCIDR(a)
-				if err == nil && cidr.Contains(net.ParseIP(ip)) {
-					ok = true
-					break
-				}
-			}
-		}
-		if !ok {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// adminLoginLimit is a tighter rate limiter specifically for admin login —
-// 3 attempts per minute per IP to prevent brute-force.
-func adminLoginLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		writeSecurityHeaders(w)
-		if !adminLimiter.allow(clientIP(r)) {
-			http.Error(w, "too many login attempts — try again in a minute", http.StatusTooManyRequests)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func rateLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Defense-in-depth headers on every response that goes through
-		// the limiter. Cheap, applies broadly, and stops a few classes
-		// of attack (MIME sniffing, clickjacking, leaky referrers).
-		writeSecurityHeaders(w)
-		if !globalLimiter.allow(clientIP(r)) {
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// writeSecurityHeaders sets headers that protect every HTTP response.
-// Intentionally conservative: only headers that won't break the React SPA
-// or the existing API. CSP is omitted because the /admin portal uses
-// inline scripts; if you tighten that later, add it here.
-func writeSecurityHeaders(w http.ResponseWriter) {
-	h := w.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "SAMEORIGIN")
-	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-}
+// Version is stamped at build time via -ldflags "-X main.Version=$(VERSION)"
+// (see Makefile, sourced from the repo-root VERSION file). Defaults to "dev".
+var Version = "dev"
 
 // NexusMessage is the wire protocol for Phaze™
 type NexusMessage struct {
@@ -248,6 +58,7 @@ type NexusMessage struct {
 	Email       string      `json:"email,omitempty"`
 	Mood        string      `json:"mood,omitempty"`
 	DisplayName string      `json:"display_name,omitempty"`
+	Supporter   bool        `json:"supporter,omitempty"`
 	ConvoID     string      `json:"convo_id,omitempty"`
 	ConvoName   string      `json:"convo_name,omitempty"`
 	Members     []string    `json:"members,omitempty"`
@@ -276,19 +87,19 @@ type NexusMessage struct {
 	KeyFingerprint string `json:"key_fingerprint,omitempty"`
 
 	// --- Servers + Channels (Discord-style "Spaces") ---
-	ServerID    string             `json:"server_id,omitempty"`
-	ChannelID   string             `json:"channel_id,omitempty"`
-	ServerName  string             `json:"server_name,omitempty"`
-	ChannelName string             `json:"channel_name,omitempty"`
-	Topic       string             `json:"topic,omitempty"`
-	Kind        string             `json:"kind,omitempty"`  // "text" | "voice"
-	Role        string             `json:"role,omitempty"`  // member | admin | owner
-	Visibility  string             `json:"visibility,omitempty"` // public | private
-	InviteCode  string             `json:"invite_code,omitempty"`
-	Servers     []ServerSummary    `json:"servers,omitempty"`
-	Channels    []ChannelInfo      `json:"channels,omitempty"`
-	Messages    []ChannelMsg       `json:"messages,omitempty"`
-	HistoryFrom int64              `json:"history_from,omitempty"` // id cursor (return messages with id < this)
+	ServerID    string          `json:"server_id,omitempty"`
+	ChannelID   string          `json:"channel_id,omitempty"`
+	ServerName  string          `json:"server_name,omitempty"`
+	ChannelName string          `json:"channel_name,omitempty"`
+	Topic       string          `json:"topic,omitempty"`
+	Kind        string          `json:"kind,omitempty"`       // "text" | "voice"
+	Role        string          `json:"role,omitempty"`       // member | admin | owner
+	Visibility  string          `json:"visibility,omitempty"` // public | private
+	InviteCode  string          `json:"invite_code,omitempty"`
+	Servers     []ServerSummary `json:"servers,omitempty"`
+	Channels    []ChannelInfo   `json:"channels,omitempty"`
+	Messages    []ChannelMsg    `json:"messages,omitempty"`
+	HistoryFrom int64           `json:"history_from,omitempty"` // id cursor (return messages with id < this)
 
 	// DMHistory is the response payload for "dm_history" requests:
 	// durable cross-device history of DMs between the requester and Recipient.
@@ -387,14 +198,17 @@ func (c *Client) Send(m NexusMessage) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	conn := c.Conn
+	// M4: prevent slow-client goroutine leaks — if the peer stops reading,
+	// the write times out after 10s instead of blocking forever.
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteJSON(m)
 }
 
 type NexusServer struct {
-	DB         *sql.DB
-	Clients    map[string]*Client
-	Mu         sync.RWMutex
-	fcmClient  *messaging.Client
+	DB        *sql.DB
+	Clients   map[string]*Client
+	Mu        sync.RWMutex
+	fcmClient *messaging.Client
 
 	// VoiceRooms tracks who is currently in each voice channel.
 	// channel_id -> set of usernames.
@@ -403,8 +217,9 @@ type NexusServer struct {
 	// Streams maps broadcaster username -> active livestream metadata.
 	// Guarded by VoiceRoomsMu (shared mutex — both are room-style state).
 	Streams map[string]*liveStream
-	// RemoteCodes maps 6-digit session codes to host usernames for remote control.
-	RemoteCodes   map[string]string
+	// RemoteCodes maps 6-digit session codes to host info for remote control.
+	// L2: entries include creation time for TTL enforcement.
+	RemoteCodes   map[string]remoteCodeEntry
 	RemoteCodesMu sync.RWMutex
 	// Per-IP WebSocket connection counter for DDoS mitigation.
 	wsConnCount   map[string]int
@@ -417,23 +232,87 @@ type NexusServer struct {
 func (s *NexusServer) isIPBlocked(ip string) bool {
 	s.blockedIPsMu.RLock()
 	defer s.blockedIPsMu.RUnlock()
+	if s.blockedIPs == nil {
+		return false
+	}
 	return s.blockedIPs[ip]
 }
 
 func (s *NexusServer) blockIP(ip string) {
 	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
 	s.blockedIPs[ip] = true
 	s.blockedIPsMu.Unlock()
+	// M3: persist to DB so the block survives restarts.
+	s.DB.Exec(`INSERT OR IGNORE INTO blocked_ips (ip) VALUES (?)`, ip)
 }
 
 func (s *NexusServer) unblockIP(ip string) {
 	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
 	delete(s.blockedIPs, ip)
 	s.blockedIPsMu.Unlock()
+	s.DB.Exec(`DELETE FROM blocked_ips WHERE ip = ?`, ip)
+}
+
+// loadBlockedIPs loads persisted IP blocks from the database on boot.
+func (s *NexusServer) loadBlockedIPs() {
+	s.blockedIPsMu.Lock()
+	if s.blockedIPs == nil {
+		s.blockedIPs = make(map[string]bool)
+	}
+	s.blockedIPsMu.Unlock()
+	rows, err := s.DB.Query(`SELECT ip FROM blocked_ips`)
+	if err != nil {
+		log.Printf("[ipblock] load: %v", err)
+		return
+	}
+	defer rows.Close()
+	s.blockedIPsMu.Lock()
+	for rows.Next() {
+		var ip string
+		if rows.Scan(&ip) == nil {
+			s.blockedIPs[ip] = true
+		}
+	}
+	count := len(s.blockedIPs)
+	s.blockedIPsMu.Unlock()
+	if count > 0 {
+		log.Printf("[ipblock] loaded %d blocked IPs from database", count)
+	}
 }
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: originAllowed,
+}
+
+// remoteCodeEntry holds a remote-control pairing code with an expiry.
+type remoteCodeEntry struct {
+	Username  string
+	CreatedAt time.Time
+}
+
+const remoteCodeTTL = 10 * time.Minute
+
+// sweepRemoteCodes removes expired remote control codes every 2 minutes.
+func (s *NexusServer) sweepRemoteCodes() {
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	for {
+		<-t.C
+		now := time.Now()
+		s.RemoteCodesMu.Lock()
+		for k, v := range s.RemoteCodes {
+			if now.Sub(v.CreatedAt) > remoteCodeTTL {
+				delete(s.RemoteCodes, k)
+			}
+		}
+		s.RemoteCodesMu.Unlock()
+	}
 }
 
 // ---------- Sovereign Media Configuration ----------
@@ -691,6 +570,12 @@ func (s *NexusServer) initDB() {
 			iterations INTEGER NOT NULL DEFAULT 200000,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// M3: persisted IP blocklist — survives server restarts.
+		`CREATE TABLE IF NOT EXISTS blocked_ips (
+			ip TEXT PRIMARY KEY,
+			blocked_by TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, q := range tables {
 		if _, err := s.DB.Exec(q); err != nil {
@@ -723,9 +608,25 @@ func (s *NexusServer) initDB() {
 		`ALTER TABLE users ADD COLUMN last_ip TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN last_login_at DATETIME`,
 		`ALTER TABLE users ADD COLUMN signup_ip TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN phone_verification_code TEXT`,
+		// Supporters: a `supporter` flag (with the date it was granted) plus a
+		// queue of opt-in requests captured by the public support form. The
+		// admin matches a request against the actual Buy Me a Coffee payment
+		// notification, then grants the badge — see supporters.go.
+		`ALTER TABLE users ADD COLUMN supporter INTEGER DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN supporter_since DATETIME`,
+		`CREATE TABLE IF NOT EXISTS supporter_requests (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT,
+			name TEXT,
+			email TEXT,
+			status TEXT DEFAULT 'pending',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_supporter_requests_status ON supporter_requests(status)`,
 	}
 	for _, q := range migrations {
-		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") && !strings.Contains(err.Error(), "already exists") {
 			log.Printf("DB migration skipped (%v)", err)
 		}
 	}
@@ -804,7 +705,9 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 	if len(password) < 8 {
 		return "", errShortPassword
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	// C2: pre-hash with SHA-256 to avoid bcrypt's silent 72-byte truncation.
+	pwHash := sha256.Sum256([]byte(password))
+	hash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
 	if err != nil {
 		return "", err
 	}
@@ -853,53 +756,6 @@ func randDigits(n int) (string, error) {
 	return string(out), nil
 }
 
-func (s *NexusServer) issueSessionToken(username, device string) (string, error) {
-	tok, err := randHex(32)
-	if err != nil {
-		return "", err
-	}
-	expires := time.Now().Add(30 * 24 * time.Hour)
-	_, err = s.DB.Exec(
-		"INSERT INTO session_tokens (token, username, device_info, expires_at) VALUES (?, ?, ?, ?)",
-		tok, username, device, expires,
-	)
-	return tok, err
-}
-
-func (s *NexusServer) issueAdminSessionToken(username string) (string, error) {
-	tok, err := randHex(32)
-	if err != nil {
-		return "", err
-	}
-	expires := time.Now().Add(4 * time.Hour)
-	_, err = s.DB.Exec(
-		"INSERT INTO session_tokens (token, username, device_info, expires_at) VALUES (?, ?, ?, ?)",
-		tok, username, "admin-portal", expires,
-	)
-	return tok, err
-}
-
-func (s *NexusServer) sessionUsername(token string) string {
-	if token == "" {
-		return ""
-	}
-	var u string
-	var expires time.Time
-	var revoked int
-	err := s.DB.QueryRow(
-		"SELECT username, expires_at, revoked FROM session_tokens WHERE token = ?",
-		token,
-	).Scan(&u, &expires, &revoked)
-	if err != nil || revoked != 0 || time.Now().After(expires) {
-		return ""
-	}
-	return u
-}
-
-func (s *NexusServer) revokeSession(token string) {
-	s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE token = ?", token)
-}
-
 // deleteAccount performs a GDPR Article 17 ("right to erasure") cascade for a
 // single user. Runs in a single transaction so partial failure leaves the
 // account intact. Reports MADE BY the user are removed; reports ABOUT the
@@ -938,43 +794,6 @@ func (s *NexusServer) deleteAccount(username string) error {
 	return tx.Commit()
 }
 
-func (s *NexusServer) totpStatus(username string) (secret string, enabled bool) {
-	var e int
-	s.DB.QueryRow("SELECT totp_secret, totp_enabled FROM users WHERE username = ?", username).Scan(&secret, &e)
-	return secret, e == 1
-}
-
-func (s *NexusServer) generateTOTPURI(username string) (uri, secret string, err error) {
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Phaze",
-		AccountName: username,
-	})
-	if err != nil {
-		return "", "", err
-	}
-	return key.URL(), key.Secret(), nil
-}
-
-func (s *NexusServer) enableTOTP(username, secret, code string) bool {
-	if !totp.Validate(code, secret) {
-		return false
-	}
-	_, err := s.DB.Exec("UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE username = ?", secret, username)
-	return err == nil
-}
-
-func (s *NexusServer) disableTOTP(username string) {
-	s.DB.Exec("UPDATE users SET totp_secret = '', totp_enabled = 0 WHERE username = ?", username)
-}
-
-func (s *NexusServer) verifyTOTP(username, code string) bool {
-	secret, enabled := s.totpStatus(username)
-	if !enabled || secret == "" {
-		return true
-	}
-	return totp.Validate(code, secret)
-}
-
 func (s *NexusServer) createPasswordReset(email string) (string, string, error) {
 	var username string
 	err := s.DB.QueryRow("SELECT username FROM users WHERE email = ?", email).Scan(&username)
@@ -1010,7 +829,9 @@ func (s *NexusServer) consumePasswordReset(token, newPassword string) error {
 	if used != 0 || time.Now().After(expires) {
 		return errResetInvalid
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	// C2: pre-hash with SHA-256 to avoid bcrypt's silent 72-byte truncation.
+	pwHash := sha256.Sum256([]byte(newPassword))
+	hash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -1061,7 +882,7 @@ func (s *NexusServer) approveQRLogin(token, username, device string) error {
 	return nil
 }
 
-func (s *NexusServer) checkQRLogin(token string) (string, string, bool) {
+func (s *NexusServer) checkQRLogin(token string) (string, string, bool, bool) {
 	var username, sess string
 	var approved int
 	var expires time.Time
@@ -1069,159 +890,24 @@ func (s *NexusServer) checkQRLogin(token string) (string, string, bool) {
 		"SELECT username, session_token, approved, expires_at FROM qr_login_tokens WHERE token = ?",
 		token,
 	).Scan(&username, &sess, &approved, &expires)
-	if err != nil || time.Now().After(expires) {
-		return "", "", false
+	if err == sql.ErrNoRows {
+		return "", "", false, false
 	}
-	return username, sess, approved == 1
+	if err != nil || time.Now().After(expires) {
+		return "", "", false, true
+	}
+	return username, sess, approved == 1, true
 }
 
 func (s *NexusServer) verifyUser(username, code string) bool {
 	var dbCode string
 	err := s.DB.QueryRow("SELECT verification_code FROM users WHERE username = ?", username).Scan(&dbCode)
-	if err != nil || dbCode != code {
+	// H6: constant-time comparison to prevent timing side-channels on OTP codes.
+	if err != nil || dbCode == "" || code == "" || subtle.ConstantTimeCompare([]byte(dbCode), []byte(code)) != 1 {
 		return false
 	}
 	_, err = s.DB.Exec("UPDATE users SET is_verified = 1, verification_code = NULL WHERE username = ?", username)
 	return err == nil
-}
-
-func (s *NexusServer) sendEmail(to, subject, body string) error {
-	// Preference order: Resend (no IP allowlist) → Brevo → SMTP. Each one
-	// is opt-in via its env var; users can run with whichever they have.
-	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
-		return sendEmailResend(apiKey, to, subject, body)
-	}
-	if apiKey := os.Getenv("BREVO_API_KEY"); apiKey != "" {
-		return sendEmailBrevo(apiKey, to, subject, body)
-	}
-	return sendEmailSMTP(to, subject, body)
-}
-
-// sendEmailResend posts to Resend's HTTP API. No IP allowlist, no SMTP
-// fragility — just an API key. Free tier covers 100 emails/day, plenty
-// for verification flows. https://resend.com/docs/api-reference/emails/send-email
-func sendEmailResend(apiKey, to, subject, body string) error {
-	from := os.Getenv("RESEND_SENDER")
-	if from == "" {
-		// Resend requires the sender to be from a verified domain. Default
-		// to onboarding@resend.dev (Resend's built-in sandbox sender) so
-		// the first run works without any DNS setup; users override with
-		// RESEND_SENDER="Phaze <noreply@phazechat.world>" once their
-		// custom domain is verified in the Resend dashboard.
-		from = "Phaze <onboarding@resend.dev>"
-	}
-	payload := map[string]any{
-		"from":    from,
-		"to":      []string{to},
-		"subject": subject,
-		"html":    body,
-	}
-	buf, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("resend api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-}
-
-// sendEmailBrevo posts to Brevo's transactional API. Preferred over SMTP — auth
-// is a single header, no port 587, and bounces/opens come back via webhooks.
-func sendEmailBrevo(apiKey, to, subject, body string) error {
-	fromEmail := os.Getenv("BREVO_SENDER_EMAIL")
-	if fromEmail == "" {
-		fromEmail = os.Getenv("SMTP_FROM")
-	}
-	if fromEmail == "" {
-		fromEmail = "noreply@phazechat.world"
-	}
-	fromName := os.Getenv("BREVO_SENDER_NAME")
-	if fromName == "" {
-		fromName = "Phaze"
-	}
-
-	payload := map[string]any{
-		"sender":      map[string]string{"name": fromName, "email": fromEmail},
-		"to":          []map[string]string{{"email": to}},
-		"subject":     subject,
-		"htmlContent": body,
-	}
-	buf, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("api-key", apiKey)
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("accept", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("brevo api %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-}
-
-func sendEmailSMTP(to, subject, body string) error {
-	host := os.Getenv("SMTP_HOST")
-	port := os.Getenv("SMTP_PORT")
-	user := os.Getenv("SMTP_USER")
-	pass := os.Getenv("SMTP_PASS")
-
-	if host == "" || user == "" || pass == "" {
-		log.Printf("[MAIL-SIM] To: %s | Subject: %s | Body: %s", to, subject, body)
-		return nil
-	}
-
-	from := os.Getenv("SMTP_FROM")
-	if from == "" {
-		from = user
-	}
-	auth := smtp.PlainAuth("", user, pass, host)
-	msg := []byte("From: Phaze <" + from + ">\r\n" +
-		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
-		"MIME-version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n" +
-		"\r\n" +
-		body + "\r\n")
-
-	addr := fmt.Sprintf("%s:%s", host, port)
-	if port == "" {
-		addr = host + ":587"
-	}
-
-	return smtp.SendMail(addr, auth, user, []string{to}, msg)
-}
-
-// sendEmailLogged wraps sendEmail for 'go'-launched calls so SMTP failures
-// land in logs instead of vanishing silently. Use this any time email
-// delivery is not on the caller's synchronous response path.
-func (s *NexusServer) sendEmailLogged(to, subject, body string) {
-	if err := s.sendEmail(to, subject, body); err != nil {
-		log.Printf("[mail] send to %s subject %q failed: %v", to, subject, err)
-	}
 }
 
 func (s *NexusServer) authenticateUser(username, password string) bool {
@@ -1234,7 +920,27 @@ func (s *NexusServer) authenticateUser(username, password string) bool {
 	if !isVerified {
 		return false
 	}
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	// C2 dual-path migration:
+	// 1. Try new scheme: bcrypt(SHA256(password))
+	// 2. Fall back to legacy: bcrypt(password)
+	// On successful legacy match, silently re-hash with the new scheme
+	// so future logins use the hardened path. After all users have logged
+	// in once post-deploy, the fallback can be removed.
+	pwHash := sha256.Sum256([]byte(password))
+	if bcrypt.CompareHashAndPassword([]byte(hash), pwHash[:]) == nil {
+		return true // new scheme match
+	}
+	// Legacy fallback: raw password was hashed directly
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil {
+		// Silently upgrade to new scheme
+		newHash, err := bcrypt.GenerateFromPassword(pwHash[:], bcrypt.DefaultCost)
+		if err == nil {
+			s.DB.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(newHash), username)
+			log.Printf("[security] migrated %s password hash to SHA256+bcrypt", username)
+		}
+		return true
+	}
+	return false
 }
 
 // userBanInfo returns (banned, reason). Reason is empty for non-banned users.
@@ -1431,11 +1137,30 @@ func (s *NexusServer) broadcastChannelMsg(serverID string, payload NexusMessage)
 			recipients = append(recipients, u)
 		}
 	}
+
+	var serverName string
+	_ = s.DB.QueryRow(`SELECT name FROM servers WHERE id = ?`, serverID).Scan(&serverName)
+	if serverName == "" {
+		serverName = "Group"
+	}
+	var channelName string
+	if payload.ChannelID != "" {
+		_ = s.DB.QueryRow(`SELECT name FROM channels WHERE id = ?`, payload.ChannelID).Scan(&channelName)
+	}
+
+	pushTitle := payload.Sender + " in " + serverName
+	if channelName != "" {
+		pushTitle = payload.Sender + " in " + serverName + " #" + channelName
+	}
+
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 	for _, u := range recipients {
 		if c, ok := s.Clients[u]; ok {
 			c.Send(payload)
+		} else if u != payload.Sender {
+			go s.sendWebPush(u, pushTitle, payload.Body)
+			go s.sendFCMPush(u, pushTitle, payload.Body)
 		}
 	}
 }
@@ -1872,18 +1597,27 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 
 func (s *NexusServer) broadcastPresence(username, status string) {
 	friends := s.getFriends(username)
+	supporter := s.isSupporter(username)
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 
 	for _, friend := range friends {
 		if client, ok := s.Clients[friend]; ok {
 			client.Send(NexusMessage{
-				Type:   "presence",
-				Sender: username,
-				Status: status,
+				Type:      "presence",
+				Sender:    username,
+				Status:    status,
+				Supporter: supporter,
 			})
 		}
 	}
+}
+
+// isSupporter reports whether the user holds the supporter badge.
+func (s *NexusServer) isSupporter(username string) bool {
+	var n int
+	err := s.DB.QueryRow("SELECT COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&n)
+	return err == nil && n == 1
 }
 
 // ---------- Trust & Safety: blocks + abuse reports ----------
@@ -1969,1775 +1703,6 @@ func (s *NexusServer) searchUsers(query, excludeUser string) []string {
 }
 
 // ---------- WebSocket Handler ----------
-
-func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if s.isIPBlocked(ip) {
-		http.Error(w, "blocked", http.StatusForbidden)
-		return
-	}
-	s.wsConnCountMu.Lock()
-	count := s.wsConnCount[ip]
-	if count >= 10 {
-		s.wsConnCountMu.Unlock()
-		http.Error(w, "too many connections", http.StatusTooManyRequests)
-		return
-	}
-	s.wsConnCount[ip] = count + 1
-	s.wsConnCountMu.Unlock()
-	defer func() {
-		s.wsConnCountMu.Lock()
-		s.wsConnCount[ip]--
-		if s.wsConnCount[ip] <= 0 {
-			delete(s.wsConnCount, ip)
-		}
-		s.wsConnCountMu.Unlock()
-	}()
-	log.Printf("Incoming connection from %s: %s %s", ip, r.Method, r.URL.String())
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("Upgrade error: %v", err)
-		metrics.wsConnectionsFail.Add(1)
-		return
-	}
-	metrics.wsConnections.Add(1)
-	defer ws.Close()
-
-	// client owns the write mutex for this connection. Pre-auth writes use
-	// it even before the client is registered in s.Clients.
-	// msgLimiter: 20 msg/s sustained, burst 40. Accommodates typing
-	// indicators + rapid sends without permitting a tight spam loop.
-	client := &Client{
-		Conn:       ws,
-		IP:         clientIP(r),
-		msgLimiter: rate.NewLimiter(rate.Limit(20), 40),
-	}
-
-	var username string
-
-	for {
-		var msg NexusMessage
-		err := ws.ReadJSON(&msg)
-		if err != nil {
-			log.Printf("Read error: %v", err)
-			if username != "" {
-				// Compare-and-swap delete: only remove the map entry if it
-				// still points at *this* connection. A concurrent login from
-				// the same user kicks the previous session via Conn.Close(),
-				// which wakes *this* read-loop with an error — without the
-				// guard below we'd delete the freshly-installed new session
-				// and mark the user offline even though they're online on
-				// another device.
-				s.Mu.Lock()
-				current, ok := s.Clients[username]
-				weWereReplaced := ok && current != client
-				if ok && current == client {
-					delete(s.Clients, username)
-				}
-				s.Mu.Unlock()
-				if !weWereReplaced {
-					s.broadcastPresence(username, "Offline")
-					s.voiceRoomEvictUser(username)
-					s.streamEvictUser(username)
-					log.Printf("User %s disconnected", username)
-				} else {
-					log.Printf("User %s old session closed (replaced by newer login)", username)
-				}
-			}
-			return
-		}
-
-		// Per-connection rate limit. Drop silently on overflow: an authed
-		// spammer shouldn't learn they've tripped the limiter.
-		if !client.msgLimiter.Allow() {
-			log.Printf("[ratelimit] dropping %q from %s", msg.Type, username)
-			continue
-		}
-
-		metrics.wsMessagesIn.Add(1)
-
-		switch msg.Type {
-		case "pstn_call":
-			metrics.pstnAttempts.Add(1)
-			if !pstnBridgeEnabled() {
-				metrics.pstnRejected.Add(1)
-				client.Send(NexusMessage{
-					Type:  "pstn_status",
-					Error: "PSTN bridge is disabled on this relay. Use in-app voice/video (WebRTC) with Phaze contacts — no phone network or Twilio required.",
-				})
-				continue
-			}
-			number := msg.Body
-			// SECURITY CHECK: Verify this number belongs to this sender
-			var verified int
-			err := s.DB.QueryRow("SELECT phone_verified FROM users WHERE username = ? AND phone_number = ?", username, number).Scan(&verified)
-			if err != nil || verified == 0 {
-				client.Send(NexusMessage{Type: "pstn_status", Error: "Caller identity not verified. Please link your phone in Settings."})
-				continue
-			}
-
-			log.Printf("[PSTN-SECURE] User %s initiating call to %s", msg.Sender, number)
-			err = s.initiateTwilioCall(number)
-			if err != nil {
-				client.Send(NexusMessage{Type: "pstn_status", Error: "Telephony error: " + err.Error()})
-			} else {
-				client.Send(NexusMessage{Type: "pstn_status", Status: "Connecting via Sovereign Bridge..."})
-			}
-
-		case "register":
-			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
-			if err != nil {
-				client.Send(NexusMessage{Type: "register_result", Error: err.Error()})
-			} else {
-				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
-				log.Printf("New user registered: %s (%s) from %s - Code: %s", msg.Sender, msg.Email, client.IP, code)
-				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
-				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
-					"<h1>Welcome to Phaze</h1>"+
-						"<p>Click the button below to verify your account:</p>"+
-						"<p style=\"margin:24px 0\"><a href=\""+verifyLink+"\" style=\"background:#863bff;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:16px\">Verify My Account</a></p>"+
-						"<p style=\"color:#888\">Or enter this code manually in the app: <b>"+code+"</b></p>")
-				client.Send(NexusMessage{Type: "register_result", Status: "pending_verification"})
-			}
-
-		case "verify_email":
-			if s.verifyUser(msg.Sender, msg.Body) {
-				s.autoJoinGlobalSpace(msg.Sender)
-				client.Send(NexusMessage{Type: "verify_result", Status: "ok"})
-			} else {
-				client.Send(NexusMessage{Type: "verify_result", Error: "Invalid verification code"})
-			}
-
-		case "status_update":
-			s.Mu.Lock()
-			if client, ok := s.Clients[username]; ok {
-				client.Status = msg.Body
-				log.Printf("User %s changed status to %s", username, msg.Body)
-			}
-			s.Mu.Unlock()
-			s.broadcastPresence(username, msg.Body)
-
-		case "request_phone_link":
-			number := msg.Body
-			code := fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
-			_, err := s.DB.Exec("UPDATE users SET verification_code = ?, phone_number = ? WHERE username = ?", code, number, username)
-			if err != nil {
-				client.Send(NexusMessage{Type: "phone_link_result", Error: "Update failed"})
-			} else {
-				log.Printf("[SMS] Sending verification to %s: %s", number, code)
-				go s.sendSMS(number, "Your Phaze verification code is: "+code)
-				client.Send(NexusMessage{Type: "phone_link_result", Status: "code_sent"})
-			}
-
-		case "verify_phone_link":
-			var dbCode string
-			err := s.DB.QueryRow("SELECT verification_code FROM users WHERE username = ?", username).Scan(&dbCode)
-			if err == nil && dbCode == msg.Body {
-				s.DB.Exec("UPDATE users SET phone_verified = 1, verification_code = NULL WHERE username = ?", username)
-				client.Send(NexusMessage{Type: "phone_link_result", Status: "verified"})
-			} else {
-				s.DB.Exec("UPDATE users SET verification_code = NULL WHERE username = ?", username)
-				client.Send(NexusMessage{Type: "phone_link_result", Error: "Invalid code. Security lockout: please request a new code."})
-			}
-
-		case "update_profile":
-			// Update mood and display name
-			_, err := s.DB.Exec("UPDATE users SET mood = ?, display_name = ? WHERE username = ?",
-				msg.Mood, msg.DisplayName, msg.Sender)
-			if err != nil {
-				client.Send(NexusMessage{Type: "update_result", Error: "Update failed"})
-			} else {
-				log.Printf("Profile updated for %s: %s | %s", msg.Sender, msg.DisplayName, msg.Mood)
-				client.Send(NexusMessage{Type: "update_result", Status: "ok"})
-				// Broadcast this change to all online friends
-				s.broadcastProfileUpdate(msg.Sender, msg.DisplayName, msg.Mood)
-			}
-
-		case "auth":
-			if msg.Body == "" {
-				metrics.authFailure.Add(1)
-				client.Send(NexusMessage{Type: "auth_result", Error: "Password required"})
-				continue
-			}
-			if !s.authenticateUser(msg.Sender, msg.Body) {
-				metrics.authFailure.Add(1)
-				client.Send(NexusMessage{Type: "auth_result", Error: "Invalid username or password"})
-				continue
-			}
-			if banned, reason := s.userBanInfo(msg.Sender); banned {
-				metrics.authFailure.Add(1)
-				body := "Account suspended"
-				if reason != "" {
-					body += ": " + reason
-				}
-				client.Send(NexusMessage{Type: "auth_result", Error: body, Status: "banned"})
-				continue
-			}
-			if !s.verifyTOTP(msg.Sender, msg.TOTPCode) {
-				metrics.authFailure.Add(1)
-				client.Send(NexusMessage{Type: "auth_result", Error: "2FA code required or invalid", Status: "totp_required"})
-				continue
-			}
-			metrics.authSuccess.Add(1)
-			username = msg.Sender
-			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", client.IP, username)
-			s.autoJoinGlobalSpace(username)
-			sessTok, _ := s.issueSessionToken(username, msg.DeviceInfo)
-			s.Mu.Lock()
-			if existing, ok := s.Clients[username]; ok {
-				existing.Send(NexusMessage{Type: "kicked", Body: "Logged in from another location"})
-				existing.Conn.Close()
-			}
-			client.Username = username
-			client.Status = "Online"
-			s.Clients[username] = client
-			s.Mu.Unlock()
-			log.Printf("User %s authenticated", username)
-
-			client.Send(NexusMessage{
-				Type:       "auth_result",
-				Status:     "ok",
-				Sender:     username,
-				QRToken:    sessTok,
-				TurnConfig: s.generateMediaToken(username),
-			})
-
-			// Broadcast online presence to friends
-			s.broadcastPresence(username, "Online")
-
-			// Deliver any offline messages
-			s.deliverOfflineMessages(username)
-
-			// Send pending friend requests
-			pending := s.getPendingRequests(username)
-			if len(pending) > 0 {
-				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
-			}
-
-			// Send conversations this user belongs to
-			for _, cm := range s.userConversations(username) {
-				cm.Type = "convo_info"
-				client.Send(cm)
-			}
-
-			// Send friends list with online status
-			friends := s.getFriends(username)
-			for _, f := range friends {
-				status := "Offline"
-				s.Mu.RLock()
-				if c, ok := s.Clients[f]; ok {
-					status = c.Status
-				}
-				s.Mu.RUnlock()
-				client.Send(NexusMessage{Type: "friend_status", Sender: f, Status: status})
-			}
-
-		case "session_auth":
-			u := s.sessionUsername(msg.QRToken)
-			if u == "" {
-				client.Send(NexusMessage{Type: "auth_result", Error: "Session expired, please log in"})
-				continue
-			}
-			if banned, reason := s.userBanInfo(u); banned {
-				body := "Account suspended"
-				if reason != "" {
-					body += ": " + reason
-				}
-				s.revokeSession(msg.QRToken)
-				client.Send(NexusMessage{Type: "auth_result", Error: body, Status: "banned"})
-				continue
-			}
-			username = u
-			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", client.IP, username)
-			s.autoJoinGlobalSpace(username)
-			s.Mu.Lock()
-			if existing, ok := s.Clients[username]; ok {
-				existing.Send(NexusMessage{Type: "kicked", Body: "Logged in from another location"})
-				existing.Conn.Close()
-			}
-			client.Username = username
-			client.Status = "Online"
-			s.Clients[username] = client
-			s.Mu.Unlock()
-			log.Printf("User %s resumed via session token from %s", username, client.IP)
-			client.Send(NexusMessage{
-				Type:       "auth_result",
-				Status:     "ok",
-				Sender:     username,
-				QRToken:    msg.QRToken,
-				TurnConfig: s.generateMediaToken(username),
-			})
-			s.broadcastPresence(username, "Online")
-			s.deliverOfflineMessages(username)
-
-			// Send friends list with online status (same as auth path).
-			for _, f := range s.getFriends(username) {
-				status := "Offline"
-				s.Mu.RLock()
-				if c, ok := s.Clients[f]; ok {
-					status = c.Status
-				}
-				s.Mu.RUnlock()
-				client.Send(NexusMessage{Type: "friend_status", Sender: f, Status: status})
-			}
-			// Send pending friend requests.
-			if pending := s.getPendingRequests(username); len(pending) > 0 {
-				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
-			}
-			// Send conversations.
-			for _, cm := range s.userConversations(username) {
-				cm.Type = "convo_info"
-				client.Send(cm)
-			}
-
-		case "revoke_session":
-			if username == "" || msg.QRToken == "" {
-				continue
-			}
-			s.revokeSession(msg.QRToken)
-			client.Send(NexusMessage{Type: "session_revoked", Status: "ok"})
-
-		case "delete_account":
-			// GDPR Article 17 — right to erasure. Requires the user to be
-			// authenticated AND to confirm their password in msg.Body so an
-			// attacker with a stolen session token can't nuke the account.
-			if username == "" {
-				client.Send(NexusMessage{Type: "delete_account_result", Error: "Not authenticated"})
-				continue
-			}
-			if msg.Body == "" || !s.authenticateUser(username, msg.Body) {
-				client.Send(NexusMessage{Type: "delete_account_result", Error: "Password confirmation required"})
-				continue
-			}
-			if err := s.deleteAccount(username); err != nil {
-				log.Printf("[delete_account] %s: %v", username, err)
-				client.Send(NexusMessage{Type: "delete_account_result", Error: "Internal error — try again"})
-				continue
-			}
-			log.Printf("[delete_account] erased account %s", username)
-			// Notify friends so their rosters update.
-			s.broadcastPresence(username, "Offline")
-			client.Send(NexusMessage{Type: "delete_account_result", Status: "ok"})
-			// Drop the connection and the in-memory client entry.
-			s.Mu.Lock()
-			if cur, ok := s.Clients[username]; ok && cur == client {
-				delete(s.Clients, username)
-			}
-			s.Mu.Unlock()
-			ws.Close()
-			return
-
-		case "resend_verification":
-			var email string
-			err := s.DB.QueryRow("SELECT email FROM users WHERE username = ?", msg.Sender).Scan(&email)
-			if err != nil || email == "" {
-				client.Send(NexusMessage{Type: "register_result", Error: "User not found"})
-				continue
-			}
-			code, err := randDigits(6)
-			if err != nil {
-				client.Send(NexusMessage{Type: "register_result", Error: "Internal error"})
-				continue
-			}
-			if _, err := s.DB.Exec("UPDATE users SET verification_code = ? WHERE username = ?", code, msg.Sender); err != nil {
-				client.Send(NexusMessage{Type: "register_result", Error: "Database error"})
-				continue
-			}
-			go s.sendEmailLogged(email, "Your Phaze activation code",
-				"<h1>New code</h1><p>Your activation code is: <b>"+code+"</b></p>")
-			client.Send(NexusMessage{Type: "register_result", Status: "code_resent"})
-
-		case "enable_totp":
-			if username == "" {
-				client.Send(NexusMessage{Type: "totp_result", Error: "Not authenticated"})
-				continue
-			}
-			uri, secret, err := s.generateTOTPURI(username)
-			if err != nil {
-				client.Send(NexusMessage{Type: "totp_result", Error: "Could not generate secret"})
-				continue
-			}
-			// Stash secret pending verification; set enabled=0 so auth still allows login until confirmed.
-			s.DB.Exec("UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE username = ?", secret, username)
-			client.Send(NexusMessage{Type: "totp_result", Status: "pending_confirm", TOTPURI: uri})
-
-		case "confirm_totp":
-			if username == "" {
-				client.Send(NexusMessage{Type: "totp_result", Error: "Not authenticated"})
-				continue
-			}
-			secret, _ := s.totpStatus(username)
-			if secret == "" {
-				client.Send(NexusMessage{Type: "totp_result", Error: "No pending TOTP enrollment"})
-				continue
-			}
-			if !s.enableTOTP(username, secret, msg.TOTPCode) {
-				client.Send(NexusMessage{Type: "totp_result", Error: "Invalid code"})
-				continue
-			}
-			client.Send(NexusMessage{Type: "totp_result", Status: "enabled"})
-
-		case "disable_totp":
-			if username == "" {
-				continue
-			}
-			if !s.authenticateUser(username, msg.Body) {
-				client.Send(NexusMessage{Type: "totp_result", Error: "Password required"})
-				continue
-			}
-			s.disableTOTP(username)
-			client.Send(NexusMessage{Type: "totp_result", Status: "disabled"})
-
-		case "forgot_password":
-			// Accept email in msg.Email; always ack "sent" to avoid user enumeration.
-			go func(addr string) {
-				tok, user, err := s.createPasswordReset(addr)
-				if err != nil {
-					log.Printf("[reset] no user for %s", addr)
-					return
-				}
-				link := "https://phazechat.world/reset?token=" + tok
-				s.sendEmailLogged(addr, "Reset your Phaze password",
-					"<h1>Reset password</h1><p>Hello "+user+",</p><p>Click to reset (valid 1 hour): <a href=\""+link+"\">"+link+"</a></p>")
-			}(msg.Email)
-			client.Send(NexusMessage{Type: "forgot_password_result", Status: "sent"})
-
-		case "reset_password":
-			if err := s.consumePasswordReset(msg.QRToken, msg.Body); err != nil {
-				client.Send(NexusMessage{Type: "reset_password_result", Error: err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "reset_password_result", Status: "ok"})
-
-		case "change_password":
-			// msg.Body = "oldpass:newpass" — split on first colon only
-			if username == "" {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "Not authenticated"})
-				continue
-			}
-			idx := strings.Index(msg.Body, ":")
-			if idx < 1 || idx == len(msg.Body)-1 {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "Malformed request"})
-				continue
-			}
-			oldPw, newPw := msg.Body[:idx], msg.Body[idx+1:]
-			if !s.authenticateUser(username, oldPw) {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "Current password incorrect"})
-				continue
-			}
-			if len(newPw) < 8 {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "New password must be at least 8 characters"})
-				continue
-			}
-			hash, err := bcrypt.GenerateFromPassword([]byte(newPw), bcrypt.DefaultCost)
-			if err != nil {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "Internal error"})
-				continue
-			}
-			if _, err := s.DB.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username); err != nil {
-				client.Send(NexusMessage{Type: "change_password_result", Error: "Database error"})
-				continue
-			}
-			log.Printf("[security] %s changed password", username)
-			client.Send(NexusMessage{Type: "change_password_result", Status: "ok"})
-
-		case "qr_login_create":
-			tok, err := s.createQRLogin()
-			if err != nil {
-				client.Send(NexusMessage{Type: "qr_login_result", Error: "Could not create QR token"})
-				continue
-			}
-			client.Send(NexusMessage{
-				Type:    "qr_login_result",
-				Status:  "pending",
-				QRToken: tok,
-				QRData:  "phaze://login?token=" + tok,
-			})
-
-		case "qr_login_approve":
-			if username == "" {
-				client.Send(NexusMessage{Type: "qr_login_result", Error: "Not authenticated"})
-				continue
-			}
-			if err := s.approveQRLogin(msg.QRToken, username, msg.DeviceInfo); err != nil {
-				client.Send(NexusMessage{Type: "qr_login_result", Error: err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "qr_login_result", Status: "approved"})
-
-		case "qr_login_check":
-			u, sess, approved := s.checkQRLogin(msg.QRToken)
-			if !approved {
-				client.Send(NexusMessage{Type: "qr_login_result", Status: "pending", QRToken: msg.QRToken})
-				continue
-			}
-			// Promote this socket onto the approved session.
-			username = u
-			s.Mu.Lock()
-			if existing, ok := s.Clients[username]; ok {
-				existing.Send(NexusMessage{Type: "kicked", Body: "Logged in from another location"})
-				existing.Conn.Close()
-			}
-			client.Username = username
-			client.Status = "Online"
-			s.Clients[username] = client
-			s.Mu.Unlock()
-			log.Printf("User %s logged in via QR", username)
-			client.Send(NexusMessage{
-				Type:       "auth_result",
-				Status:     "ok",
-				Sender:     username,
-				QRToken:    sess,
-				TurnConfig: s.generateMediaToken(username),
-			})
-			s.broadcastPresence(username, "Online")
-			s.deliverOfflineMessages(username)
-
-		case "msg":
-			if username == "" {
-				continue
-			}
-			// Authoritative sender = authenticated session, not client claim
-			msg.Sender = username
-			if msg.Recipient == "PhazeBot" {
-				s.handleBotMessage(client, msg)
-				continue
-			}
-			// Trust & safety: drop if either party has blocked the other.
-			// Sender sees a benign delivered_offline status — no oracle leak.
-			if s.isBlocked(msg.Recipient, msg.Sender) || s.isBlocked(msg.Sender, msg.Recipient) {
-				log.Printf("[block] dropped %s -> %s", msg.Sender, msg.Recipient)
-				client.Send(NexusMessage{
-					Type: "msg_status", Body: "delivered_offline", Sender: msg.Recipient,
-				})
-				continue
-			}
-			log.Printf("Message from %s to %s", msg.Sender, msg.Recipient)
-			// Durable cross-device history: store the ciphertext exactly as
-			// the sender produced it. Idempotent on msg_id so retries are
-			// safe. Both ends fetch this via "dm_history" on chat open.
-			s.persistDM(msg.MsgID, msg.Sender, msg.Recipient, msg.Body)
-			s.Mu.RLock()
-			recipientClient, online := s.Clients[msg.Recipient]
-			s.Mu.RUnlock()
-
-			if online {
-				recipientClient.Send(msg)
-			} else {
-				s.storeOfflineMessage(msg.Sender, msg.Recipient, msg.Body, "msg")
-				client.Send(NexusMessage{
-					Type:   "msg_status",
-					Body:   "delivered_offline",
-					Sender: msg.Recipient,
-				})
-			}
-
-		case "block":
-			if username == "" {
-				continue
-			}
-			if err := s.blockUser(username, msg.Recipient); err != nil {
-				client.Send(NexusMessage{Type: "block_result", Error: err.Error()})
-			} else {
-				log.Printf("[block] %s blocked %s", username, msg.Recipient)
-				client.Send(NexusMessage{Type: "block_result", Status: "blocked", Recipient: msg.Recipient})
-			}
-
-		case "unblock":
-			if username == "" {
-				continue
-			}
-			log.Printf("[block] %s unblocking %s", username, msg.Recipient)
-			if err := s.unblockUser(username, msg.Recipient); err != nil {
-				client.Send(NexusMessage{Type: "block_result", Error: err.Error()})
-			} else {
-				client.Send(NexusMessage{Type: "block_result", Status: "unblocked", Recipient: msg.Recipient})
-			}
-
-		case "list_blocks":
-			if username == "" {
-				continue
-			}
-			client.Send(NexusMessage{Type: "blocks", Results: s.listBlocks(username)})
-
-		case "register_fcm_token":
-			if username == "" {
-				continue
-			}
-			if msg.Body == "" {
-				continue
-			}
-			s.DB.Exec("UPDATE users SET fcm_token = ? WHERE username = ?", msg.Body, username)
-			log.Printf("[FCM] registered token for %s", username)
-
-		case "subscribe_push":
-			if username == "" {
-				continue
-			}
-			// msg.Body = JSON {"endpoint":"…","p256dh":"…","auth":"…"}
-			var sub struct {
-				Endpoint string `json:"endpoint"`
-				P256DH   string `json:"p256dh"`
-				Auth     string `json:"auth"`
-			}
-			if err := json.Unmarshal([]byte(msg.Body), &sub); err != nil || sub.Endpoint == "" {
-				client.Send(NexusMessage{Type: "push_result", Error: "Invalid subscription"})
-				continue
-			}
-			s.DB.Exec(`INSERT INTO push_subscriptions (username, endpoint, p256dh, auth)
-				VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET username=excluded.username`,
-				username, sub.Endpoint, sub.P256DH, sub.Auth)
-			client.Send(NexusMessage{Type: "push_result", Status: "subscribed"})
-
-		case "unsubscribe_push":
-			if username == "" {
-				continue
-			}
-			s.DB.Exec("DELETE FROM push_subscriptions WHERE username = ? AND endpoint = ?", username, msg.Body)
-			client.Send(NexusMessage{Type: "push_result", Status: "unsubscribed"})
-
-		case "list_sessions":
-			if username == "" {
-				continue
-			}
-			sessions := s.listSessions(username)
-			data, _ := json.Marshal(sessions)
-			client.Send(NexusMessage{Type: "sessions_list", Body: string(data)})
-
-		case "revoke_session_by_token":
-			if username == "" {
-				continue
-			}
-			// Only revoke sessions belonging to this user
-			s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE token = ? AND username = ?", msg.Body, username)
-			client.Send(NexusMessage{Type: "session_revoked", Status: "ok"})
-
-		case "invite_email":
-			if username == "" {
-				continue
-			}
-			if !validEmail(msg.Email) {
-				client.Send(NexusMessage{Type: "invite_result", Error: "Invalid email"})
-				continue
-			}
-			code, err := randHex(16)
-			if err != nil {
-				client.Send(NexusMessage{Type: "invite_result", Error: "Internal error"})
-				continue
-			}
-			s.DB.Exec("INSERT INTO invite_codes (code, inviter, email) VALUES (?, ?, ?)", code, username, msg.Email)
-			link := "https://phazechat.world/web?invite=" + code
-			go s.sendEmailLogged(msg.Email, username+" invited you to Phaze",
-				"<h1>You've been invited to Phaze!</h1><p><b>"+username+"</b> wants to chat with you on Phaze — free encrypted messaging, calls, and more.</p>"+
-					"<p><a href=\""+link+"\" style=\"background:#863bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;\">Join Phaze</a></p>"+
-					"<p style=\"font-size:12px;color:#666\">Or paste this link: "+link+"</p>")
-			client.Send(NexusMessage{Type: "invite_result", Status: "sent"})
-
-		case "report_abuse":
-			if username == "" {
-				continue
-			}
-			// msg.Recipient = subject (offending user), msg.Status = reason tag, msg.Body = freeform
-			if err := s.recordAbuseReport(username, msg.Recipient, msg.Status, msg.Body); err != nil {
-				client.Send(NexusMessage{Type: "report_result", Error: err.Error()})
-			} else {
-				log.Printf("[abuse] report from %s about %s reason=%s", username, msg.Recipient, msg.Status)
-				client.Send(NexusMessage{Type: "report_result", Status: "received"})
-			}
-
-		case "typing":
-			if username == "" {
-				continue
-			}
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(NexusMessage{
-					Type:   "typing",
-					Sender: username,
-				})
-			}
-			s.Mu.RUnlock()
-
-		// Edit / delete / react are best-effort live relays for DMs. The body
-		// (for msg_edit) and emoji (for msg_react) are still E2EE-encrypted
-		// client-side; the server only forwards the envelope. If the
-		// recipient is offline the signal is dropped — clients reconcile
-		// from their own local history when they reconnect.
-		case "msg_edit", "msg_delete", "msg_react":
-			if username == "" || msg.Recipient == "" || msg.MsgID == "" {
-				continue
-			}
-			if s.isBlocked(msg.Recipient, username) || s.isBlocked(username, msg.Recipient) {
-				continue
-			}
-			msg.Sender = username
-			// Mirror the action into durable history so both sides see it
-			// after a refresh / new-device login.
-			switch msg.Type {
-			case "msg_edit":
-				s.editDM(msg.MsgID, username, msg.Body)
-			case "msg_delete":
-				s.deleteDM(msg.MsgID, username)
-			case "msg_react":
-				if msg.Reaction != "" {
-					s.toggleReaction(msg.MsgID, username, msg.Reaction)
-				}
-			}
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			}
-			s.Mu.RUnlock()
-
-		case "dm_history":
-			if username == "" || msg.Recipient == "" {
-				continue
-			}
-			limit := 100
-			rows := s.fetchDMHistory(username, msg.Recipient, msg.HistoryFrom, limit)
-			client.Send(NexusMessage{
-				Type:      "dm_history",
-				Recipient: msg.Recipient,
-				DMHistory: rows,
-			})
-
-		// Key backup put/get/delete: server is dumb storage for an opaque
-		// PIN-encrypted blob containing the user's NaCl keypair. The plain
-		// keys never touch the server.
-		case "key_backup_put":
-			if username == "" || msg.KeyBackup == nil {
-				continue
-			}
-			b := msg.KeyBackup
-			if b.Ciphertext == "" || b.Salt == "" || b.Iterations < 10000 {
-				client.Send(NexusMessage{Type: "key_backup_result", Error: "invalid backup payload"})
-				continue
-			}
-			if _, err := s.DB.Exec(
-				`INSERT INTO key_backups (username, ciphertext, salt, iterations) VALUES (?, ?, ?, ?)
-				 ON CONFLICT(username) DO UPDATE SET ciphertext = excluded.ciphertext, salt = excluded.salt,
-				 iterations = excluded.iterations, created_at = CURRENT_TIMESTAMP`,
-				username, b.Ciphertext, b.Salt, b.Iterations); err != nil {
-				client.Send(NexusMessage{Type: "key_backup_result", Error: err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "key_backup_result", Status: "stored"})
-
-		case "key_backup_get":
-			if username == "" {
-				continue
-			}
-			var ct, salt, created string
-			var iters int
-			err := s.DB.QueryRow(
-				`SELECT ciphertext, salt, iterations, created_at FROM key_backups WHERE username = ?`,
-				username,
-			).Scan(&ct, &salt, &iters, &created)
-			if err != nil {
-				client.Send(NexusMessage{Type: "key_backup", Status: "not_found"})
-				continue
-			}
-			client.Send(NexusMessage{
-				Type:   "key_backup",
-				Status: "ok",
-				KeyBackup: &KeyBackupPayload{
-					Ciphertext: ct, Salt: salt, Iterations: iters, CreatedAt: created,
-				},
-			})
-
-		case "key_backup_delete":
-			if username == "" {
-				continue
-			}
-			s.DB.Exec(`DELETE FROM key_backups WHERE username = ?`, username)
-			client.Send(NexusMessage{Type: "key_backup_result", Status: "deleted"})
-
-		// Device link: create / approve / poll a short-lived link code. The
-		// new device shows the code; the existing logged-in device "approves"
-		// to authorize a session for the new one. Reuses the qr_login_* DB
-		// table — qr_login was already the same pattern for QR sign-in.
-		case "link_create":
-			tok, err := s.createQRLogin()
-			if err != nil {
-				client.Send(NexusMessage{Type: "link_result", Error: err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "link_result", Status: "ok", Token: tok})
-
-		case "link_approve":
-			if username == "" || msg.Token == "" {
-				continue
-			}
-			device := msg.DeviceInfo
-			if device == "" {
-				device = "linked-device"
-			}
-			if err := s.approveQRLogin(msg.Token, username, device); err != nil {
-				client.Send(NexusMessage{Type: "link_result", Error: err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "link_result", Status: "approved"})
-
-		case "link_check":
-			if msg.Token == "" {
-				continue
-			}
-			u, sess, approved := s.checkQRLogin(msg.Token)
-			if approved {
-				client.Send(NexusMessage{Type: "link_check", Status: "approved", Sender: u, QRToken: sess})
-			} else {
-				client.Send(NexusMessage{Type: "link_check", Status: "pending"})
-			}
-
-		case "presence":
-			if username == "" {
-				continue
-			}
-			// Directed key handoff (native_client replies to key_request with a
-			// presence carrying public_key + recipient = requester).
-			if msg.Recipient != "" && len(msg.PublicKey) == 32 && s.areFriends(username, msg.Recipient) {
-				msg.Sender = username
-				s.Mu.RLock()
-				if peer, ok := s.Clients[msg.Recipient]; ok {
-					if err := peer.Send(msg); err != nil {
-						log.Printf("[presence] key forward to %s: %v", msg.Recipient, err)
-					}
-				}
-				s.Mu.RUnlock()
-			}
-			log.Printf("User %s is now %s", username, msg.Status)
-			s.Mu.Lock()
-			if client, ok := s.Clients[username]; ok {
-				client.Status = msg.Status
-			}
-			s.Mu.Unlock()
-			s.broadcastPresence(username, msg.Status)
-
-		case "search":
-			if username == "" {
-				continue
-			}
-			log.Printf("User %s searching for: %s", username, msg.Body)
-			results := s.searchUsers(msg.Body, username)
-			client.Send(NexusMessage{
-				Type:    "search_results",
-				Results: results,
-			})
-
-		case "friend_request":
-			if username == "" {
-				continue
-			}
-			err := s.sendFriendRequest(username, msg.Recipient)
-			if err != nil {
-				log.Printf("Friend request error: %v", err)
-				continue
-			}
-			log.Printf("Friend request: %s -> %s", username, msg.Recipient)
-			// Notify recipient if online
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(NexusMessage{
-					Type:   "friend_request",
-					Sender: username,
-				})
-			}
-			s.Mu.RUnlock()
-
-		case "friend_accept":
-			if username == "" {
-				continue
-			}
-			requester := msg.Recipient
-			if requester == "" {
-				requester = msg.Body
-			}
-			err := s.acceptFriendRequest(requester, username)
-			if err != nil {
-				log.Printf("Friend accept error: %v", err)
-				continue
-			}
-			log.Printf("Friend accepted: %s accepted %s", username, requester)
-			s.Mu.RLock()
-			if requesterClient, ok := s.Clients[requester]; ok {
-				requesterClient.Send(NexusMessage{
-					Type:   "friend_accepted",
-					Sender: username,
-				})
-			}
-			s.Mu.RUnlock()
-
-		case "friend_reject":
-			if username == "" {
-				continue
-			}
-			_ = s.rejectFriendRequest(msg.Sender, username)
-			log.Printf("Friend reject: %s rejected %s", username, msg.Sender)
-
-		case "friend_remove":
-			if username == "" {
-				continue
-			}
-			_ = s.removeFriend(username, msg.Recipient)
-			log.Printf("Friend removed: %s <-> %s", username, msg.Recipient)
-			s.Mu.RLock()
-			if peer, ok := s.Clients[msg.Recipient]; ok {
-				peer.Send(NexusMessage{Type: "friend_removed", Sender: username})
-			}
-			s.Mu.RUnlock()
-
-		case "convo_create":
-			if username == "" {
-				continue
-			}
-			// Only accept members who are already accepted friends of the
-			// creator. Without this, any authed user can spam strangers into
-			// unsolicited group chats. Self is always allowed.
-			friendSet := map[string]bool{username: true}
-			for _, f := range s.getFriends(username) {
-				friendSet[f] = true
-			}
-			eligible := msg.Members[:0:0]
-			for _, m := range msg.Members {
-				if friendSet[m] {
-					eligible = append(eligible, m)
-				}
-			}
-			if len(eligible) == 0 {
-				client.Send(NexusMessage{Type: "convo_error", Error: "No eligible members — add friends first"})
-				continue
-			}
-			if err := s.createConversation(msg.ConvoID, msg.ConvoName, username, eligible); err != nil {
-				client.Send(NexusMessage{Type: "convo_error", Error: err.Error()})
-				continue
-			}
-			members := s.conversationMembers(msg.ConvoID)
-			notice := NexusMessage{
-				Type:      "convo_created",
-				ConvoID:   msg.ConvoID,
-				ConvoName: msg.ConvoName,
-				Members:   members,
-				Sender:    username,
-			}
-			s.Mu.RLock()
-			for _, m := range members {
-				if c, ok := s.Clients[m]; ok {
-					c.Send(notice)
-				}
-			}
-			s.Mu.RUnlock()
-			log.Printf("Conversation %s (%s) created by %s with %d members", msg.ConvoID, msg.ConvoName, username, len(members))
-
-		case "convo_msg":
-			if username == "" || msg.ConvoID == "" {
-				continue
-			}
-			metrics.convoMessages.Add(1)
-			members := s.conversationMembers(msg.ConvoID)
-			s.Mu.RLock()
-			for _, m := range members {
-				if m == username {
-					continue
-				}
-				// Prefer per-member envelope so the server never sees plaintext.
-				// Fall back to msg.Body for older clients still using the legacy
-				// plaintext fan-out path.
-				body := msg.Body
-				if msg.Envelopes != nil {
-					if env, ok := msg.Envelopes[m]; ok {
-						body = env
-					}
-				}
-				fanout := NexusMessage{
-					Type:    "convo_msg",
-					Sender:  username,
-					Body:    body,
-					ConvoID: msg.ConvoID,
-				}
-				if c, ok := s.Clients[m]; ok {
-					c.Send(fanout)
-				} else {
-					s.DB.Exec(`INSERT INTO offline_messages (sender, recipient, body, msg_type, convo)
-						VALUES (?, ?, ?, 'convo_msg', ?)`, username, m, body, msg.ConvoID)
-				}
-			}
-			s.Mu.RUnlock()
-
-		case "convo_leave":
-			if username == "" {
-				continue
-			}
-			_ = s.leaveConversation(msg.ConvoID, username)
-			members := s.conversationMembers(msg.ConvoID)
-			s.Mu.RLock()
-			for _, m := range members {
-				if c, ok := s.Clients[m]; ok {
-					c.Send(NexusMessage{
-						Type: "convo_left", Sender: username, ConvoID: msg.ConvoID,
-					})
-				}
-			}
-			s.Mu.RUnlock()
-
-		case "read_receipt":
-			if username == "" {
-				continue
-			}
-			// Only friends can send each other read receipts. Without this
-			// gate, any authed user could spam fake "I read your message"
-			// notifications to strangers — low-impact but a free side-channel.
-			// Group read receipts aren't modeled on the wire (no ConvoID
-			// field in receipts) so we skip them for now.
-			if !s.areFriends(username, msg.Recipient) {
-				continue
-			}
-			s.Mu.RLock()
-			if peer, ok := s.Clients[msg.Recipient]; ok {
-				peer.Send(NexusMessage{
-					Type: "read_receipt", Sender: username, Body: msg.Body,
-				})
-			}
-			s.Mu.RUnlock()
-
-		// Pairwise public-key handoff for NaCl box E2EE. Desktop clients send
-		// this when they need a peer's key; the recipient answers with a
-		// "presence" message carrying public_key (see native_client).
-		case "key_request":
-			if username == "" || msg.Recipient == "" {
-				continue
-			}
-			if !s.areFriends(username, msg.Recipient) {
-				continue
-			}
-			metrics.keyRequests.Add(1)
-			msg.Sender = username
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			}
-			s.Mu.RUnlock()
-
-		case "call_offer", "call_answer", "ice_candidate":
-			if username == "" {
-				continue
-			}
-			log.Printf("Signal [%s] from %s to %s", msg.Type, msg.Sender, msg.Recipient)
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			} else {
-				client.Send(NexusMessage{
-					Type:  "call_error",
-					Body:  "User is offline",
-					Error: msg.Recipient + " is not available",
-				})
-			}
-			s.Mu.RUnlock()
-
-		case "call_reject", "call_end":
-			if username == "" {
-				continue
-			}
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			}
-			s.Mu.RUnlock()
-
-		// ---------- Group Call Invite ----------
-		case "call_invite":
-			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
-				continue
-			}
-			msg.Sender = username
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			}
-			s.Mu.RUnlock()
-
-		// ---------- Remote Control (TeamViewer-style) ----------
-		case "remote_register":
-			if username == "" {
-				continue
-			}
-			code := msg.Body
-			if len(code) != 6 {
-				client.Send(NexusMessage{Type: "remote_error", Error: "Invalid code"})
-				continue
-			}
-			s.RemoteCodesMu.Lock()
-			s.RemoteCodes[code] = username
-			s.RemoteCodesMu.Unlock()
-			log.Printf("[remote] %s registered code %s", username, code)
-			client.Send(NexusMessage{Type: "remote_registered", Body: code})
-
-		case "remote_unregister":
-			if username == "" {
-				continue
-			}
-			s.RemoteCodesMu.Lock()
-			for k, v := range s.RemoteCodes {
-				if v == username {
-					log.Printf("[remote] %s unregistered code %s", username, k)
-					delete(s.RemoteCodes, k)
-				}
-			}
-			s.RemoteCodesMu.Unlock()
-
-		case "remote_lookup":
-			if username == "" {
-				continue
-			}
-			code := msg.Body
-			s.RemoteCodesMu.RLock()
-			host, ok := s.RemoteCodes[code]
-			s.RemoteCodesMu.RUnlock()
-			log.Printf("[remote] %s looked up code %s -> found=%v host=%s (map has %d entries)", username, code, ok, host, len(s.RemoteCodes))
-			if ok {
-				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "ok", Body: host})
-			} else {
-				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "error", Error: "Invalid code — make sure the host is still sharing"})
-			}
-
-		case "remote_offer", "remote_answer", "remote_ice", "remote_input", "remote_end":
-			if username == "" {
-				continue
-			}
-			msg.Sender = username
-			if msg.Type == "remote_end" {
-				s.RemoteCodesMu.Lock()
-				for k, v := range s.RemoteCodes {
-					if v == username || v == msg.Recipient {
-						delete(s.RemoteCodes, k)
-					}
-				}
-				s.RemoteCodesMu.Unlock()
-			}
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
-			} else if msg.Type == "remote_offer" {
-				client.Send(NexusMessage{Type: "remote_error", Error: msg.Recipient + " is not online"})
-			}
-			s.Mu.RUnlock()
-
-		// ---------- Servers + Channels ----------
-
-		case "server_create":
-			if username == "" {
-				continue
-			}
-			name := strings.TrimSpace(msg.ServerName)
-			if !validServerName.MatchString(name) {
-				client.Send(NexusMessage{Type: "server_result", Error: "Server name: 2-64 chars, letters/digits/space/-_.'"})
-				continue
-			}
-			visibility := strings.ToLower(strings.TrimSpace(msg.Visibility))
-			if visibility != "public" && visibility != "private" {
-				visibility = "private"
-			}
-			id, err := randHex(16)
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_result", Error: "rand failure"})
-				continue
-			}
-			invite, err := randHex(8)
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_result", Error: "rand failure"})
-				continue
-			}
-			tx, err := s.DB.Begin()
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_result", Error: "db error"})
-				continue
-			}
-			func() {
-				defer tx.Rollback()
-				if _, err := tx.Exec(
-					`INSERT INTO servers (id, name, description, owner, visibility, invite_code) VALUES (?,?,?,?,?,?)`,
-					id, name, strings.TrimSpace(msg.Topic), username, visibility, invite); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "create server: " + err.Error()})
-					return
-				}
-				if _, err := tx.Exec(
-					`INSERT INTO server_members (server_id, username, role) VALUES (?, ?, 'owner')`,
-					id, username); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "add owner: " + err.Error()})
-					return
-				}
-				// Bootstrap channels every server has from day one.
-				for i, ch := range []string{"general", "random"} {
-					cid, err := randHex(12)
-					if err != nil {
-						client.Send(NexusMessage{Type: "server_result", Error: "rand failure"})
-						return
-					}
-					if _, err := tx.Exec(
-						`INSERT INTO channels (id, server_id, name, kind, position) VALUES (?,?,?, 'text', ?)`,
-						cid, id, ch, i); err != nil {
-						client.Send(NexusMessage{Type: "server_result", Error: "channel: " + err.Error()})
-						return
-					}
-				}
-				if err := tx.Commit(); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "commit: " + err.Error()})
-					return
-				}
-				channels, _ := s.listServerChannels(id)
-				client.Send(NexusMessage{
-					Type:       "server_result",
-					Status:     "ok",
-					ServerID:   id,
-					ServerName: name,
-					InviteCode: invite,
-					Role:       "owner",
-					Visibility: visibility,
-					Channels:   channels,
-				})
-				log.Printf("[server] %s created server %q (%s)", username, name, id)
-				if visibility == "public" {
-					if bot := os.Getenv("KAI_USERNAME"); bot != "" {
-						s.DB.Exec(`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`, id, bot)
-					}
-				}
-			}()
-
-		case "server_list":
-			if username == "" {
-				continue
-			}
-			servers, err := s.listUserServers(username)
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_list_result", Error: "db: " + err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "server_list_result", Status: "ok", Servers: servers})
-
-		case "server_join":
-			if username == "" {
-				continue
-			}
-			code := strings.TrimSpace(msg.InviteCode)
-			if code == "" {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "invite_code required"})
-				continue
-			}
-			var serverID, serverName string
-			err := s.DB.QueryRow(
-				`SELECT id, name FROM servers WHERE invite_code = ?`, code).Scan(&serverID, &serverName)
-			if err != nil {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "invite invalid"})
-				continue
-			}
-			if _, err := s.DB.Exec(
-				`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`,
-				serverID, username); err != nil {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "db: " + err.Error()})
-				continue
-			}
-			channels, _ := s.listServerChannels(serverID)
-			client.Send(NexusMessage{
-				Type:       "server_join_result",
-				Status:     "ok",
-				ServerID:   serverID,
-				ServerName: serverName,
-				Channels:   channels,
-			})
-			log.Printf("[server] %s joined %s (%s)", username, serverName, serverID)
-
-		case "server_leave":
-			if username == "" || msg.ServerID == "" {
-				continue
-			}
-			if msg.ServerID == globalSpaceID {
-				client.Send(NexusMessage{Type: "server_leave_result", Error: "the Phaze Hub is for everyone — can't leave"})
-				continue
-			}
-			// Owners must transfer ownership before leaving; for v1, owner
-			// can't leave their own server.
-			role := s.userServerRole(msg.ServerID, username)
-			if role == "owner" {
-				client.Send(NexusMessage{Type: "server_leave_result", Error: "owners can't leave; delete the server or transfer ownership first"})
-				continue
-			}
-			if _, err := s.DB.Exec(
-				`DELETE FROM server_members WHERE server_id = ? AND username = ?`,
-				msg.ServerID, username); err != nil {
-				client.Send(NexusMessage{Type: "server_leave_result", Error: "db: " + err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{Type: "server_leave_result", Status: "ok", ServerID: msg.ServerID})
-
-		case "server_info":
-			if username == "" || msg.ServerID == "" {
-				continue
-			}
-			if !s.userIsServerMember(msg.ServerID, username) {
-				client.Send(NexusMessage{Type: "server_info_result", Error: "not a member"})
-				continue
-			}
-			channels, _ := s.listServerChannels(msg.ServerID)
-			// Members list.
-			memberRows, _ := s.DB.Query(`SELECT username FROM server_members WHERE server_id = ?`, msg.ServerID)
-			var members []string
-			if memberRows != nil {
-				for memberRows.Next() {
-					var u string
-					if memberRows.Scan(&u) == nil {
-						members = append(members, u)
-					}
-				}
-				memberRows.Close()
-			}
-			client.Send(NexusMessage{
-				Type:     "server_info_result",
-				Status:   "ok",
-				ServerID: msg.ServerID,
-				Channels: channels,
-				Members:  members,
-			})
-
-		case "channel_create":
-			if username == "" || msg.ServerID == "" {
-				continue
-			}
-			role := s.userServerRole(msg.ServerID, username)
-			if role != "owner" && role != "admin" {
-				client.Send(NexusMessage{Type: "channel_result", Error: "admin only"})
-				continue
-			}
-			name := strings.ToLower(strings.TrimSpace(msg.ChannelName))
-			if !validChannelName.MatchString(name) {
-				client.Send(NexusMessage{Type: "channel_result", Error: "channel name: lowercase a-z 0-9 - _ , 2-32 chars"})
-				continue
-			}
-			kind := strings.ToLower(strings.TrimSpace(msg.Kind))
-			if kind != "text" && kind != "voice" {
-				kind = "text"
-			}
-			cid, err := randHex(12)
-			if err != nil {
-				client.Send(NexusMessage{Type: "channel_result", Error: "rand failure"})
-				continue
-			}
-			var maxPos int
-			s.DB.QueryRow(`SELECT COALESCE(MAX(position), 0) FROM channels WHERE server_id = ?`, msg.ServerID).Scan(&maxPos)
-			if _, err := s.DB.Exec(
-				`INSERT INTO channels (id, server_id, name, topic, kind, position) VALUES (?,?,?,?,?,?)`,
-				cid, msg.ServerID, name, strings.TrimSpace(msg.Topic), kind, maxPos+1); err != nil {
-				client.Send(NexusMessage{Type: "channel_result", Error: "db: " + err.Error()})
-				continue
-			}
-			channels, _ := s.listServerChannels(msg.ServerID)
-			// Push update to everyone in the server.
-			s.broadcastChannelMsg(msg.ServerID, NexusMessage{
-				Type:     "server_channels_updated",
-				ServerID: msg.ServerID,
-				Channels: channels,
-			})
-			client.Send(NexusMessage{Type: "channel_result", Status: "ok", ServerID: msg.ServerID, ChannelID: cid})
-
-		case "channel_msg":
-			if username == "" || msg.ChannelID == "" {
-				continue
-			}
-			// Resolve server, check membership.
-			var serverID string
-			if err := s.DB.QueryRow(`SELECT server_id FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID); err != nil {
-				client.Send(NexusMessage{Type: "channel_msg_result", Error: "no such channel"})
-				continue
-			}
-			if !s.userIsServerMember(serverID, username) {
-				client.Send(NexusMessage{Type: "channel_msg_result", Error: "not a member"})
-				continue
-			}
-			body := strings.TrimSpace(msg.Body)
-			if body == "" || len(body) > 8000 {
-				client.Send(NexusMessage{Type: "channel_msg_result", Error: "body 1-8000 chars"})
-				continue
-			}
-			res, err := s.DB.Exec(
-				`INSERT INTO channel_messages (channel_id, sender, body) VALUES (?,?,?)`,
-				msg.ChannelID, username, body)
-			if err != nil {
-				client.Send(NexusMessage{Type: "channel_msg_result", Error: "db: " + err.Error()})
-				continue
-			}
-			id, _ := res.LastInsertId()
-			out := NexusMessage{
-				Type:      "channel_msg_in",
-				ServerID:  serverID,
-				ChannelID: msg.ChannelID,
-				Sender:    username,
-				Body:      body,
-				Messages: []ChannelMsg{{
-					ID: id, ChannelID: msg.ChannelID, Sender: username, Body: body,
-					CreatedAt: time.Now().UTC().Format(time.RFC3339),
-				}},
-			}
-			s.broadcastChannelMsg(serverID, out)
-
-		case "channel_history":
-			if username == "" || msg.ChannelID == "" {
-				continue
-			}
-			var serverID string
-			if err := s.DB.QueryRow(`SELECT server_id FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID); err != nil {
-				client.Send(NexusMessage{Type: "channel_history_result", Error: "no such channel"})
-				continue
-			}
-			if !s.userIsServerMember(serverID, username) {
-				client.Send(NexusMessage{Type: "channel_history_result", Error: "not a member"})
-				continue
-			}
-			history, err := s.channelHistory(msg.ChannelID, msg.HistoryFrom, 50)
-			if err != nil {
-				client.Send(NexusMessage{Type: "channel_history_result", Error: "db: " + err.Error()})
-				continue
-			}
-			client.Send(NexusMessage{
-				Type:      "channel_history_result",
-				Status:    "ok",
-				ServerID:  serverID,
-				ChannelID: msg.ChannelID,
-				Messages:  history,
-			})
-
-		case "channel_react":
-			if username == "" || msg.ChannelID == "" || msg.MsgID == "" || msg.Reaction == "" {
-				continue
-			}
-			// Look up the message's server for permission + fan-out scope.
-			var serverID string
-			if err := s.DB.QueryRow(`SELECT server_id FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID); err != nil {
-				continue
-			}
-			if !s.userIsServerMember(serverID, username) {
-				continue
-			}
-			id64, parseErr := strconv.ParseInt(msg.MsgID, 10, 64)
-			if parseErr != nil {
-				continue
-			}
-			// Toggle: if exists, remove; else insert. Same UX as DMs.
-			var existed int
-			s.DB.QueryRow(`SELECT 1 FROM channel_reactions WHERE msg_id=? AND emoji=? AND username=?`,
-				id64, msg.Reaction, username).Scan(&existed)
-			if existed == 1 {
-				s.DB.Exec(`DELETE FROM channel_reactions WHERE msg_id=? AND emoji=? AND username=?`,
-					id64, msg.Reaction, username)
-			} else {
-				s.DB.Exec(`INSERT OR IGNORE INTO channel_reactions (msg_id, emoji, username) VALUES (?,?,?)`,
-					id64, msg.Reaction, username)
-			}
-			// Re-fetch the full reaction map for that message and fan out.
-			fresh := s.channelReactionsBulk([]int64{id64})[id64]
-			s.broadcastChannelMsg(serverID, NexusMessage{
-				Type:      "channel_react_in",
-				ServerID:  serverID,
-				ChannelID: msg.ChannelID,
-				MsgID:     msg.MsgID,
-				Messages: []ChannelMsg{{
-					ID: id64, ChannelID: msg.ChannelID, Reactions: fresh,
-				}},
-			})
-
-		case "channel_edit":
-			if username == "" || msg.MsgID == "" || msg.Body == "" {
-				continue
-			}
-			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
-			if perr != nil {
-				continue
-			}
-			// Verify ownership.
-			var sender, channelID string
-			if err := s.DB.QueryRow(`SELECT sender, channel_id FROM channel_messages WHERE id=?`, id64).Scan(&sender, &channelID); err != nil {
-				continue
-			}
-			if sender != username {
-				continue
-			}
-			if _, err := s.DB.Exec(`UPDATE channel_messages SET body=?, edited=1 WHERE id=?`, msg.Body, id64); err != nil {
-				continue
-			}
-			var serverID string
-			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
-			s.broadcastChannelMsg(serverID, NexusMessage{
-				Type:      "channel_edit_in",
-				ServerID:  serverID,
-				ChannelID: channelID,
-				MsgID:     msg.MsgID,
-				Body:      msg.Body,
-				Messages: []ChannelMsg{{
-					ID: id64, ChannelID: channelID, Sender: username, Body: msg.Body, Edited: true,
-				}},
-			})
-
-		case "channel_delete":
-			if username == "" || msg.MsgID == "" {
-				continue
-			}
-			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
-			if perr != nil {
-				continue
-			}
-			var sender, channelID string
-			if err := s.DB.QueryRow(`SELECT sender, channel_id FROM channel_messages WHERE id=?`, id64).Scan(&sender, &channelID); err != nil {
-				continue
-			}
-			// Owner or any staff (helper+) can delete.
-			if sender != username && !s.roleAtLeast(username, "helper") {
-				continue
-			}
-			if _, err := s.DB.Exec(`UPDATE channel_messages SET deleted=1, body='' WHERE id=?`, id64); err != nil {
-				continue
-			}
-			var serverID string
-			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
-			s.broadcastChannelMsg(serverID, NexusMessage{
-				Type:      "channel_delete_in",
-				ServerID:  serverID,
-				ChannelID: channelID,
-				MsgID:     msg.MsgID,
-				Messages: []ChannelMsg{{
-					ID: id64, ChannelID: channelID, Sender: sender, Deleted: true,
-				}},
-			})
-
-		case "channel_pin":
-			if username == "" || msg.MsgID == "" {
-				continue
-			}
-			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
-			if perr != nil {
-				continue
-			}
-			var channelID string
-			if err := s.DB.QueryRow(`SELECT channel_id FROM channel_messages WHERE id=?`, id64).Scan(&channelID); err != nil {
-				continue
-			}
-			var serverID string
-			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
-			if !s.userIsServerMember(serverID, username) {
-				continue
-			}
-			// Toggle pin.
-			var cur int
-			s.DB.QueryRow(`SELECT COALESCE(pinned,0) FROM channel_messages WHERE id=?`, id64).Scan(&cur)
-			next := 1 - cur
-			if _, err := s.DB.Exec(`UPDATE channel_messages SET pinned=? WHERE id=?`, next, id64); err != nil {
-				continue
-			}
-			s.broadcastChannelMsg(serverID, NexusMessage{
-				Type:      "channel_pin_in",
-				ServerID:  serverID,
-				ChannelID: channelID,
-				MsgID:     msg.MsgID,
-				Messages: []ChannelMsg{{
-					ID: id64, ChannelID: channelID, Pinned: next == 1,
-				}},
-			})
-
-		case "purge_email":
-			// User-initiated: drop the stored email address from this account.
-			// Loses email-based recovery; relies entirely on Recovery PIN +
-			// session tokens going forward. Idempotent.
-			if username == "" {
-				continue
-			}
-			if _, err := s.DB.Exec(`UPDATE users SET email = '' WHERE username = ?`, username); err != nil {
-				client.Send(NexusMessage{Type: "purge_email_result", Error: "db: " + err.Error()})
-				continue
-			}
-			log.Printf("[privacy] %s purged email", username)
-			client.Send(NexusMessage{Type: "purge_email_result", Status: "ok"})
-
-		case "settings_get":
-			// Return all per-user settings for the authenticated user.
-			if username == "" {
-				continue
-			}
-			rows, err := s.DB.Query(`SELECT key, value FROM user_settings WHERE username = ?`, username)
-			if err != nil {
-				client.Send(NexusMessage{Type: "settings_result", Error: "db: " + err.Error()})
-				continue
-			}
-			settings := map[string]string{}
-			for rows.Next() {
-				var k, v string
-				if err := rows.Scan(&k, &v); err == nil {
-					settings[k] = v
-				}
-			}
-			rows.Close()
-			// Reuse Envelopes (already a string-keyed map) for transport.
-			client.Send(NexusMessage{
-				Type:      "settings_result",
-				Status:    "ok",
-				Envelopes: settings,
-			})
-
-		case "settings_set":
-			// Body is JSON: {"key":"...","value":"..."}. Value is opaque; client
-			// owns the schema.
-			if username == "" || msg.Body == "" {
-				continue
-			}
-			var kv struct {
-				Key   string `json:"key"`
-				Value string `json:"value"`
-			}
-			if err := json.Unmarshal([]byte(msg.Body), &kv); err != nil || kv.Key == "" {
-				continue
-			}
-			if len(kv.Key) > 64 || len(kv.Value) > 64*1024 {
-				continue
-			}
-			s.DB.Exec(
-				`INSERT INTO user_settings (username, key, value, updated_at)
-				 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-				 ON CONFLICT(username, key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`,
-				username, kv.Key, kv.Value)
-
-		case "voice_join":
-			if username == "" || msg.ChannelID == "" {
-				continue
-			}
-			// Ad-hoc call rooms (prefixed "call_") skip Spaces channel checks.
-			if strings.HasPrefix(msg.ChannelID, "call_") {
-				s.voiceRoomJoin(msg.ChannelID, username)
-				s.voiceRoomBroadcastPeers(msg.ChannelID)
-				continue
-			}
-			// Verify the channel exists and the user belongs to its server.
-			var serverID, kind string
-			if err := s.DB.QueryRow(`SELECT server_id, kind FROM channels WHERE id = ?`, msg.ChannelID).Scan(&serverID, &kind); err != nil {
-				client.Send(NexusMessage{Type: "voice_peers", Error: "channel not found"})
-				continue
-			}
-			if kind != "voice" {
-				client.Send(NexusMessage{Type: "voice_peers", Error: "not a voice channel"})
-				continue
-			}
-			if !s.isServerMember(serverID, username) {
-				client.Send(NexusMessage{Type: "voice_peers", Error: "not a member"})
-				continue
-			}
-			s.voiceRoomJoin(msg.ChannelID, username)
-			s.voiceRoomBroadcastPeers(msg.ChannelID)
-
-		case "voice_leave":
-			if username == "" || msg.ChannelID == "" {
-				continue
-			}
-			s.voiceRoomLeave(msg.ChannelID, username)
-			s.voiceRoomBroadcastPeers(msg.ChannelID)
-
-		case "voice_signal":
-			// Relay WebRTC signaling (offer/answer/ice) between peers in a voice room.
-			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
-				continue
-			}
-			if !s.voiceRoomHas(msg.ChannelID, username) || !s.voiceRoomHas(msg.ChannelID, msg.Recipient) {
-				continue
-			}
-			s.Mu.RLock()
-			peer, ok := s.Clients[msg.Recipient]
-			s.Mu.RUnlock()
-			if ok {
-				peer.Send(NexusMessage{
-					Type:      "voice_signal",
-					Sender:    username,
-					Recipient: msg.Recipient,
-					ChannelID: msg.ChannelID,
-					Body:      msg.Body, // "offer" | "answer" | "ice"
-					SDP:       msg.SDP,
-					Candidate: msg.Candidate,
-				})
-			}
-
-		case "stream_start":
-			if username == "" {
-				continue
-			}
-			title := strings.TrimSpace(msg.Body)
-			if title == "" {
-				title = username + "'s stream"
-			}
-			s.streamStart(username, title)
-			s.streamBroadcastList()
-
-		case "stream_stop":
-			if username == "" {
-				continue
-			}
-			s.streamStop(username)
-			s.streamBroadcastList()
-
-		case "stream_list":
-			client.Send(NexusMessage{
-				Type:    "stream_list_result",
-				Status:  "ok",
-				Results: s.streamList(),
-			})
-
-		case "stream_join":
-			// Viewer wants to watch broadcaster Recipient. Server adds them as a
-			// viewer and notifies the broadcaster to initiate an offer.
-			if username == "" || msg.Recipient == "" {
-				continue
-			}
-			if !s.streamHas(msg.Recipient) {
-				client.Send(NexusMessage{Type: "stream_join_result", Error: "not live"})
-				continue
-			}
-			s.streamAddViewer(msg.Recipient, username)
-			s.Mu.RLock()
-			host, ok := s.Clients[msg.Recipient]
-			s.Mu.RUnlock()
-			if ok {
-				host.Send(NexusMessage{Type: "stream_viewer_join", Sender: username, Recipient: msg.Recipient})
-			}
-			client.Send(NexusMessage{Type: "stream_join_result", Status: "ok", Recipient: msg.Recipient})
-
-		case "stream_leave":
-			if username == "" || msg.Recipient == "" {
-				continue
-			}
-			s.streamRemoveViewer(msg.Recipient, username)
-			s.Mu.RLock()
-			host, ok := s.Clients[msg.Recipient]
-			s.Mu.RUnlock()
-			if ok {
-				host.Send(NexusMessage{Type: "stream_viewer_leave", Sender: username, Recipient: msg.Recipient})
-			}
-
-		case "stream_signal":
-			// Relay WebRTC signaling between broadcaster and a specific viewer.
-			if username == "" || msg.Recipient == "" {
-				continue
-			}
-			s.Mu.RLock()
-			peer, ok := s.Clients[msg.Recipient]
-			s.Mu.RUnlock()
-			if ok {
-				peer.Send(NexusMessage{
-					Type:      "stream_signal",
-					Sender:    username,
-					Recipient: msg.Recipient,
-					Body:      msg.Body, // "offer" | "answer" | "ice"
-					SDP:       msg.SDP,
-					Candidate: msg.Candidate,
-				})
-			}
-
-		default:
-			log.Printf("Unknown message type: %s from %s", msg.Type, username)
-		}
-	}
-}
 
 // ---------- Livestreams ----------
 
@@ -4234,27 +2199,32 @@ func (s *NexusServer) downloadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *NexusServer) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/downloads/")
+	// M6: use filepath.Base to prevent path traversal ("../../../etc/passwd").
+	name := filepath.Base(strings.TrimPrefix(r.URL.Path, "/downloads/"))
+	if name == "" || name == "." || name == "/" {
+		http.NotFound(w, r)
+		return
+	}
 
 	// Force octet-stream + attachment for every binary so mobile browsers
 	// (Samsung Internet, Chrome Android) save to Downloads instead of
 	// handing off to the package installer or a file viewer.
-	if strings.HasSuffix(path, ".apk") {
+	if strings.HasSuffix(name, ".apk") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.apk\"")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-	} else if strings.HasSuffix(path, ".exe") {
+	} else if strings.HasSuffix(name, ".exe") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.exe\"")
 		w.Header().Set("Cache-Control", "no-store")
-	} else if strings.HasSuffix(path, ".linux") {
+	} else if strings.HasSuffix(name, ".linux") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"Phaze.linux\"")
 		w.Header().Set("Cache-Control", "no-store")
 	}
 
-	http.ServeFile(w, r, "public/downloads/"+path)
+	http.ServeFile(w, r, filepath.Join("public", "downloads", name))
 }
 
 func (s *NexusServer) featuresHandler(w http.ResponseWriter, r *http.Request) {
@@ -4310,17 +2280,25 @@ func (s *NexusServer) resetHandler(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Admin moderation API ----------
 
-// adminFromRequest authenticates an admin caller. Expects Authorization:
-// Bearer <session_token>. Returns "" + status code on failure (already
-// written by the helper). The session_token is the standard one issued
+// adminFromRequest authenticates an admin caller. Expects phaze_admin_token cookie
+// or Authorization: Bearer <session_token>. Returns "" + status code on failure
+// (already written by the helper). The session_token is the standard one issued
 // by /auth — there is no separate "admin token".
 func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
+	var tok string
+	if cookie, err := r.Cookie("phaze_admin_token"); err == nil {
+		tok = cookie.Value
+	}
+	if tok == "" {
+		h := r.Header.Get("Authorization")
+		if strings.HasPrefix(h, "Bearer ") {
+			tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		}
+	}
+	if tok == "" {
 		http.Error(w, "Authorization required", http.StatusUnauthorized)
 		return ""
 	}
-	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 	u := s.sessionUsername(tok)
 	if u == "" {
 		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
@@ -4337,12 +2315,20 @@ func (s *NexusServer) adminFromRequest(w http.ResponseWriter, r *http.Request) s
 // role (one of "helper", "moderator", "admin", "super_admin"). Returns
 // the username + role, or "" on rejection (already responded).
 func (s *NexusServer) modFromRequest(w http.ResponseWriter, r *http.Request, minRole string) (string, string) {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
+	var tok string
+	if cookie, err := r.Cookie("phaze_admin_token"); err == nil {
+		tok = cookie.Value
+	}
+	if tok == "" {
+		h := r.Header.Get("Authorization")
+		if strings.HasPrefix(h, "Bearer ") {
+			tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		}
+	}
+	if tok == "" {
 		http.Error(w, "Authorization required", http.StatusUnauthorized)
 		return "", ""
 	}
-	tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 	u := s.sessionUsername(tok)
 	if u == "" {
 		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
@@ -4593,8 +2579,36 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": target, "action": action})
 }
 
+// adminMeHandler returns the authenticated admin's username and role.
+func (s *NexusServer) adminMeHandler(w http.ResponseWriter, r *http.Request) {
+	u := s.adminFromRequest(w, r)
+	if u == "" {
+		return
+	}
+	role := s.userRole(u)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"username": u, "role": role})
+}
+
+// adminLogoutHandler clears the phaze_admin_token cookie.
+func (s *NexusServer) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "phaze_admin_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		SameSite: http.SameSiteLaxMode,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
 // adminLoginHandler authenticates an admin via username + password and
 // returns a session token usable as Bearer on every other admin endpoint.
+// Also sets the phaze_admin_token HttpOnly, Secure cookie.
 // Body JSON: { "username": "...", "password": "..." }
 func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -4623,24 +2637,71 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "phaze_admin_token",
+		Value:    tok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": tok, "username": body.Username, "role": role})
 }
 
 // adminUsersHandler returns a listing of all users with key metadata, used
 // by the admin portal to browse, ban, and promote users. Available to any
-// staff role (helper+).
+// staff role (helper+). Supports limit, offset pagination and search.
 func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if u, _ := s.modFromRequest(w, r, "helper"); u == "" {
 		return
 	}
-	rows, err := s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
-		FROM users ORDER BY created_at DESC LIMIT 1000`)
+
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	search := r.URL.Query().Get("search")
+
+	limit := 100
+	offset := 0
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		if l > 1000 {
+			l = 1000
+		}
+		limit = l
+	}
+	if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+		offset = o
+	}
+
+	var total int
+	var rows *sql.Rows
+	var err error
+
+	if search != "" {
+		likePattern := "%" + search + "%"
+		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE username LIKE ? OR email LIKE ? OR last_ip LIKE ? OR signup_ip LIKE ?`, likePattern, likePattern, likePattern, likePattern).Scan(&total); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		rows, err = s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
+			FROM users WHERE username LIKE ? OR email LIKE ? OR last_ip LIKE ? OR signup_ip LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?`, likePattern, likePattern, likePattern, likePattern, limit, offset)
+	} else {
+		if err := s.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		rows, err = s.DB.Query(`SELECT username, COALESCE(email,''), is_verified, is_banned, is_admin, COALESCE(role,'user'), COALESCE(ban_reason,''), COALESCE(CAST(created_at AS TEXT),''), COALESCE(last_ip,''), COALESCE(signup_ip,''), COALESCE(CAST(last_login_at AS TEXT),'')
+			FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+	}
+
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
+
 	type adminUser struct {
 		Username    string `json:"username"`
 		Email       string `json:"email"`
@@ -4655,13 +2716,15 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 		LastLoginAt string `json:"last_login_at"`
 		Online      bool   `json:"online"`
 	}
+
 	s.Mu.RLock()
 	onlineMap := make(map[string]bool, len(s.Clients))
 	for u := range s.Clients {
 		onlineMap[u] = true
 	}
 	s.Mu.RUnlock()
-	out := []adminUser{}
+
+	users := []adminUser{}
 	for rows.Next() {
 		var u adminUser
 		var v, b, a int
@@ -4672,12 +2735,17 @@ func (s *NexusServer) adminUsersHandler(w http.ResponseWriter, r *http.Request) 
 		u.Banned = b == 1
 		u.IsAdmin = a == 1
 		u.Online = onlineMap[u.Username]
-		out = append(out, u)
+		users = append(users, u)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
-}
 
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"users":  users,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
 
 // adminBroadcastHandler posts a message to the global Phaze Hub
 // #announcements channel as the authenticated admin user.
@@ -5249,7 +3317,14 @@ func (s *NexusServer) vapidKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *NexusServer) exportHandler(w http.ResponseWriter, r *http.Request) {
-	tok := r.URL.Query().Get("token")
+	// H5: prefer Authorization header; fall back to query param for backwards compat.
+	tok := ""
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		tok = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	}
+	if tok == "" {
+		tok = r.URL.Query().Get("token")
+	}
 	if tok == "" {
 		http.Error(w, "token required", http.StatusUnauthorized)
 		return
@@ -5377,13 +3452,15 @@ func main() {
 		Clients:     make(map[string]*Client),
 		VoiceRooms:  make(map[string]map[string]struct{}),
 		Streams:     make(map[string]*liveStream),
-		RemoteCodes: make(map[string]string),
+		RemoteCodes: make(map[string]remoteCodeEntry),
 		wsConnCount: make(map[string]int),
 		blockedIPs:  make(map[string]bool),
 	}
 	server.initDB()
 	server.initFCM()
+	server.loadBlockedIPs() // M3: restore IP blocks from DB
 	server.ensureGlobalSpace()
+	go server.sweepRemoteCodes() // L2: expire stale remote codes
 	if bot := os.Getenv("KAI_USERNAME"); bot != "" {
 		server.autoJoinPublicSpaces(bot)
 	}
@@ -5417,6 +3494,16 @@ func main() {
 			// that strip defaults. Top-level HTTPS already allows these, but
 			// being explicit avoids edge-case "permission denied" silently.
 			w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), autoplay=(self)")
+			// M1: Content-Security-Policy for the React SPA.
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; "+
+					"connect-src 'self' wss://phazechat.world wss://*.phazechat.world https://api.github.com; "+
+					"img-src 'self' data: blob:; "+
+					"media-src 'self' blob:; "+
+					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+					"font-src 'self' https://fonts.gstatic.com; "+
+					"script-src 'self'; "+
+					"frame-ancestors 'none'")
 			rel := strings.TrimPrefix(r.URL.Path, "/web/")
 			candidate := filepath.Join(webDir, filepath.FromSlash(rel))
 			if rel != "" {
@@ -5556,9 +3643,9 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 			bmc = "https://buymeacoffee.com/phazeworld"
 		}
 		json.NewEncoder(w).Encode(map[string]string{
-			"bmc_url":     bmc,
+			"bmc_url":       bmc,
 			"support_email": os.Getenv("PHAZE_SUPPORT_EMAIL"),
-			"version":     "1.0.0-Phaze",
+			"version":       "1.0.0-Phaze",
 		})
 	}))
 	// Admin portal — hidden path, not /admin. Set PHAZE_ADMIN_PATH env var
@@ -5573,6 +3660,8 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc(adminPath, adminGate)
 	http.HandleFunc(adminPath+"/", adminGate)
 	http.HandleFunc("/api/v1/admin/login", adminIPGate(adminLoginLimit(server.adminLoginHandler)))
+	http.HandleFunc("/api/v1/admin/me", adminIPGate(rateLimit(server.adminMeHandler)))
+	http.HandleFunc("/api/v1/admin/logout", adminIPGate(rateLimit(server.adminLogoutHandler)))
 	http.HandleFunc("/api/v1/admin/users", adminIPGate(rateLimit(server.adminUsersHandler)))
 	http.HandleFunc("/api/v1/admin/broadcast", adminIPGate(rateLimit(server.adminBroadcastHandler)))
 	http.HandleFunc("/api/v1/admin/ip-block", adminIPGate(rateLimit(server.adminIPBlockHandler)))
@@ -5581,11 +3670,18 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/stats", adminIPGate(rateLimit(server.adminStatsHandler)))
 	http.HandleFunc("/api/v1/admin/logs", adminIPGate(rateLimit(server.adminLogsHandler)))
 	http.HandleFunc("/api/v1/admin/geo", adminIPGate(rateLimit(server.adminGeoHandler)))
-	http.HandleFunc("/api/v1/admin/pending-verifications", rateLimit(server.adminPendingVerificationsHandler))
-	http.HandleFunc("/api/v1/admin/reports", rateLimit(server.adminReportsHandler))
-	http.HandleFunc("/api/v1/admin/reports/", rateLimit(server.adminResolveReportHandler)) // /{id}/resolve
-	http.HandleFunc("/api/v1/admin/users/", rateLimit(server.adminBanHandler))             // /{username}/(ban|unban|role)
-	http.HandleFunc("/api/v1/admin/banned", rateLimit(server.adminBannedUsersHandler))
+	// C1: All admin endpoints must go through adminIPGate to enforce PHAZE_ADMIN_IPS.
+	// These 5 were previously missing the IP gate, allowing access from any IP with a valid token.
+	http.HandleFunc("/api/v1/admin/pending-verifications", adminIPGate(rateLimit(server.adminPendingVerificationsHandler)))
+	http.HandleFunc("/api/v1/admin/reports", adminIPGate(rateLimit(server.adminReportsHandler)))
+	http.HandleFunc("/api/v1/admin/reports/", adminIPGate(rateLimit(server.adminResolveReportHandler))) // /{id}/resolve
+	http.HandleFunc("/api/v1/admin/users/", adminIPGate(rateLimit(server.adminBanHandler)))             // /{username}/(ban|unban|role)
+	http.HandleFunc("/api/v1/admin/banned", adminIPGate(rateLimit(server.adminBannedUsersHandler)))
+	http.HandleFunc("/api/v1/admin/supporters", adminIPGate(rateLimit(server.adminSupportersHandler)))
+	http.HandleFunc("/api/v1/admin/supporters/", adminIPGate(rateLimit(server.adminSupporterActionHandler))) // /{id}/(grant|dismiss)
+
+	// Public: opt-in supporter form behind the "Support Phaze" button.
+	http.HandleFunc("/api/v1/support/request", rateLimit(server.supportRequestHandler))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
@@ -5596,7 +3692,7 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 		bindAddr = "0.0.0.0"
 	}
 
-	log.Printf("Phaze Nexus Server v1.0.0 starting on %s:%s...", bindAddr, port)
+	log.Printf("Phaze Nexus Server v%s starting on %s:%s...", Version, bindAddr, port)
 	log.Printf("  WebSocket endpoint: ws://%s:%s/ws", bindAddr, port)
 	log.Printf("  Health check: http://%s:%s/health", bindAddr, port)
 
@@ -5668,16 +3764,18 @@ func (s *NexusServer) profileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var displayName, mood string
-	err := s.DB.QueryRow("SELECT display_name, mood FROM users WHERE username = ?", username).Scan(&displayName, &mood)
+	var supporter int
+	err := s.DB.QueryRow("SELECT COALESCE(display_name, ''), COALESCE(mood, ''), COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&displayName, &mood, &supporter)
 	if err != nil {
 		http.Error(w, "User not found", 404)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"username":     username,
 		"display_name": displayName,
 		"mood":         mood,
+		"supporter":    supporter == 1,
 	})
 }
 
@@ -5770,6 +3868,30 @@ func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "file type not allowed", http.StatusUnsupportedMediaType)
 		return
+	}
+
+	// Magic-byte validation for image types: reject extension-spoofed executables.
+	// Read the first 512 bytes for MIME sniffing without consuming the reader.
+	headBuf := make([]byte, 512)
+	n, _ := io.ReadFull(file, headBuf)
+	file.Seek(0, io.SeekStart) // rewind for the actual copy
+	detected := http.DetectContentType(headBuf[:n])
+	switch {
+	case strings.HasPrefix(ext, ".png") || strings.HasPrefix(ext, ".jpg") ||
+		strings.HasPrefix(ext, ".jpeg") || strings.HasPrefix(ext, ".gif") ||
+		strings.HasPrefix(ext, ".webp") || strings.HasPrefix(ext, ".bmp"):
+		// Image extensions must have image/* MIME
+		if !strings.HasPrefix(detected, "image/") {
+			log.Printf("[upload] rejected %s: ext=%s detected=%s uploader=%s", hdr.Filename, ext, detected, uploader)
+			http.Error(w, "file content does not match extension", http.StatusUnsupportedMediaType)
+			return
+		}
+	case ext == ".pdf":
+		if detected != "application/pdf" {
+			log.Printf("[upload] rejected %s: ext=%s detected=%s uploader=%s", hdr.Filename, ext, detected, uploader)
+			http.Error(w, "file content does not match extension", http.StatusUnsupportedMediaType)
+			return
+		}
 	}
 
 	if err := os.MkdirAll(uploadDir(), 0o755); err != nil {

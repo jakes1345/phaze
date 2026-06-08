@@ -171,6 +171,12 @@ func (s *NexusServer) storiesItemHandler(w http.ResponseWriter, r *http.Request)
 			http.NotFound(w, r)
 			return
 		}
+		// H2: enforce block — a blocked user should not be able to reach
+		// someone via story replies when they've been blocked in DMs.
+		if s.isBlocked(author, user) || s.isBlocked(user, author) {
+			http.Error(w, "cannot reply to this story", http.StatusForbidden)
+			return
+		}
 		// Relay as a regular DM. Author sees it as a normal incoming msg
 		// with the body prefixed so they know which story it references.
 		s.Mu.RLock()
