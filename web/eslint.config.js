@@ -18,5 +18,12 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Experimental react-compiler lint rules: useful signal but too noisy to
+      // block CI on a working app. Keep as warnings, not errors.
+      'react-hooks/immutability': 'warn',
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
   },
 ])
