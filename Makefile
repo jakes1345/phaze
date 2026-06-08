@@ -1,6 +1,6 @@
 # Phaze™ build system
 
-.PHONY: all android android-aab nexus clean help test vet verify web-build build-all
+.PHONY: all android android-aab nexus clean help test vet verify web-build build-all phaze-assets
 
 APP_NAME=Phaze
 PACKAGE_ID=world.phazechat.app
@@ -49,6 +49,17 @@ nexus: ## Build the Nexus Relay Server → bin/phaze-nexus
 	@echo "[Phaze] Building Nexus Relay Server..."
 	@mkdir -p bin
 	cd nexus_server && go build -ldflags="$(GO_LDFLAGS)" -o ../bin/phaze-nexus .
+
+## 🎨 Assets
+phaze-assets: ## Regenerate WAV sounds + PNG emoticons → nexus_server/public/phaze/assets/
+	@echo "[Phaze] Generating sounds → nexus_server/public/phaze/assets/sounds ..."
+	@mkdir -p nexus_server/public/phaze/assets/sounds nexus_server/public/phaze/assets/emoticons
+	cd nexus_server && go run ./cmd/soundgen "public/phaze/assets/sounds"
+	@echo "[Phaze] Generating emoticons + branding → nexus_server/public/phaze/assets ..."
+	cd nexus_server && go run ./cmd/emoticongen "public/phaze/assets"
+	@echo "[Phaze] Refreshing Nexus default avatar (ServeFile path) ..."
+	@mkdir -p nexus_server/assets
+	cp -f nexus_server/public/phaze/assets/default_avatar.png nexus_server/assets/default_avatar.png 2>/dev/null || true
 
 ## 🛡️ Maintenance
 test: ## Run Go server tests
