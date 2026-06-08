@@ -172,8 +172,12 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     ) { result ->
         val data = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
-            ScreenShareService.start(context)
-            vm.startScreenShare(data)
+            // Start the mediaProjection foreground service FIRST, then begin
+            // capture only once it's actually foregrounded — Android 14+ throws
+            // SecurityException if MediaProjection.start() runs before that.
+            ScreenShareService.start(context) {
+                vm.startScreenShare(data)
+            }
         }
     }
 
