@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 
 /**
@@ -22,7 +24,14 @@ class ScreenShareService : Service() {
         private const val CHANNEL_ID = "phaze_screen_share"
         private const val NOTIF_ID = 4242
 
-        fun start(context: Context) {
+        // Invoked once the service is actually in the foreground with the
+        // mediaProjection type. MediaProjection.start() MUST NOT be called
+        // before this fires, or Android 14+ throws SecurityException.
+        @Volatile
+        private var onForegrounded: (() -> Unit)? = null
+
+        fun start(context: Context, onReady: () -> Unit) {
+            onForegrounded = onReady
             val intent = Intent(context, ScreenShareService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -52,6 +61,10 @@ class ScreenShareService : Service() {
         } else {
             startForeground(NOTIF_ID, notification)
         }
+        // Now that the mediaProjection FGS is live, it's safe to start capture.
+        val cb = onForegrounded
+        onForegrounded = null
+        if (cb != null) Handler(Looper.getMainLooper()).post(cb)
         return START_NOT_STICKY
     }
 
