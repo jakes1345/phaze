@@ -2,12 +2,9 @@
 
 **This is the single front door for "what's left."** Living backlog, prioritized. Last updated 2026-06-08.
 
-### 📑 Where things live (so we stop spawning competing roadmaps)
-- **`docs/ROADMAP.md`** (this file) — the canonical feature + engineering backlog. Start here.
-- **`docs/PRE_BETA_CHECKLIST.md`** — operational gate before inviting public testers (CORS, secrets, rate limits, runbook). Distinct from this; check before a beta wave.
-- **`docs/AUDIT.md`** — historical product audit (point-in-time report, not a live list).
-- **`docs/BETA.md`** — the *definition* of "beta" scope (what's in/out of the first wave).
-- **Memory `handoff_*`** — session handoffs; newest wins.
+### 📑 The only two lists that matter
+- **`docs/ROADMAP.md`** (this file) — the working backlog. Day-to-day, look here.
+- **`docs/PRE_BETA_CHECKLIST.md`** — a one-time ops gate to run through *right before* opening a public beta (CORS, secrets, rate limits, runbook).
 
 If a TODO doesn't fit the beta checklist, it belongs here — not in a new file.
 
