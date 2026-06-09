@@ -89,7 +89,9 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, ChannelMsg[]>>({})
   const [membersByServer, setMembersByServer] = useState<Record<string, string[]>>({})
   const [draft, setDraft] = useState('')
-  const [composerOpen, setComposerOpen] = useState<null | 'create' | 'join'>(null)
+  const [composerOpen, setComposerOpen] = useState<null | 'create' | 'join' | 'discover'>(null)
+  const [discoverList, setDiscoverList] = useState<ServerSummary[]>([])
+  const [discoverLoading, setDiscoverLoading] = useState(false)
   const [newName, setNewName] = useState('')
   const [newTopic, setNewTopic] = useState('')
   const [newVisibility, setNewVisibility] = useState<'public' | 'private'>('private')
@@ -177,6 +179,11 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
       switch (m.type) {
         case 'server_list_result':
           if (m.status === 'ok') setServers(m.servers ?? [])
+          break
+        case 'server_discover_result':
+          setDiscoverLoading(false)
+          if (m.status === 'ok') setDiscoverList(m.servers ?? [])
+          else if (m.error) toast(m.error, 'error')
           break
         case 'server_result':
           if (m.status === 'ok' && m.server_id) {
@@ -341,6 +348,18 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
     setJoinCode('')
   }
 
+  const openDiscover = () => {
+    setDiscoverList([])
+    setDiscoverLoading(true)
+    setComposerOpen('discover')
+    send({ type: 'server_discover' })
+  }
+
+  const joinPublic = (id: string) => {
+    send({ type: 'server_join', server_id: id })
+    setComposerOpen(null)
+  }
+
   const createChannel = () => {
     if (!activeServer || !newChannelName.trim()) return
     send({
@@ -411,6 +430,15 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
           aria-label="Join space"
         >
           ⤵
+        </button>
+        <button
+          className="server-icon add ghost"
+          type="button"
+          onClick={openDiscover}
+          title="Discover public spaces"
+          aria-label="Discover spaces"
+        >
+          🌐
         </button>
       </aside>
 
@@ -841,6 +869,47 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
               </button>
               <button type="button" onClick={joinServer}>
                 Join
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {composerOpen === 'discover' && (
+        <div className="modal-scrim" onClick={() => setComposerOpen(null)}>
+          <div className="modal discover-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Discover public spaces</h3>
+            <p className="modal-hint">Browse and join open communities — no invite needed.</p>
+            <div className="discover-list">
+              {discoverLoading && <p className="modal-hint">Loading…</p>}
+              {!discoverLoading && discoverList.length === 0 && (
+                <p className="modal-hint">No public spaces yet. Create one and set it to public!</p>
+              )}
+              {discoverList.map((s) => (
+                <div className="discover-row" key={s.id}>
+                  <span className="discover-icon">{initials(s.name)}</span>
+                  <div className="discover-meta">
+                    <span className="discover-name">{s.name}</span>
+                    <span className="discover-sub">
+                      {(s.member_count ?? 0)} member{(s.member_count ?? 0) === 1 ? '' : 's'}
+                      {s.description ? ` · ${s.description}` : ''}
+                    </span>
+                  </div>
+                  {s.is_member ? (
+                    <button type="button" className="ghost-btn" disabled>
+                      Joined
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => joinPublic(s.id)}>
+                      Join
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="ghost-btn" onClick={() => setComposerOpen(null)}>
+                Close
               </button>
             </div>
           </div>

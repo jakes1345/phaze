@@ -90,6 +90,8 @@ export interface ServerSummary {
   visibility: 'public' | 'private'
   role: 'owner' | 'admin' | 'member'
   invite_code?: string
+  member_count?: number
+  is_member?: boolean
 }
 
 export interface ChannelInfo {
