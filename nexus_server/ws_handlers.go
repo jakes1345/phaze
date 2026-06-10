@@ -279,11 +279,20 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "auth_result", Error: body, Status: "banned"})
 				continue
 			}
+			// Brute-force protection for the 6-digit TOTP code (only relevant
+			// once the password already checked out).
+			if authTracker.isTOTPThrottled(msg.Sender) {
+				metrics.authFailure.Add(1)
+				client.Send(NexusMessage{Type: "auth_result", Error: "Too many 2FA attempts — wait a few minutes", Status: "totp_required"})
+				continue
+			}
 			if !s.verifyTOTP(msg.Sender, msg.TOTPCode) {
 				metrics.authFailure.Add(1)
+				authTracker.recordTOTPFail(msg.Sender)
 				client.Send(NexusMessage{Type: "auth_result", Error: "2FA code required or invalid", Status: "totp_required"})
 				continue
 			}
+			authTracker.recordTOTPSuccess(msg.Sender)
 			metrics.authSuccess.Add(1)
 			authTracker.recordSuccess(client.IP, msg.Sender) // clear fail counters
 			username = msg.Sender
@@ -516,15 +525,21 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "totp_result", Error: "Not authenticated"})
 				continue
 			}
+			if authTracker.isTOTPThrottled(username) {
+				client.Send(NexusMessage{Type: "totp_result", Error: "Too many attempts — wait a few minutes"})
+				continue
+			}
 			secret, _ := s.totpStatus(username)
 			if secret == "" {
 				client.Send(NexusMessage{Type: "totp_result", Error: "No pending TOTP enrollment"})
 				continue
 			}
 			if !s.enableTOTP(username, secret, msg.TOTPCode) {
+				authTracker.recordTOTPFail(username)
 				client.Send(NexusMessage{Type: "totp_result", Error: "Invalid code"})
 				continue
 			}
+			authTracker.recordTOTPSuccess(username)
 			client.Send(NexusMessage{Type: "totp_result", Status: "enabled"})
 
 		case "disable_totp":
