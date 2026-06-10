@@ -40,9 +40,13 @@ fun SpacesScreen(
     onJoinSpace: (String) -> Unit,
     onBack: () -> Unit,
     onCreateChannel: (String, String, String) -> Unit = { _, _, _ -> },
+    discoverList: List<SpaceInfo> = emptyList(),
+    onDiscover: () -> Unit = {},
+    onJoinPublic: (String) -> Unit = {},
 ) {
     var createOpen by remember { mutableStateOf(false) }
     var joinOpen by remember { mutableStateOf(false) }
+    var discoverOpen by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var joinCode by remember { mutableStateOf("") }
     var createChannelOpen by remember { mutableStateOf(false) }
@@ -129,6 +133,8 @@ fun SpacesScreen(
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = { createOpen = true }) { Text("Create a Space") }
                     Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { onDiscover(); discoverOpen = true }) { Text("🌐 Discover public spaces") }
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = { joinOpen = true }) { Text("Join with code") }
                 }
             }
@@ -156,12 +162,62 @@ fun SpacesScreen(
                     }
                 }
                 item {
-                    TextButton(onClick = { joinOpen = true }, modifier = Modifier.padding(16.dp)) {
-                        Text("Join a Space with invite code")
+                    Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                        TextButton(onClick = { onDiscover(); discoverOpen = true }) {
+                            Text("🌐 Discover")
+                        }
+                        TextButton(onClick = { joinOpen = true }) {
+                            Text("Join with code")
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (discoverOpen) {
+        AlertDialog(
+            onDismissRequest = { discoverOpen = false },
+            title = { Text("Discover public spaces") },
+            text = {
+                if (discoverList.isEmpty()) {
+                    Text("No public spaces yet. Create one and set it to public!", fontSize = 13.sp)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                        items(discoverList, key = { it.id }) { sp ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(PhazeBrand),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(sp.name.firstOrNull()?.uppercase() ?: "?", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(sp.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                                    Text(
+                                        "${sp.memberCount} member${if (sp.memberCount == 1) "" else "s"}" +
+                                            (sp.description?.let { " · $it" } ?: ""),
+                                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                                    )
+                                }
+                                if (sp.isMember) {
+                                    Text("Joined", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else {
+                                    Button(onClick = { onJoinPublic(sp.id); discoverOpen = false }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
+                                        Text("Join", fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { discoverOpen = false }) { Text("Close") } },
+        )
     }
 
     if (createOpen) {

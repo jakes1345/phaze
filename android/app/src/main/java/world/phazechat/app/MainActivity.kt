@@ -364,17 +364,23 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     onSearch = { vm.searchUsers(it) },
                     onClearSearch = { vm.clearSearch() },
                 )
-                1 -> SpacesScreen(
-                    spaces = spaces, activeSpace = activeSpace, channels = channels,
-                    activeChannel = activeChannel, channelMessages = channelMessages, me = me!!,
-                    onSelectSpace = { vm.selectSpace(it) },
-                    onSelectChannel = { vm.selectChannel(it) },
-                    onSendMessage = { vm.sendChannelMessage(it) },
-                    onCreateSpace = { name, vis -> vm.createSpace(name, vis) },
-                    onJoinSpace = { vm.joinSpace(it) },
-                    onBack = { vm.selectSpace("") },
-                    onCreateChannel = { sid, name, kind -> vm.createChannel(sid, name, kind) },
-                )
+                1 -> {
+                    val discoverList by vm.discoverSpaces.collectAsState()
+                    SpacesScreen(
+                        spaces = spaces, activeSpace = activeSpace, channels = channels,
+                        activeChannel = activeChannel, channelMessages = channelMessages, me = me!!,
+                        onSelectSpace = { vm.selectSpace(it) },
+                        onSelectChannel = { vm.selectChannel(it) },
+                        onSendMessage = { vm.sendChannelMessage(it) },
+                        onCreateSpace = { name, vis -> vm.createSpace(name, vis) },
+                        onJoinSpace = { vm.joinSpace(it) },
+                        onBack = { vm.selectSpace("") },
+                        onCreateChannel = { sid, name, kind -> vm.createChannel(sid, name, kind) },
+                        discoverList = discoverList,
+                        onDiscover = { vm.discoverSpaces() },
+                        onJoinPublic = { vm.joinPublicSpace(it) },
+                    )
+                }
                 2 -> {
                     val linkCode by vm.activeLinkCode.collectAsState()
                     val linkStatus by vm.linkStatus.collectAsState()
