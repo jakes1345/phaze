@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.media.MediaRecorder
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -188,12 +189,23 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && !recording) {
-            val path = File(context.cacheDir, "phaze_voice_${System.currentTimeMillis()}.ogg").absolutePath
+            // OGG/OPUS only exist on API 29+. On 26–28 fall back to MPEG-4/AAC
+            // (.m4a). The MediaRecorder(Context) constructor is API 31+, so use
+            // the deprecated no-arg constructor below that.
+            val useOgg = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            val ext = if (useOgg) "ogg" else "m4a"
+            val path = File(context.cacheDir, "phaze_voice_${System.currentTimeMillis()}.$ext").absolutePath
             voicePath = path
-            val mr = MediaRecorder(context).apply {
+            @Suppress("DEPRECATION")
+            val mr = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()).apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.OGG)
-                setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+                if (useOgg) {
+                    setOutputFormat(MediaRecorder.OutputFormat.OGG)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+                } else {
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                }
                 setAudioSamplingRate(16000)
                 setOutputFile(path)
                 prepare()
@@ -369,13 +381,19 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     val linkError by vm.linkError.collectAsState()
                     val keyBackupStatus by vm.keyBackupStatus.collectAsState()
                     val keyBackupError by vm.keyBackupError.collectAsState()
+                    val twoFactorUri by vm.twoFactorUri.collectAsState()
+                    val twoFactorStatus by vm.twoFactorStatus.collectAsState()
                     SettingsScreen(
                         me = me!!,
                         mood = friends[me]?.mood ?: "",
                         displayName = "",
                         onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
                         onEnable2FA = { vm.enable2FA() },
-                        onDisable2FA = { vm.disable2FA() },
+                        onConfirm2FA = { code -> vm.confirm2FA(code) },
+                        onDisable2FA = { pw -> vm.disable2FA(pw) },
+                        onCancel2FA = { vm.cancel2FAEnrollment() },
+                        twoFactorUri = twoFactorUri,
+                        twoFactorStatus = twoFactorStatus,
                         onSignOut = { vm.signOut() },
                         linkCode = linkCode,
                         linkStatus = linkStatus,
