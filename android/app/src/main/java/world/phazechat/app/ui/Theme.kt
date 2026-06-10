@@ -1,8 +1,24 @@
 package world.phazechat.app.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.sp
+import kotlin.random.Random
 
 val PhazeBrand = Color(0xFF863BFF)
 val PhazeBrandDark = Color(0xFFA677FF)
@@ -49,6 +65,43 @@ private val Skype7Colors = lightColorScheme(
     outline = Color(0xFFCFD8E0),
     error = PhazeDanger,
 )
+
+/** Seasonal snow overlay — N animated flakes drifting down. */
+@Composable
+fun SnowOverlay(count: Int = 36) {
+    val flakes = remember {
+        List(count) {
+            Triple(Random.nextFloat(), 5000 + Random.nextInt(7000), Random.nextFloat()) // xFrac, durationMs, sizeFrac
+        }
+    }
+    val t = rememberInfiniteTransition(label = "snow")
+    Box(Modifier.fillMaxSize()) {
+        flakes.forEachIndexed { i, (xFrac, dur, sizeFrac) ->
+            val y by t.animateFloat(
+                initialValue = -0.05f, targetValue = 1.05f,
+                animationSpec = infiniteRepeatable(tween(dur, easing = LinearEasing), RepeatMode.Restart),
+                label = "y$i",
+            )
+            BoxWithConstraintsFlake(xFrac, y, sizeFrac)
+        }
+    }
+}
+
+@Composable
+private fun BoxWithConstraintsFlake(xFrac: Float, yFrac: Float, sizeFrac: Float) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val xPx = with(androidx.compose.ui.platform.LocalDensity.current) { (maxWidth * xFrac).toPx() }
+        val yPx = with(androidx.compose.ui.platform.LocalDensity.current) { (maxHeight * yFrac).toPx() }
+        Text(
+            "❄",
+            color = Color.White,
+            style = TextStyle(fontSize = (10 + sizeFrac * 12).sp),
+            modifier = Modifier
+                .graphicsLayer { translationX = xPx; translationY = yPx }
+                .alpha(0.8f),
+        )
+    }
+}
 
 @Composable
 fun PhazeTheme(theme: String = "dark", content: @Composable () -> Unit) {

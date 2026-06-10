@@ -48,9 +48,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             val vm: PhazeViewModel = viewModel()
             val theme by vm.theme.collectAsState()
+            val snow by vm.snow.collectAsState()
             PhazeTheme(theme = theme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    PhazeRoot(vm)
+                    Box(Modifier.fillMaxSize()) {
+                        PhazeRoot(vm)
+                        if (snow) SnowOverlay()
+                    }
                 }
             }
         }
@@ -390,6 +394,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     val keyBackupStatus by vm.keyBackupStatus.collectAsState()
                     val keyBackupError by vm.keyBackupError.collectAsState()
                     val theme by vm.theme.collectAsState()
+                    val snowPref by vm.snow.collectAsState()
                     val twoFactorUri by vm.twoFactorUri.collectAsState()
                     val twoFactorStatus by vm.twoFactorStatus.collectAsState()
                     SettingsScreen(
@@ -405,6 +410,8 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         twoFactorStatus = twoFactorStatus,
                         theme = theme,
                         onSetTheme = { vm.setTheme(it) },
+                        snow = snowPref,
+                        onSetSnow = { vm.setSnow(it) },
                         onSignOut = { vm.signOut() },
                         linkCode = linkCode,
                         linkStatus = linkStatus,

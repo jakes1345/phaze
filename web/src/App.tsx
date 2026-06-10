@@ -42,6 +42,21 @@ function isPeerMuted(peer: string): boolean {
   return loadMutedPeers().has(peer)
 }
 const THEME_KEY = 'phaze_theme_v1'
+const SNOW_KEY = 'phaze_snow_v1'
+
+/** Pure-CSS seasonal snow overlay (zero deps). */
+function Snowflakes() {
+  const flakes = Array.from({ length: 40 }, (_, i) => {
+    const left = Math.random() * 100
+    const dur = 6 + Math.random() * 8
+    const delay = -Math.random() * 14
+    const size = 0.6 + Math.random() * 1.1
+    return (
+      <i key={i} style={{ left: `${left}vw`, animationDuration: `${dur}s`, animationDelay: `${delay}s`, fontSize: `${size}rem` }}>❄</i>
+    )
+  })
+  return <div className="snow-layer" aria-hidden="true">{flakes}</div>
+}
 const BACKUP_NAG_KEY = 'phaze_backup_nag_dismissed_at_v1'
 const BACKUP_NAG_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
 const HISTORY_LIMIT = 500
@@ -520,6 +535,7 @@ export default function App() {
   ]
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
   const [theme, setTheme] = useState<'light' | 'dark' | 'skype7'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark' | 'skype7') || 'dark')
+  const [snow, setSnow] = useState<boolean>(() => localStorage.getItem(SNOW_KEY) === '1')
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [emojiOpen, setEmojiOpen] = useState(false)
   const unreadRef = useRef<Record<string, number>>({})
@@ -562,6 +578,10 @@ export default function App() {
       sendRef.current({ type: 'settings_set', sender: meRef.current, body: JSON.stringify({ theme }) })
     }
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(SNOW_KEY, snow ? '1' : '0')
+  }, [snow])
 
   useEffect(() => {
     const el = chatScrollRef.current
@@ -1614,6 +1634,7 @@ export default function App() {
 
   return (
     <div className={`app theme-${theme}`}>
+      {snow && <Snowflakes />}
       <header className="top">
         <div className="brand">
           <h1>Phaze</h1>
@@ -1630,6 +1651,11 @@ export default function App() {
           title={`Theme: ${theme} — click to cycle (dark · light · Skype 7)`}
           onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'skype7' : 'dark')}
         >{theme === 'dark' ? '☀' : theme === 'light' ? '🎨' : '💙'}</button>
+        <button
+          className="settings-gear"
+          title={snow ? 'Turn off snow' : 'Let it snow'}
+          onClick={() => setSnow((s) => !s)}
+        >{snow ? '🌨' : '❄'}</button>
         {me && (
           <button className="settings-gear" title="Remote Control" onClick={() => setRemoteOpen(true)}>🖥</button>
         )}
