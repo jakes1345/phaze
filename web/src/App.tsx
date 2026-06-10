@@ -519,7 +519,7 @@ export default function App() {
     { icon: '✨', title: 'Redesigned', desc: 'True-black dark mode, premium glass effects, and a brand-new landing page. Phaze looks like it feels — premium.', color: '#a855f7' },
   ]
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY))
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark') || 'dark')
+  const [theme, setTheme] = useState<'light' | 'dark' | 'skype7'>(() => (localStorage.getItem(THEME_KEY) as 'light' | 'dark' | 'skype7') || 'dark')
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [emojiOpen, setEmojiOpen] = useState(false)
   const unreadRef = useRef<Record<string, number>>({})
@@ -1147,8 +1147,8 @@ export default function App() {
           if (msg.body) {
             try {
               const saved = JSON.parse(msg.body) as Record<string, unknown>
-              if (saved.theme === 'dark' || saved.theme === 'light') {
-                setTheme(saved.theme as 'light' | 'dark')
+              if (saved.theme === 'dark' || saved.theme === 'light' || saved.theme === 'skype7') {
+                setTheme(saved.theme as 'light' | 'dark' | 'skype7')
               }
             } catch { /* ignore */ }
           }
@@ -1627,9 +1627,9 @@ export default function App() {
         <span className={`pill ${conn === 'open' ? 'ok' : ''}`}>{conn}</span>
         <button
           className="settings-gear"
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        >{theme === 'dark' ? '☀' : '🌙'}</button>
+          title={`Theme: ${theme} — click to cycle (dark · light · Skype 7)`}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'skype7' : 'dark')}
+        >{theme === 'dark' ? '☀' : theme === 'light' ? '🎨' : '💙'}</button>
         {me && (
           <button className="settings-gear" title="Remote Control" onClick={() => setRemoteOpen(true)}>🖥</button>
         )}

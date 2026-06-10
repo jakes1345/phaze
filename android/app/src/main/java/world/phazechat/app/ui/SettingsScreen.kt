@@ -32,6 +32,8 @@ fun SettingsScreen(
     onCancel2FA: (() -> Unit)? = null,
     twoFactorUri: String? = null,
     twoFactorStatus: String? = null,
+    theme: String = "dark",
+    onSetTheme: ((String) -> Unit)? = null,
     onSignOut: () -> Unit,
     linkCode: String? = null,
     linkStatus: String? = null,
@@ -118,6 +120,24 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
         HorizontalDivider()
         Spacer(Modifier.height(16.dp))
+
+        if (onSetTheme != null) {
+            Text("APPEARANCE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("dark" to "Dark", "light" to "Light", "skype7" to "Skype 7").forEach { (key, label) ->
+                    val selected = theme == key
+                    if (selected) {
+                        Button(onClick = { onSetTheme(key) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) { Text(label, fontSize = 13.sp) }
+                    } else {
+                        OutlinedButton(onClick = { onSetTheme(key) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) { Text(label, fontSize = 13.sp) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+        }
 
         Text("SECURITY", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
         Spacer(Modifier.height(8.dp))
