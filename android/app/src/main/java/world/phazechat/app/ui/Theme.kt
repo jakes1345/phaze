@@ -35,10 +35,30 @@ private val LightColors = lightColorScheme(
     error = PhazeDanger,
 )
 
+// "Skype 7" theme pack — classic white + Skype-blue retro look.
+val SkypeBlue = Color(0xFF00AFF0)
+private val Skype7Colors = lightColorScheme(
+    primary = SkypeBlue,
+    onPrimary = Color.White,
+    surface = Color.White,
+    onSurface = Color(0xFF1B2733),
+    background = Color(0xFFE8EEF3),
+    onBackground = Color(0xFF1B2733),
+    surfaceVariant = Color(0xFFE3E9EE),
+    onSurfaceVariant = Color(0xFF7A8A99),
+    outline = Color(0xFFCFD8E0),
+    error = PhazeDanger,
+)
+
 @Composable
-fun PhazeTheme(darkTheme: Boolean = true, content: @Composable () -> Unit) {
+fun PhazeTheme(theme: String = "dark", content: @Composable () -> Unit) {
+    val scheme = when (theme) {
+        "light" -> LightColors
+        "skype7" -> Skype7Colors
+        else -> DarkColors
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = scheme,
         typography = Typography(),
         content = content
     )
