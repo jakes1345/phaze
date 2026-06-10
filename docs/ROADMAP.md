@@ -1,5 +1,15 @@
 # Phaze Roadmap / TODO
 
+## 🎉 LAUNCH FINALE (2026-06-09) — shipped to master + deploying
+- [x] Public group discovery — server + web + **Android**
+- [x] Theme packs — Dark / Light / **Skype 7** (web + Android)
+- [x] Snowflakes seasonal overlay (web + Android)
+- [x] Recovery backup — **verified working live** (set PIN → new device → restore = exact keys)
+- [x] All audit fixes (Android voice crash, Android 2FA, web block, TOTP throttle, camera feature)
+- [x] Single launch AAB v1.4.0 (versionCode 17) + Fly deploy
+- [ ] **Upload AAB to Google Play Console** (you — within 2 days)
+
+
 **This is the single front door for "what's left."** Living backlog, prioritized. Last updated 2026-06-08.
 
 ### 📑 The only two lists that matter
