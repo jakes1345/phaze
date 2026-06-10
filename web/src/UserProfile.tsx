@@ -56,7 +56,7 @@ export default function UserProfile({ username, me, friends, pendingOut = [], se
   }
 
   const handleBlock = () => {
-    send({ type: 'block_user', sender: me, recipient: username })
+    send({ type: 'block', sender: me, recipient: username })
     onClose()
   }
 
