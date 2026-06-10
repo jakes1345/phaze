@@ -2422,3 +2422,15 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   color: var(--muted);
   padding: 0.75rem 0.85rem 0.3rem;
 }
+
+/* Snowflakes — pure-CSS seasonal overlay (zero deps). Toggle in header. */
+.snow-layer { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+.snow-layer i {
+  position: absolute; top: -10px; display: block; color: #fff;
+  font-size: 1rem; opacity: 0.85; text-shadow: 0 0 4px rgba(255,255,255,0.6);
+  animation: snow-fall linear infinite;
+}
+@keyframes snow-fall {
+  0%   { transform: translateY(-10px) translateX(0) rotate(0deg); }
+  100% { transform: translateY(105vh) translateX(40px) rotate(360deg); }
+}
