@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.net.Uri
@@ -26,7 +27,11 @@ fun SettingsScreen(
     displayName: String = "",
     onUpdateProfile: ((String, String) -> Unit)? = null,
     onEnable2FA: (() -> Unit)? = null,
-    onDisable2FA: (() -> Unit)? = null,
+    onConfirm2FA: ((String) -> Unit)? = null,
+    onDisable2FA: ((String) -> Unit)? = null,
+    onCancel2FA: (() -> Unit)? = null,
+    twoFactorUri: String? = null,
+    twoFactorStatus: String? = null,
     onSignOut: () -> Unit,
     linkCode: String? = null,
     linkStatus: String? = null,
@@ -117,15 +122,57 @@ fun SettingsScreen(
         Text("SECURITY", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
         Spacer(Modifier.height(8.dp))
 
-        if (onEnable2FA != null) {
-            OutlinedButton(onClick = onEnable2FA, modifier = Modifier.fillMaxWidth()) {
-                Text("Enable Two-Factor Auth (TOTP)")
+        var totpCode by remember { mutableStateOf("") }
+        var disablePw by remember { mutableStateOf("") }
+
+        if (twoFactorUri != null) {
+            // Enrollment pending: show the secret to add to an authenticator app,
+            // then confirm with a generated code.
+            val secret = remember(twoFactorUri) {
+                Regex("secret=([A-Z0-9]+)").find(twoFactorUri)?.groupValues?.get(1) ?: twoFactorUri
+            }
+            Text("Add this secret to your authenticator app:", fontSize = 13.sp)
+            Spacer(Modifier.height(6.dp))
+            SelectionContainer {
+                Text(secret, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = totpCode, onValueChange = { totpCode = it.filter { c -> c.isDigit() }.take(6) },
+                label = { Text("6-digit code") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth()) {
+                Button(onClick = { onConfirm2FA?.invoke(totpCode); totpCode = "" }, modifier = Modifier.weight(1f)) {
+                    Text("Confirm")
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { onCancel2FA?.invoke() }) { Text("Cancel") }
+            }
+        } else {
+            if (onEnable2FA != null) {
+                OutlinedButton(onClick = onEnable2FA, modifier = Modifier.fillMaxWidth()) {
+                    Text("Enable Two-Factor Auth (TOTP)")
+                }
+            }
+            if (onDisable2FA != null) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = disablePw, onValueChange = { disablePw = it },
+                    label = { Text("Password (to disable 2FA)") }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = { onDisable2FA(disablePw); disablePw = "" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Disable 2FA", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
-        if (onDisable2FA != null) {
-            TextButton(onClick = onDisable2FA, modifier = Modifier.fillMaxWidth()) {
-                Text("Disable 2FA", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        if (twoFactorStatus != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(twoFactorStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
         }
 
         Spacer(Modifier.height(24.dp))
