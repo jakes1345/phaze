@@ -87,6 +87,37 @@
   --shadow-glow: 0 0 60px rgba(166, 119, 255, 0.12);
 }
 
+/* "Skype 7" theme pack — the classic white + Skype-blue retro look. */
+.app.theme-skype7 {
+  --phaze-cyan: #00AFF0;
+  --phaze-blue: #0078D4;
+  --brand: #00AFF0;
+  --brand-hover: #0091ea;
+  --brand-soft: rgba(0, 175, 240, 0.10);
+  --brand-glow: rgba(0, 175, 240, 0.28);
+  --shell: #e8eef3;
+  --chrome: #ffffff;
+  --panel: #ffffff;
+  --panel-edge: #cfd8e0;
+  --separator: #e3e9ee;
+  --text: #1b2733;
+  --text-secondary: #3a4a5a;
+  --muted: #7a8a99;
+  --list-hover: rgba(0, 175, 240, 0.06);
+  --list-sel: rgba(0, 175, 240, 0.12);
+  --bubble-in: #eef3f7;
+  --bubble-out: #00AFF0;
+  --bubble-edge: transparent;
+  --bubble-text: #1b2733;
+  --bubble-text-out: #ffffff;
+  --input-bg: #ffffff;
+  --input-border: #c2ccd6;
+  --input-focus: rgba(0, 175, 240, 0.25);
+  --chat-bg-1: #f4f8fb;
+  --chat-bg-2: #ffffff;
+  --shadow-glow: 0 0 40px rgba(0, 175, 240, 0.18);
+}
+
 /* ── Reset / base ─────────────────────────────────────────────── */
 html, body, #root {
   background: var(--shell);
