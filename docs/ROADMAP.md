@@ -47,3 +47,9 @@ Android only does 1:1 calls and lacks several web features. Each needs the build
 - [ ] Run the operational gate in `docs/PRE_BETA_CHECKLIST.md` before any public beta wave.
 - [ ] SQL-injection audit (baseline good — parameterized everywhere), admin role lockdown, VPN detection, input sanitization.
 - [ ] A release keystore is committed in the repo — consider rotating + moving to secrets long-term.
+
+## 🐞 From the full audit (2026-06-08) — remaining
+- [ ] **Read receipts**: server relays `read_receipt` but no client sends or displays them. Build it (send on read + "Seen" indicator) or remove the dead server path.
+- [ ] **Recovery backup repro**: key-backup protocol + crypto verified correct on both clients (PBKDF2-SHA256/AES-GCM match; restore-apply paths consistent). If it's still failing, capture a live repro (which client, same-device vs new-device) — the bug isn't visible statically.
+- [ ] Replace deprecated `option.WithCredentialsJSON` (Firebase init) — low-risk-but-flagged.
+- [x] ~~Android voice-note crash <API31~~ · ~~Android 2FA broken~~ · ~~web profile-block ignored~~ · ~~TOTP brute-force unthrottled~~ · ~~camera uses-feature~~ — fixed in `fix/audit-defects`.
