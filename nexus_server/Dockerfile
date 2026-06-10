@@ -38,7 +38,7 @@ RUN npm run build
 # -----------------------------------------------------------------------
 # 3) Pull a pinned Litestream binary (SQLite-to-S3 streaming backup).
 # -----------------------------------------------------------------------
-FROM alpine:3.20 AS litestream-dl
+FROM alpine:3.24 AS litestream-dl
 ARG LITESTREAM_VERSION=0.3.13
 RUN apk add --no-cache curl tar \
  && curl -sL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.tar.gz" \
@@ -48,7 +48,7 @@ RUN apk add --no-cache curl tar \
 # 4) Runtime image. Slim — only the binaries, the templates/public assets,
 #    and the compiled web SPA.
 # -----------------------------------------------------------------------
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=go-build      /out/nexus-server                    /app/nexus-server
