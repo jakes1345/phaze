@@ -151,6 +151,13 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _theme.value = t
         prefs.edit().putString("theme", t).apply()
     }
+    // Snowflakes seasonal overlay.
+    private val _snow = MutableStateFlow(prefs.getBoolean("snow", false))
+    val snow = _snow.asStateFlow()
+    fun setSnow(on: Boolean) {
+        _snow.value = on
+        prefs.edit().putBoolean("snow", on).apply()
+    }
     private val _activeSpace = MutableStateFlow<String?>(null)
     val activeSpace = _activeSpace.asStateFlow()
     private val _channels = MutableStateFlow<Map<String, List<ChannelInfo>>>(emptyMap())

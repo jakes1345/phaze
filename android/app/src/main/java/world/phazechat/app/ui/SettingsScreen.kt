@@ -34,6 +34,8 @@ fun SettingsScreen(
     twoFactorStatus: String? = null,
     theme: String = "dark",
     onSetTheme: ((String) -> Unit)? = null,
+    snow: Boolean = false,
+    onSetSnow: ((Boolean) -> Unit)? = null,
     onSignOut: () -> Unit,
     linkCode: String? = null,
     linkStatus: String? = null,
@@ -132,6 +134,13 @@ fun SettingsScreen(
                     } else {
                         OutlinedButton(onClick = { onSetTheme(key) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) { Text(label, fontSize = 13.sp) }
                     }
+                }
+            }
+            if (onSetSnow != null) {
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("❄ Snowflakes", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = snow, onCheckedChange = { onSetSnow(it) })
                 }
             }
             Spacer(Modifier.height(24.dp))
