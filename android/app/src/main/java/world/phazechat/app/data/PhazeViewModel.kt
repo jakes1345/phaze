@@ -40,6 +40,8 @@ data class SpaceInfo(
     val owner: String = "",
     val visibility: String = "private",
     val role: String = "member",
+    val memberCount: Int = 0,
+    val isMember: Boolean = false,
 )
 
 data class ChannelInfo(
@@ -139,6 +141,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     // Spaces
     private val _spaces = MutableStateFlow<List<SpaceInfo>>(emptyList())
     val spaces = _spaces.asStateFlow()
+    private val _discoverSpaces = MutableStateFlow<List<SpaceInfo>>(emptyList())
+    val discoverSpaces = _discoverSpaces.asStateFlow()
     private val _activeSpace = MutableStateFlow<String?>(null)
     val activeSpace = _activeSpace.asStateFlow()
     private val _channels = MutableStateFlow<Map<String, List<ChannelInfo>>>(emptyMap())
@@ -587,6 +591,16 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         nexus.send(NexusMessage(type = "server_create", serverName = name, visibility = visibility))
     }
 
+    /** Load the public-space directory (Discover). */
+    fun discoverSpaces() {
+        nexus.send(NexusMessage(type = "server_discover"))
+    }
+
+    /** Join a public space straight from Discover — no invite code. */
+    fun joinPublicSpace(id: String) {
+        nexus.send(NexusMessage(type = "server_join", serverId = id))
+    }
+
     fun joinSpace(code: String) {
         nexus.send(NexusMessage(type = "server_join", inviteCode = code))
     }
@@ -958,6 +972,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
             // Spaces
             "server_list_result" -> handleServerList(msg)
+            "server_discover_result" -> handleDiscoverList(msg)
             "server_info_result", "server_channels_updated" -> handleChannels(msg)
             "channel_history_result" -> handleChannelHistory(msg)
             "channel_msg" -> handleChannelMsg(msg)
@@ -1173,6 +1188,24 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         } catch (e: Exception) { Log.w(TAG, "server_list: ${e.message}") }
+    }
+
+    private fun handleDiscoverList(msg: NexusMessage) {
+        val raw = msg.rawServers ?: return
+        try {
+            val arr = JSONArray(raw)
+            _discoverSpaces.value = (0 until arr.length()).map { i ->
+                val s = arr.getJSONObject(i)
+                SpaceInfo(
+                    id = s.getString("id"), name = s.getString("name"),
+                    description = s.optString("description", null),
+                    owner = s.optString("owner", ""),
+                    visibility = s.optString("visibility", "public"),
+                    memberCount = s.optInt("member_count", 0),
+                    isMember = s.optBoolean("is_member", false),
+                )
+            }
+        } catch (e: Exception) { Log.w(TAG, "server_discover: ${e.message}") }
     }
 
     private fun handleChannels(msg: NexusMessage) {
