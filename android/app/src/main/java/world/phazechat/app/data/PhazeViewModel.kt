@@ -94,6 +94,15 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _keyBackupError = MutableStateFlow<String?>(null)
     val keyBackupError = _keyBackupError.asStateFlow()
 
+    // 2FA / TOTP enrollment. _twoFactorUri holds the otpauth:// URI while a
+    // confirmation code is pending; _twoFactorStatus surfaces result messages.
+    private val _twoFactorUri = MutableStateFlow<String?>(null)
+    val twoFactorUri = _twoFactorUri.asStateFlow()
+    private val _twoFactorStatus = MutableStateFlow<String?>(null)
+    val twoFactorStatus = _twoFactorStatus.asStateFlow()
+    private val _twoFactorEnabled = MutableStateFlow(false)
+    val twoFactorEnabled = _twoFactorEnabled.asStateFlow()
+
     // Friends
     private val _friends = MutableStateFlow<Map<String, FriendInfo>>(emptyMap())
     val friends = _friends.asStateFlow()
@@ -446,8 +455,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val bytes = java.io.File(filePath).readBytes()
+                val voiceFileName = java.io.File(filePath).name // .ogg (API 29+) or .m4a (API 26–28)
                 val boundary = "----PhazeUpload${System.currentTimeMillis()}"
-                val body = buildMultipart(boundary, "voice.ogg", bytes)
+                val body = buildMultipart(boundary, voiceFileName, bytes)
                 val url = java.net.URL("https://phazechat.world/api/v1/upload")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
@@ -463,7 +473,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         nexus.send(NexusMessage(
                             type = "msg", sender = username, recipient = peer,
                             body = "[Voice Message]", msgId = msgId,
-                            kind = "voice", fileUrl = fileUrl, fileName = "voice.ogg",
+                            kind = "voice", fileUrl = fileUrl, fileName = voiceFileName,
                         ))
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                             appendChat(ChatLine(id = msgId, from = username, text = "[Voice Message]", me = true, kind = "voice"))
@@ -504,13 +514,30 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         nexus.send(NexusMessage(type = "status_update", sender = me, body = mood, displayName = displayName, status = "Online"))
     }
 
+    /** Step 1 of enrollment: ask the server for a TOTP secret/URI. */
     fun enable2FA() {
-        nexus.send(NexusMessage(type = "totp_enable", sender = _me.value))
+        _twoFactorStatus.value = "Generating 2FA secret…"
+        nexus.send(NexusMessage(type = "enable_totp", sender = _me.value))
     }
 
-    fun disable2FA() {
-        nexus.send(NexusMessage(type = "totp_disable", sender = _me.value))
+    /** Step 2: confirm enrollment with a code from the authenticator app. */
+    fun confirm2FA(code: String) {
+        if (code.isBlank()) { _twoFactorStatus.value = "Enter the 6-digit code"; return }
+        nexus.send(NexusMessage(type = "confirm_totp", sender = _me.value, totpCode = code.trim()))
     }
+
+    fun cancel2FAEnrollment() {
+        _twoFactorUri.value = null
+        _twoFactorStatus.value = null
+    }
+
+    /** Disable 2FA — the server requires the account password. */
+    fun disable2FA(password: String) {
+        if (password.isBlank()) { _twoFactorStatus.value = "Password required to disable 2FA"; return }
+        nexus.send(NexusMessage(type = "disable_totp", sender = _me.value, body = password))
+    }
+
+    fun clearTwoFactorStatus() { _twoFactorStatus.value = null }
 
     fun signOut() {
         prefs.edit().remove("session_token").remove("username").apply()
@@ -1031,6 +1058,23 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             "key_backup_result" -> handleKeyBackupResult(msg)
+
+            "totp_result" -> when {
+                msg.status == "pending_confirm" -> {
+                    _twoFactorUri.value = msg.totpUri
+                    _twoFactorStatus.value = "Scan the code in your authenticator, then enter a code to confirm."
+                }
+                msg.status == "enabled" -> {
+                    _twoFactorUri.value = null
+                    _twoFactorEnabled.value = true
+                    _twoFactorStatus.value = "✓ 2FA enabled"
+                }
+                msg.status == "disabled" -> {
+                    _twoFactorEnabled.value = false
+                    _twoFactorStatus.value = "2FA disabled"
+                }
+                msg.error != null -> _twoFactorStatus.value = msg.error
+            }
         }
     }
 

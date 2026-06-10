@@ -3333,7 +3333,7 @@ func (s *NexusServer) sendFCMPush(recipient, sender, preview string) {
 		if err != nil {
 			log.Printf("[FCM] send to %s: %v", recipient, err)
 			// Token invalid — clear it
-			if messaging.IsRegistrationTokenNotRegistered(err) {
+			if messaging.IsUnregistered(err) {
 				s.DB.Exec("UPDATE users SET fcm_token = '' WHERE username = ? AND fcm_token = ?", recipient, token)
 			}
 		}
