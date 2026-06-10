@@ -46,9 +46,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PhazeTheme(darkTheme = true) {
+            val vm: PhazeViewModel = viewModel()
+            val theme by vm.theme.collectAsState()
+            PhazeTheme(theme = theme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    PhazeRoot()
+                    PhazeRoot(vm)
                 }
             }
         }
@@ -387,6 +389,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     val linkError by vm.linkError.collectAsState()
                     val keyBackupStatus by vm.keyBackupStatus.collectAsState()
                     val keyBackupError by vm.keyBackupError.collectAsState()
+                    val theme by vm.theme.collectAsState()
                     val twoFactorUri by vm.twoFactorUri.collectAsState()
                     val twoFactorStatus by vm.twoFactorStatus.collectAsState()
                     SettingsScreen(
@@ -400,6 +403,8 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onCancel2FA = { vm.cancel2FAEnrollment() },
                         twoFactorUri = twoFactorUri,
                         twoFactorStatus = twoFactorStatus,
+                        theme = theme,
+                        onSetTheme = { vm.setTheme(it) },
                         onSignOut = { vm.signOut() },
                         linkCode = linkCode,
                         linkStatus = linkStatus,
