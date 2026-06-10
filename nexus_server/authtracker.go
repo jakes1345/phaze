@@ -13,6 +13,7 @@ type authFailTracker struct {
 	mu        sync.Mutex
 	ipFails   map[string]*authFail // keyed by IP
 	userFails map[string]*authFail // keyed by username
+	totpFails map[string]*authFail // keyed by username — TOTP code attempts
 }
 
 type authFail struct {
@@ -24,6 +25,7 @@ type authFail struct {
 var authTracker = &authFailTracker{
 	ipFails:   make(map[string]*authFail),
 	userFails: make(map[string]*authFail),
+	totpFails: make(map[string]*authFail),
 }
 
 const (
@@ -121,6 +123,45 @@ func (t *authFailTracker) isUserLocked(username string) bool {
 	return f.count >= authUserLockThreshold
 }
 
+// isTOTPThrottled reports whether this user has burned too many TOTP code
+// attempts in the window (brute-force protection for the 6-digit code).
+func (t *authFailTracker) isTOTPThrottled(username string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.totpFails[username]
+	if !ok {
+		return false
+	}
+	if time.Since(f.firstAt) > totpWindow {
+		delete(t.totpFails, username)
+		return false
+	}
+	return f.count >= totpMaxAttempts
+}
+
+// recordTOTPFail counts a wrong TOTP code for the user.
+func (t *authFailTracker) recordTOTPFail(username string) {
+	if username == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	if f, ok := t.totpFails[username]; ok && now.Sub(f.firstAt) <= totpWindow {
+		f.count++
+		f.lastAt = now
+	} else {
+		t.totpFails[username] = &authFail{count: 1, firstAt: now, lastAt: now}
+	}
+}
+
+// recordTOTPSuccess clears the TOTP attempt counter on a correct code.
+func (t *authFailTracker) recordTOTPSuccess(username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.totpFails, username)
+}
+
 // sweepAuthTracker cleans stale entries every 5 minutes.
 func sweepAuthTracker() {
 	tk := time.NewTicker(5 * time.Minute)
@@ -137,6 +178,11 @@ func sweepAuthTracker() {
 		for u, f := range authTracker.userFails {
 			if now.Sub(f.lastAt) > authUserWindow {
 				delete(authTracker.userFails, u)
+			}
+		}
+		for u, f := range authTracker.totpFails {
+			if now.Sub(f.lastAt) > totpWindow {
+				delete(authTracker.totpFails, u)
 			}
 		}
 		authTracker.mu.Unlock()

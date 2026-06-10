@@ -10,6 +10,9 @@
 
     <!-- Camera (QR scanner + video calls) -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Camera is optional: don't let Play filter out camera-less devices. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- Push notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
