@@ -111,6 +111,15 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _pending = MutableStateFlow<List<String>>(emptyList())
     val pending = _pending.asStateFlow()
 
+    // Deep-link: open a specific chat (e.g. from a push notification tap)
+    private val _pendingOpenChat = MutableStateFlow<String?>(null)
+    val pendingOpenChat = _pendingOpenChat.asStateFlow()
+    fun consumePendingOpenChat(): String? {
+        val peer = _pendingOpenChat.value
+        _pendingOpenChat.value = null
+        return peer
+    }
+
     // Chat
     private val _selectedChat = MutableStateFlow<String?>(null)
     val selectedChat = _selectedChat.asStateFlow()
@@ -810,6 +819,14 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleCallCamera() {
         val on = callManager?.toggleCamera() ?: return
         _callState.value = _callState.value?.copy(isCameraOn = on)
+    }
+
+    fun toggleSpeakerphone(): Boolean {
+        return callManager?.toggleSpeakerphone() ?: false
+    }
+
+    fun openChat(peer: String) {
+        _pendingOpenChat.value = peer
     }
 
     /** Begin screen sharing with the Intent returned by the MediaProjection permission prompt. */

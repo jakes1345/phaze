@@ -51,7 +51,7 @@ export async function encryptKeypair(
   secretKey: Uint8Array,
   pin: string,
 ): Promise<KeyBackupBlob> {
-  if (pin.length < 4) throw new Error('PIN must be at least 4 characters')
+  if (pin.length < 6) throw new Error('PIN must be at least 6 characters')
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
   const key = await deriveKey(pin, salt, ITERATIONS)
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))

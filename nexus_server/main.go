@@ -191,6 +191,9 @@ type Client struct {
 	// established, a single authed client could otherwise flood the read
 	// loop unbounded.
 	msgLimiter *rate.Limiter
+	// InCall is true while the client has an active WebRTC call session.
+	// Used to send call_busy back to new callers instead of letting them wait.
+	InCall bool
 }
 
 // Send locks the per-connection write mutex and emits a JSON message.
@@ -1221,7 +1224,10 @@ func (s *NexusServer) getFriends(username string) []string {
 	var friends []string
 	for rows.Next() {
 		var f string
-		rows.Scan(&f)
+		if err := rows.Scan(&f); err != nil {
+			log.Printf("[db] listFriends scan: %v", err)
+			continue
+		}
 		friends = append(friends, f)
 	}
 	return friends
@@ -1321,7 +1327,10 @@ func (s *NexusServer) userConversations(username string) []NexusMessage {
 	var out []NexusMessage
 	for rows.Next() {
 		var m NexusMessage
-		rows.Scan(&m.ConvoID, &m.ConvoName)
+		if err := rows.Scan(&m.ConvoID, &m.ConvoName); err != nil {
+			log.Printf("[db] listConversations scan: %v", err)
+			continue
+		}
 		m.Members = s.conversationMembers(m.ConvoID)
 		out = append(out, m)
 	}
@@ -1538,7 +1547,10 @@ func (s *NexusServer) listSessions(username string) []map[string]string {
 	var out []map[string]string
 	for rows.Next() {
 		var tok, dev, created string
-		rows.Scan(&tok, &dev, &created)
+		if err := rows.Scan(&tok, &dev, &created); err != nil {
+			log.Printf("[db] listSessions scan: %v", err)
+			continue
+		}
 		out = append(out, map[string]string{
 			"token":      tok[:8] + "…",
 			"full_token": tok,
@@ -1563,7 +1575,10 @@ func (s *NexusServer) exportUserData(username string) map[string]interface{} {
 	if rows != nil {
 		for rows.Next() {
 			var u, st string
-			rows.Scan(&u, &st)
+			if err := rows.Scan(&u, &st); err != nil {
+				log.Printf("[db] exportUserData friends scan: %v", err)
+				continue
+			}
 			friends = append(friends, u)
 		}
 		rows.Close()
@@ -1604,7 +1619,10 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 	for rows.Next() {
 		var id int64
 		var sender, body, msgType, createdAt string
-		rows.Scan(&id, &sender, &body, &msgType, &createdAt)
+		if err := rows.Scan(&id, &sender, &body, &msgType, &createdAt); err != nil {
+			log.Printf("[db] deliverOfflineMessages scan: %v", err)
+			continue
+		}
 		client.Send(NexusMessage{
 			Type:   msgType,
 			Sender: sender,
@@ -1726,7 +1744,10 @@ func (s *NexusServer) searchUsers(query, excludeUser string) []string {
 	var results []string
 	for rows.Next() {
 		var name string
-		rows.Scan(&name)
+		if err := rows.Scan(&name); err != nil {
+			log.Printf("[db] searchUsers scan: %v", err)
+			continue
+		}
 		results = append(results, name)
 	}
 	return results
@@ -1916,7 +1937,10 @@ func (s *NexusServer) autoJoinPublicSpaces(botUsername string) {
 	count := 0
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			log.Printf("[db] autoJoinPublicSpaces scan: %v", err)
+			continue
+		}
 		s.DB.Exec(`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`, id, botUsername)
 		count++
 	}
@@ -2966,7 +2990,10 @@ func (s *NexusServer) adminLogsHandler(w http.ResponseWriter, r *http.Request) {
 	out := []logEntry{}
 	for rows.Next() {
 		var e logEntry
-		rows.Scan(&e.Username, &e.IP, &e.LoginAt, &e.JoinedAt)
+		if err := rows.Scan(&e.Username, &e.IP, &e.LoginAt, &e.JoinedAt); err != nil {
+			log.Printf("[db] adminRecentLoginsHandler scan: %v", err)
+			continue
+		}
 		out = append(out, e)
 	}
 	w.Header().Set("Content-Type", "application/json")
