@@ -212,7 +212,7 @@ export default function RemoteControl({ send, subscribe, turn, onClose }: Props)
       }
     })
     return unsub
-  })
+  }, [subscribe, mode, peer, handleIncomingFile, tearDown, send])
 
   const startHosting = async () => {
     setErr('')
@@ -265,9 +265,6 @@ export default function RemoteControl({ send, subscribe, turn, onClose }: Props)
   const sendInputEvent = (payload: string) => {
     if (inputChannelRef.current && inputChannelRef.current.readyState === 'open') {
       inputChannelRef.current.send(payload)
-    }
-    if (peer) {
-      send({ type: 'remote_input', recipient: peer, body: payload })
     }
   }
 

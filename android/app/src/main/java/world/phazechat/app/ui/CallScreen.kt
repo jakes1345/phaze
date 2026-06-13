@@ -39,7 +39,9 @@ fun CallScreen(
     onToggleMute: () -> Unit,
     onToggleCamera: () -> Unit,
     onToggleScreenShare: () -> Unit = {},
+    onToggleSpeakerphone: () -> Boolean = { false },
 ) {
+    var speakerOn by remember { mutableStateOf(false) }
     var elapsed by remember { mutableIntStateOf(0) }
     val isActive = callStatus == "connected"
     val showVideo = isVideo && eglContext != null
@@ -118,6 +120,9 @@ fun CallScreen(
                     modifier = Modifier.padding(bottom = 48.dp),
                 ) {
                     CallButton(text = if (isMuted) "Unmute" else "Mute", color = if (isMuted) PhazeBrandDark else Color.DarkGray) { onToggleMute() }
+                    CallButton(text = if (speakerOn) "Earpiece" else "Speaker", color = if (speakerOn) PhazeBrandDark else Color.DarkGray) {
+                        speakerOn = onToggleSpeakerphone()
+                    }
                     if (isVideo) {
                         CallButton(text = if (isCameraOn) "Cam Off" else "Cam On", color = if (isCameraOn) PhazeBrandDark else Color.DarkGray) { onToggleCamera() }
                         CallButton(text = if (isScreenSharing) "Stop Share" else "Share", color = if (isScreenSharing) PhazeBrand else Color.DarkGray) { onToggleScreenShare() }

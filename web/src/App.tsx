@@ -474,6 +474,7 @@ export default function App() {
     if (tok.includes('token=')) {
       tok = tok.split('token=')[1].split('&')[0]
     }
+    if (!/^[a-f0-9]{32,128}$/.test(tok)) { setErr('Invalid QR code format'); return }
     setLinkInput(tok)
     stopCamera()
     setErr('✓ Token scanned: ' + tok)
@@ -630,6 +631,7 @@ export default function App() {
   const outTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // WebRTC refs
+  const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const incomingCallSdpRef = useRef<string | null>(null)
@@ -738,6 +740,7 @@ export default function App() {
   const [sharingScreen, setSharingScreen] = useState(false)
 
   const tearDownCall = useCallback(() => {
+    if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
     pcRef.current?.close()
     pcRef.current = null
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -823,7 +826,7 @@ export default function App() {
     if (!recipient || !meRef.current) return
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: type === 'video' })
     } catch {
       setErr('Microphone/camera access denied — click the lock icon in the address bar, reset the permission, and try again.')
       return
@@ -833,11 +836,31 @@ export default function App() {
     localStreamRef.current = stream
     stream.getTracks().forEach((t) => pc.addTrack(t, stream))
     if (localVideoRef.current && type === 'video') localVideoRef.current.srcObject = stream
+    // Prefer Opus codec for high-quality voice
+    if ('getCapabilities' in RTCRtpSender) {
+      const caps = RTCRtpSender.getCapabilities('audio')
+      if (caps) {
+        const opus = caps.codecs.filter(c => c.mimeType === 'audio/opus')
+        const rest = caps.codecs.filter(c => c.mimeType !== 'audio/opus')
+        try {
+          pc.getTransceivers().forEach(t => {
+            if (t.sender.track?.kind === 'audio') t.setCodecPreferences([...opus, ...rest])
+          })
+        } catch { /* not supported */ }
+      }
+    }
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     sendRef.current({ type: 'call_offer', recipient, sdp: offer.sdp, body: type })
     setCallState({ peer: recipient, type, status: 'ringing', direction: 'outgoing' })
-  }, [makePC])
+    // Ring timeout — auto-hangup after 60 seconds if unanswered
+    ringTimerRef.current = setTimeout(() => {
+      if (callStateRef.current?.status === 'ringing') {
+        hangUp()
+        setErr('No answer')
+      }
+    }, 60000)
+  }, [makePC, hangUp])
 
   const acceptCall = useCallback(async () => {
     const cs = callStateRef.current
@@ -845,7 +868,7 @@ export default function App() {
     if (!cs || !sdp) return
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: cs.type === 'video' })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: cs.type === 'video' })
     } catch {
       setErr('Microphone/camera access denied — click the lock icon in the address bar, reset the permission, and try again.')
       hangUp()
@@ -856,6 +879,19 @@ export default function App() {
     localStreamRef.current = stream
     stream.getTracks().forEach((t) => pc.addTrack(t, stream))
     if (localVideoRef.current && cs.type === 'video') localVideoRef.current.srcObject = stream
+    // Prefer Opus codec for high-quality voice
+    if ('getCapabilities' in RTCRtpSender) {
+      const caps = RTCRtpSender.getCapabilities('audio')
+      if (caps) {
+        const opus = caps.codecs.filter(c => c.mimeType === 'audio/opus')
+        const rest = caps.codecs.filter(c => c.mimeType !== 'audio/opus')
+        try {
+          pc.getTransceivers().forEach(t => {
+            if (t.sender.track?.kind === 'audio') t.setCodecPreferences([...opus, ...rest])
+          })
+        } catch { /* not supported */ }
+      }
+    }
     await pc.setRemoteDescription({ type: 'offer', sdp })
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -1090,7 +1126,8 @@ export default function App() {
 
         case 'call_answer':
           if (msg.sdp && pcRef.current) {
-            void pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp })
+            if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
+            pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch((e: unknown) => setErr('Call setup failed: ' + String(e)))
             setCallState((prev) => prev ? { ...prev, status: 'active' } : null)
           }
           break
@@ -1180,6 +1217,7 @@ export default function App() {
           break
 
         default:
+          if (import.meta.env.DEV) console.warn('[nexus] unknown message type:', msg.type)
           break
       }
 

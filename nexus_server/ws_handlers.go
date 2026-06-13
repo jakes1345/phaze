@@ -555,6 +555,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "forgot_password":
 			// Accept email in msg.Email; always ack "sent" to avoid user enumeration.
+			// Rate-limit per email address: 1 reset per 5 minutes.
+			if msg.Email != "" && !forgotPasswordLimiter.allow(msg.Email) {
+				client.Send(NexusMessage{Type: "forgot_password_result", Status: "sent"})
+				continue
+			}
 			go func(addr string) {
 				tok, user, err := s.createPasswordReset(addr)
 				if err != nil {
@@ -857,6 +862,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			// after a refresh / new-device login.
 			switch msg.Type {
 			case "msg_edit":
+				if len(msg.Body) > 10000 {
+					client.Send(NexusMessage{Type: "msg_edit_result", Error: "message too long"})
+					continue
+				}
 				s.editDM(msg.MsgID, username, msg.Body)
 			case "msg_delete":
 				s.deleteDM(msg.MsgID, username)
@@ -1246,28 +1255,50 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
-			log.Printf("Signal [%s] from %s to %s", msg.Type, msg.Sender, msg.Recipient)
-			s.Mu.RLock()
+			log.Printf("Signal [%s] from %s to %s", msg.Type, username, msg.Recipient)
+			s.Mu.Lock()
+			if msg.Type == "call_offer" {
+				if recipientClient, ok := s.Clients[msg.Recipient]; ok && recipientClient.InCall {
+					s.Mu.Unlock()
+					client.Send(NexusMessage{Type: "call_busy", Sender: msg.Recipient})
+					continue
+				}
+			} else if msg.Type == "call_answer" {
+				// Mark both parties as in-call.
+				if c, ok := s.Clients[username]; ok {
+					c.InCall = true
+				}
+				if c, ok := s.Clients[msg.Recipient]; ok {
+					c.InCall = true
+				}
+			}
 			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
 				recipientClient.Send(msg)
 			} else {
+				s.Mu.Unlock()
 				client.Send(NexusMessage{
 					Type:  "call_error",
 					Body:  "User is offline",
 					Error: msg.Recipient + " is not available",
 				})
+				continue
 			}
-			s.Mu.RUnlock()
+			s.Mu.Unlock()
 
 		case "call_reject", "call_end":
 			if username == "" {
 				continue
 			}
-			s.Mu.RLock()
-			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
-				recipientClient.Send(msg)
+			s.Mu.Lock()
+			// Clear in-call state for both parties.
+			if c, ok := s.Clients[username]; ok {
+				c.InCall = false
 			}
-			s.Mu.RUnlock()
+			if c, ok := s.Clients[msg.Recipient]; ok {
+				c.InCall = false
+				c.Send(msg)
+			}
+			s.Mu.Unlock()
 
 		// ---------- Group Call Invite ----------
 		case "call_invite":
@@ -1312,6 +1343,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "remote_lookup":
 			if username == "" {
+				continue
+			}
+			// Rate-limit per IP: max 10 lookups per minute to prevent code brute-forcing.
+			if !remoteLookupLimiter.allow(client.IP) {
+				client.Send(NexusMessage{Type: "remote_lookup_result", Status: "error", Error: "Too many lookup attempts — try again shortly"})
 				continue
 			}
 			code := msg.Body
@@ -1737,15 +1773,16 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if err := s.DB.QueryRow(`SELECT sender, channel_id FROM channel_messages WHERE id=?`, id64).Scan(&sender, &channelID); err != nil {
 				continue
 			}
-			// Owner or any staff (helper+) can delete.
-			if sender != username && !s.roleAtLeast(username, "helper") {
+			var serverID string
+			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
+			// Own message, server admin/owner, or global staff (helper+) can delete.
+			serverRole := s.userServerRole(serverID, username)
+			if sender != username && serverRole != "owner" && serverRole != "admin" && !s.roleAtLeast(username, "helper") {
 				continue
 			}
 			if _, err := s.DB.Exec(`UPDATE channel_messages SET deleted=1, body='' WHERE id=?`, id64); err != nil {
 				continue
 			}
-			var serverID string
-			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
 			s.broadcastChannelMsg(serverID, NexusMessage{
 				Type:      "channel_delete_in",
 				ServerID:  serverID,
@@ -1771,6 +1808,12 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			var serverID string
 			s.DB.QueryRow(`SELECT server_id FROM channels WHERE id=?`, channelID).Scan(&serverID)
 			if !s.userIsServerMember(serverID, username) {
+				continue
+			}
+			// Only server admins and owners can pin messages.
+			pinRole := s.userServerRole(serverID, username)
+			if pinRole != "owner" && pinRole != "admin" {
+				client.Send(NexusMessage{Type: "channel_pin_result", Error: "admin only"})
 				continue
 			}
 			// Toggle pin.
