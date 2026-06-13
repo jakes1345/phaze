@@ -3,6 +3,7 @@ package world.phazechat.app
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.media.MediaRecorder
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -36,17 +37,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import world.phazechat.app.data.PhazeViewModel
 import world.phazechat.app.ui.*
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+
+    private val vm: PhazeViewModel by lazy {
+        ViewModelProvider(this)[PhazeViewModel::class.java]
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        intent?.getStringExtra("open_chat")?.takeIf { it.isNotBlank() }?.let { peer ->
+            vm.openChat(peer)
+        }
         enableEdgeToEdge()
         setContent {
-            val vm: PhazeViewModel = viewModel()
+            val vm: PhazeViewModel = viewModel()  // same instance as this.vm
             val theme by vm.theme.collectAsState()
             val snow by vm.snow.collectAsState()
             PhazeTheme(theme = theme) {
@@ -57,6 +67,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra("open_chat")?.takeIf { it.isNotBlank() }?.let { peer ->
+            vm.openChat(peer)
         }
     }
 }
@@ -81,6 +98,17 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val searchResults by vm.searchResults.collectAsState()
     val actionStatus by vm.actionStatus.collectAsState()
     val globalNotice by vm.globalNotice.collectAsState()
+
+    val pendingOpenChat by vm.pendingOpenChat.collectAsState()
+
+    // Consume deep-link navigation (e.g. from push notification tap)
+    LaunchedEffect(pendingOpenChat, me) {
+        val peer = pendingOpenChat
+        if (peer != null && me != null) {
+            vm.consumePendingOpenChat()
+            vm.selectChat(peer)
+        }
+    }
 
     val toastCtx = LocalContext.current
     LaunchedEffect(actionStatus) {
@@ -268,6 +296,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             onHangUp = { ScreenShareService.stop(context); vm.endCall() },
             onToggleMute = { vm.toggleCallMute() },
             onToggleCamera = { vm.toggleCallCamera() },
+            onToggleSpeakerphone = { vm.toggleSpeakerphone() },
             onToggleScreenShare = {
                 if (cs.isScreenSharing) {
                     vm.stopScreenShare()

@@ -1,6 +1,29 @@
 package main
 
-import "github.com/pquerna/otp/totp"
+import (
+	"sync"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+)
+
+// totpUsedCodes prevents TOTP code replay within the same 30-second window.
+// Key: "username:code", value: expiry time. Swept every 2 minutes.
+var totpUsedCodes sync.Map
+
+func init() {
+	go func() {
+		for range time.Tick(2 * time.Minute) {
+			now := time.Now()
+			totpUsedCodes.Range(func(k, v any) bool {
+				if v.(time.Time).Before(now) {
+					totpUsedCodes.Delete(k)
+				}
+				return true
+			})
+		}
+	}()
+}
 
 func (s *NexusServer) totpStatus(username string) (secret string, enabled bool) {
 	var e int
@@ -36,5 +59,14 @@ func (s *NexusServer) verifyTOTP(username, code string) bool {
 	if !enabled || secret == "" {
 		return true
 	}
-	return totp.Validate(code, secret)
+	if !totp.Validate(code, secret) {
+		return false
+	}
+	// Replay guard: reject if this exact code was already accepted within its window.
+	key := username + ":" + code
+	expiry := time.Now().Add(60 * time.Second) // 2 windows of safety
+	if _, loaded := totpUsedCodes.LoadOrStore(key, expiry); loaded {
+		return false
+	}
+	return true
 }

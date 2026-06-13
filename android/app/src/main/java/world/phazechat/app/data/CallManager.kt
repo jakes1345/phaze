@@ -2,6 +2,10 @@ package world.phazechat.app.data
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import org.webrtc.*
 
@@ -34,6 +38,8 @@ class CallManager(context: Context) {
     private var screenCapturer: VideoCapturer? = null
 
     var isScreenSharing: Boolean = false; private set
+
+    private var audioManager: AudioManager? = null
 
     var onIceCandidate: ((IceCandidate) -> Unit)? = null
     var onRemoteStream: ((MediaStream) -> Unit)? = null
@@ -89,7 +95,34 @@ class CallManager(context: Context) {
     }
 
     fun startLocalMedia(context: Context, withVideo: Boolean) {
-        val audioSource = factory.createAudioSource(MediaConstraints())
+        val am = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager = am
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            am.requestAudioFocus(
+                AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .build()
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        }
+
+        val audioConstraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+        }
+        val audioSource = factory.createAudioSource(audioConstraints)
         localAudioTrack = factory.createAudioTrack("audio0", audioSource)
 
         if (withVideo) {
@@ -220,6 +253,20 @@ class CallManager(context: Context) {
         peerConnection?.addIceCandidate(candidate)
     }
 
+    fun toggleSpeakerphone(): Boolean {
+        val am = audioManager ?: return false
+        @Suppress("DEPRECATION")
+        val next = !am.isSpeakerphoneOn
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = next
+        return next
+    }
+
+    fun isSpeakerphoneOn(): Boolean {
+        @Suppress("DEPRECATION")
+        return audioManager?.isSpeakerphoneOn ?: false
+    }
+
     fun toggleMute(): Boolean {
         val track = localAudioTrack ?: return false
         track.setEnabled(!track.enabled())
@@ -244,6 +291,16 @@ class CallManager(context: Context) {
         localAudioTrack = null
         localVideoTrack = null
         videoSender = null
+        audioManager?.let { am ->
+            am.mode = AudioManager.MODE_NORMAL
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = false
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        }
+        audioManager = null
     }
 
     fun release() {

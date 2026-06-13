@@ -61,6 +61,9 @@ func rateLimit(next http.HandlerFunc) http.HandlerFunc {
 		// the limiter. Cheap, applies broadly, and stops a few classes
 		// of attack (MIME sniffing, clickjacking, leaky referrers).
 		writeSecurityHeaders(w)
+		// Strict CSP for API/WS endpoints — they never serve HTML or
+		// load external resources, so default-src 'none' is safe.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
 		if !globalLimiter.allow(clientIP(r)) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return

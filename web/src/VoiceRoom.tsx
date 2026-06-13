@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NexusMessage, TurnConfig } from './nexusTypes'
 
+function preferOpusCodec(pc: RTCPeerConnection) {
+  if (!('getCapabilities' in RTCRtpSender)) return
+  const caps = RTCRtpSender.getCapabilities('audio')
+  if (!caps) return
+  const ordered = [...caps.codecs.filter(c => c.mimeType === 'audio/opus'), ...caps.codecs.filter(c => c.mimeType !== 'audio/opus')]
+  pc.getTransceivers().forEach(t => {
+    try { if (t.direction !== 'inactive') t.setCodecPreferences(ordered) } catch { /* ignore */ }
+  })
+}
+
 interface Props {
   me: string
   channelId: string
@@ -86,6 +96,7 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     if (local) local.getTracks().forEach((t) => pc.addTrack(t, local))
     const screen = screenStreamRef.current
     if (screen) screen.getTracks().forEach((t) => pc.addTrack(t, screen))
+    preferOpusCodec(pc)
     p = { pc, audio, stream: null }
     peerMapRef.current.set(user, p)
     return p
@@ -157,11 +168,11 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
     setErr('')
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: withVideo })
     } catch {
       if (withVideo) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
         } catch {
           setErr('Microphone permission denied')
           return
@@ -210,7 +221,7 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
       })
       // Renegotiate
       for (const u of peersRef.current) {
-        if (u !== me && me < u) void initiateOffer(u)
+        if (u !== me) void initiateOffer(u)
       }
       return
     }
@@ -239,7 +250,7 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
 
     // Renegotiate with all peers
     for (const u of peersRef.current) {
-      if (u !== me && me < u) void initiateOffer(u)
+      if (u !== me) void initiateOffer(u)
     }
   }
 
@@ -253,7 +264,7 @@ export default function VoiceRoom({ me, channelId, channelName, send, subscribe,
         }
         for (const u of next) {
           if (u === me) continue
-          if (!peerMapRef.current.has(u) && me < u) {
+          if (!peerMapRef.current.has(u)) {
             void initiateOffer(u)
           }
         }
