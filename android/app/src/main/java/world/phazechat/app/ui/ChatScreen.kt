@@ -243,6 +243,14 @@ fun MessageBubble(
                         Text("edited", color = textColor.copy(alpha = 0.6f), fontSize = 10.sp, fontStyle = FontStyle.Italic)
                     }
                 }
+                if (line.me) {
+                    Text(
+                        if (line.seen) "✓✓" else "✓",
+                        color = textColor.copy(alpha = 0.7f),
+                        fontSize = 10.sp,
+                        modifier = androidx.compose.ui.Modifier.align(Alignment.End),
+                    )
+                }
             }
             if (line.reaction != null) {
                 Surface(

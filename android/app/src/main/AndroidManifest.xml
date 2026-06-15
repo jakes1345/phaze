@@ -35,7 +35,7 @@
 
     <application
         android:name=".PhazeApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Phaze"
         android:supportsRtl="true"
@@ -55,6 +55,7 @@
             <intent-filter>
                 <action android:name="world.phazechat.app.OPEN" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="phaze" android:host="open" />
             </intent-filter>
         </activity>
 

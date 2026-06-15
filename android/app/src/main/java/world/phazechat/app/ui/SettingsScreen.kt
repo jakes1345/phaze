@@ -32,6 +32,8 @@ fun SettingsScreen(
     onCancel2FA: (() -> Unit)? = null,
     twoFactorUri: String? = null,
     twoFactorStatus: String? = null,
+    twoFactorBackupCodes: List<String>? = null,
+    onDismissBackupCodes: (() -> Unit)? = null,
     theme: String = "dark",
     onSetTheme: ((String) -> Unit)? = null,
     snow: Boolean = false,
@@ -202,6 +204,35 @@ fun SettingsScreen(
         if (twoFactorStatus != null) {
             Spacer(Modifier.height(6.dp))
             Text(twoFactorStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+        }
+        if (!twoFactorBackupCodes.isNullOrEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Backup Codes", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Save these codes somewhere safe. Each can be used once if you lose your authenticator.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    SelectionContainer {
+                        Column {
+                            twoFactorBackupCodes.chunked(2).forEach { row ->
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    row.forEach { code ->
+                                        Text(code, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    TextButton(onClick = { onDismissBackupCodes?.invoke() }, modifier = Modifier.align(Alignment.End)) {
+                        Text("I've saved these")
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(24.dp))
@@ -492,6 +523,20 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(32.dp))
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            TextButton(onClick = {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://phazechat.world/privacy"))
+                context.startActivity(intent)
+            }) { Text("Privacy Policy", fontSize = 12.sp) }
+            Text("·", fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
+            TextButton(onClick = {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://phazechat.world/terms"))
+                context.startActivity(intent)
+            }) { Text("Terms of Service", fontSize = 12.sp) }
+        }
         Text(
             "Phaze v${BuildConfig.VERSION_NAME} · Encrypted chat for everyone",
             fontSize = 12.sp,
