@@ -44,6 +44,7 @@ data class NexusMessage(
     val rawServers: String? = null,
     val rawChannels: String? = null,
     val rawMessages: String? = null,
+    val backupCodes: List<String>? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("type", type)
@@ -102,6 +103,13 @@ data class NexusMessage(
                 } else null
             } catch (_: Exception) { null }
 
+            val backupCodes = try {
+                if (j.has("backup_codes") && !j.isNull("backup_codes")) {
+                    val arr = j.getJSONArray("backup_codes")
+                    (0 until arr.length()).map { arr.getString(it) }
+                } else null
+            } catch (_: Exception) { null }
+
             var turnUrl: String? = null
             var turnUser: String? = null
             var turnPass: String? = null
@@ -154,6 +162,7 @@ data class NexusMessage(
                 rawServers = j.optJSONArray("servers")?.toString(),
                 rawChannels = j.optJSONArray("channels")?.toString(),
                 rawMessages = j.optJSONArray("messages")?.toString(),
+                backupCodes = backupCodes,
             )
         }
     }

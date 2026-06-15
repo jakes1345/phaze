@@ -42,6 +42,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import world.phazechat.app.data.PhazeViewModel
 import world.phazechat.app.ui.*
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -138,6 +141,19 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     // Load stories on login
     LaunchedEffect(me) { if (me != null) vm.loadStories() }
 
+    // Request POST_NOTIFICATIONS on Android 13+ once the user is logged in
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(me) {
+        if (me != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     val context = LocalContext.current
 
     var scannedLinkCode by remember { mutableStateOf("") }
@@ -158,37 +174,41 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         }
     }
 
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val galleryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            val code = try {
-                val inputStream = context.contentResolver.openInputStream(it)
-                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
-                inputStream?.close()
-                if (bitmap != null) {
-                    val width = bitmap.width
-                    val height = bitmap.height
-                    val pixels = IntArray(width * height)
-                    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-                    val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
-                    val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
-                    com.google.zxing.MultiFormatReader().decode(binaryBitmap).text
-                } else null
-            } catch (e: Exception) {
-                android.util.Log.e("PhazeRoot", "Failed to decode gallery QR: ${e.message}")
-                null
-            }
-
-            if (!code.isNullOrBlank()) {
-                var tok = code.trim()
-                if (tok.contains("token=")) {
-                    tok = tok.substringAfter("token=").substringBefore("&")
+            // Bitmap decode + ZXing must run off the main thread to avoid ANR
+            coroutineScope.launch {
+                val code = withContext(Dispatchers.IO) {
+                    try {
+                        val inputStream = context.contentResolver.openInputStream(it)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                        inputStream?.close()
+                        if (bitmap != null) {
+                            val width = bitmap.width
+                            val height = bitmap.height
+                            val pixels = IntArray(width * height)
+                            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                            val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+                            val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+                            com.google.zxing.MultiFormatReader().decode(binaryBitmap).text
+                        } else null
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
-                scannedLinkCode = tok
-                vm.loginWithLinkCode(tok)
-            } else {
-                android.widget.Toast.makeText(context, "No QR code found in selected image", android.widget.Toast.LENGTH_SHORT).show()
+                if (!code.isNullOrBlank()) {
+                    var tok = code.trim()
+                    if (tok.contains("token=")) {
+                        tok = tok.substringAfter("token=").substringBefore("&")
+                    }
+                    scannedLinkCode = tok
+                    vm.loginWithLinkCode(tok)
+                } else {
+                    android.widget.Toast.makeText(context, "No QR code found in selected image", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -426,6 +446,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     val snowPref by vm.snow.collectAsState()
                     val twoFactorUri by vm.twoFactorUri.collectAsState()
                     val twoFactorStatus by vm.twoFactorStatus.collectAsState()
+                    val twoFactorBackupCodes by vm.twoFactorBackupCodes.collectAsState()
                     SettingsScreen(
                         me = me!!,
                         mood = friends[me]?.mood ?: "",
@@ -437,6 +458,8 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onCancel2FA = { vm.cancel2FAEnrollment() },
                         twoFactorUri = twoFactorUri,
                         twoFactorStatus = twoFactorStatus,
+                        twoFactorBackupCodes = twoFactorBackupCodes,
+                        onDismissBackupCodes = { vm.clearBackupCodes() },
                         theme = theme,
                         onSetTheme = { vm.setTheme(it) },
                         snow = snowPref,

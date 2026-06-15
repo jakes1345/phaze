@@ -24,6 +24,7 @@ data class ChatLine(
     val edited: Boolean = false,
     val deleted: Boolean = false,
     val reaction: String? = null,
+    val seen: Boolean = false,
 )
 
 data class FriendInfo(
@@ -104,6 +105,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     val twoFactorStatus = _twoFactorStatus.asStateFlow()
     private val _twoFactorEnabled = MutableStateFlow(false)
     val twoFactorEnabled = _twoFactorEnabled.asStateFlow()
+    private val _twoFactorBackupCodes = MutableStateFlow<List<String>?>(null)
+    val twoFactorBackupCodes = _twoFactorBackupCodes.asStateFlow()
+    fun clearBackupCodes() { _twoFactorBackupCodes.value = null }
 
     // Friends
     private val _friends = MutableStateFlow<Map<String, FriendInfo>>(emptyMap())
@@ -265,9 +269,13 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val finalToken = tok
         linkPollJob = viewModelScope.launch {
             nexus.state.first { it == ConnState.CONNECTED }
-            while (me.value == null && _authError.value?.contains("Waiting") == true) {
+            var attempts = 0
+            while (me.value == null && _authError.value?.contains("Waiting") == true && attempts++ < 120) {
                 nexus.send(NexusMessage(type = "link_check", token = finalToken))
                 delay(2500)
+            }
+            if (me.value == null && _authError.value?.contains("Waiting") == true) {
+                _authError.value = "Link code expired. Generate a new one."
             }
         }
     }
@@ -361,7 +369,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _selectedChat.value = peer
         _unread.value = _unread.value.toMutableMap().apply { remove(peer) }
         _chatLog.value = emptyList()
-        _me.value?.let { nexus.send(NexusMessage(type = "dm_history", sender = it, recipient = peer)) }
+        _me.value?.let {
+            nexus.send(NexusMessage(type = "dm_history", sender = it, recipient = peer))
+            nexus.send(NexusMessage(type = "read_receipt", sender = it, recipient = peer, body = peer))
+        }
     }
 
     fun sendMessage(text: String) {
@@ -458,16 +469,22 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 conn.outputStream.write(body)
                 if (conn.responseCode == 200) {
                     val resp = conn.inputStream.bufferedReader().readText()
-                    val fileUrl = JSONObject(resp).optString("url", "")
+                    val j = JSONObject(resp)
+                    val fileUrl = j.optString("url", "")
+                    val mime = j.optString("mime", "application/octet-stream")
+                    val size = j.optLong("size", bytes.size.toLong())
                     if (fileUrl.isNotEmpty()) {
                         val msgId = "${username}-${System.nanoTime()}"
-                        nexus.send(NexusMessage(
-                            type = "msg", sender = username, recipient = peer,
-                            body = "[File: $fileName]", msgId = msgId,
-                            kind = "file", fileUrl = fileUrl, fileName = fileName,
-                        ))
+                        // Encode as phaze-file JSON so web/other clients can render it
+                        val peerPub = peerKeys[peer]
+                        val fileJson = JSONObject().apply {
+                            put("url", fileUrl); put("name", fileName); put("mime", mime); put("size", size)
+                        }
+                        val plaintext = "phaze-file${fileJson}"
+                        val body = if (peerPub != null) encryptForPeer(plaintext, peerPub, keyPair.secretKey) else plaintext
+                        nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            appendChat(ChatLine(id = msgId, from = username, text = "[File: $fileName]", me = true, kind = "file", fileUrl = fileUrl, fileName = fileName))
+                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "file", fileUrl = fileUrl, fileName = fileName))
                         }
                     }
                 }
@@ -495,16 +512,21 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 conn.outputStream.write(body)
                 if (conn.responseCode == 200) {
                     val resp = conn.inputStream.bufferedReader().readText()
-                    val fileUrl = JSONObject(resp).optString("url", "")
+                    val j = JSONObject(resp)
+                    val fileUrl = j.optString("url", "")
+                    val mime = j.optString("mime", "audio/ogg")
+                    val size = j.optLong("size", bytes.size.toLong())
                     if (fileUrl.isNotEmpty()) {
                         val msgId = "${username}-${System.nanoTime()}"
-                        nexus.send(NexusMessage(
-                            type = "msg", sender = username, recipient = peer,
-                            body = "[Voice Message]", msgId = msgId,
-                            kind = "voice", fileUrl = fileUrl, fileName = voiceFileName,
-                        ))
+                        val peerPub = peerKeys[peer]
+                        val fileJson = JSONObject().apply {
+                            put("url", fileUrl); put("name", voiceFileName); put("mime", mime); put("size", size)
+                        }
+                        val plaintext = "phaze-file${fileJson}"
+                        val body = if (peerPub != null) encryptForPeer(plaintext, peerPub, keyPair.secretKey) else plaintext
+                        nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            appendChat(ChatLine(id = msgId, from = username, text = "[Voice Message]", me = true, kind = "voice"))
+                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "voice", fileUrl = fileUrl, fileName = voiceFileName))
                         }
                     }
                 }
@@ -939,6 +961,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         publicKey = encodePublicKeyB64(keyPair.publicKey),
                         keyFingerprint = fingerprint(keyPair.publicKey),
                     ))
+                    // Refresh open chat after reconnect so missed messages appear
+                    _selectedChat.value?.let { peer ->
+                        nexus.send(NexusMessage(type = "dm_history", sender = msg.sender, recipient = peer))
+                    }
                     loadSpaces()
                 } else {
                     _authError.value = msg.error ?: msg.status ?: "Auth failed"
@@ -977,6 +1003,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
             "msg" -> {
                 val sender = msg.sender ?: return
+                // Skip server echo of our own messages — already appended optimistically.
+                if (sender == _me.value) return
                 val text = decrypt(msg.body, sender)
                 val line = ChatLine(
                     id = msg.msgId ?: "${sender}-${System.nanoTime()}",
@@ -1057,6 +1085,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             // Live edit / delete / react relays for DMs
+            "read_receipt" -> {
+                // Mark all our sent messages to this peer as seen
+                _chatLog.value = _chatLog.value.map { if (it.me && !it.seen) it.copy(seen = true) else it }
+            }
             "msg_edit" -> {
                 val id = msg.msgId ?: return
                 val sender = msg.sender ?: return
@@ -1115,10 +1147,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     _twoFactorUri.value = null
                     _twoFactorEnabled.value = true
                     _twoFactorStatus.value = "✓ 2FA enabled"
+                    if (!msg.backupCodes.isNullOrEmpty()) _twoFactorBackupCodes.value = msg.backupCodes
                 }
                 msg.status == "disabled" -> {
                     _twoFactorEnabled.value = false
                     _twoFactorStatus.value = "2FA disabled"
+                    _twoFactorBackupCodes.value = null
                 }
                 msg.error != null -> _twoFactorStatus.value = msg.error
             }
@@ -1196,10 +1230,18 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 lines.add(ChatLine(
                     id = r.optString("msg_id", "$i"),
                     from = sender, text = text, me = isMe,
-                    ts = try { java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).parse(r.getString("created_at"))?.time ?: 0L } catch (_: Exception) { 0L },
+                    ts = try {
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        sdf.parse(r.getString("created_at"))?.time ?: 0L
+                    } catch (_: Exception) { 0L },
                 ))
             }
-            _chatLog.value = lines.sortedBy { it.ts }
+            // Preserve optimistic messages we sent that haven't been persisted yet
+            val existingOptimistic = _chatLog.value.filter { existing ->
+                existing.me && lines.none { l -> l.id == existing.id }
+            }
+            _chatLog.value = (lines + existingOptimistic).sortedBy { it.ts }
         } catch (e: Exception) {
             Log.w(TAG, "dm_history parse: ${e.message}")
         }
