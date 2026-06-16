@@ -990,7 +990,7 @@ export default function App() {
           break
 
         case 'pending_requests':
-          if (msg.results?.length) setPending(msg.results)
+          setPending(msg.results ?? [])
           break
 
         case 'friend_request':
@@ -1035,7 +1035,7 @@ export default function App() {
         case 'presence': {
           const pk = decodePublicKeyField(msg.public_key as string | number[] | undefined)
           if (msg.sender && pk && pk.length === 32) acceptPeerKey(msg.sender, pk, msg.key_fingerprint || '')
-          if (msg.sender && msg.status) setFriends((f) => ({ ...f, [msg.sender!]: msg.status! }))
+          if (msg.sender && msg.status) setFriends((f) => ({ ...f, [msg.sender!]: msg.status || 'Online' }))
           break
         }
 
@@ -1186,6 +1186,7 @@ export default function App() {
             pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch((e: unknown) => setErr('Call setup failed: ' + String(e)))
             setCallState((prev) => prev ? { ...prev, status: 'active' } : null)
             setCallSeconds(0)
+            if (callTimerRef.current) clearInterval(callTimerRef.current)
             callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
           }
           break
@@ -2620,7 +2621,7 @@ export default function App() {
                               if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); completeMention(mentionMatches[mentionIdx]); return }
                               if (e.key === 'Escape') { setMentionQuery(null); return }
                             }
-                            if (e.key === 'Enter') sendChat()
+                            if (e.key === 'Enter' && conn === 'open') sendChat()
                             else if (e.key === 'Escape' && editingId) cancelEdit()
                           }}
                           placeholder={editingId ? 'Edit message…' : (e2eReady ? 'Message  ·  / for commands  ·  @ to mention' : 'Message')}
@@ -2658,7 +2659,7 @@ export default function App() {
                           </div>
                         )}
                       </div>
-                      <button type="button" onClick={sendChat}>{editingId ? 'Save' : 'Send'}</button>
+                      <button type="button" onClick={sendChat} disabled={conn !== 'open'} title={conn !== 'open' ? 'Reconnecting…' : undefined}>{editingId ? 'Save' : 'Send'}</button>
                     </div>
                   )}
                 </section>
