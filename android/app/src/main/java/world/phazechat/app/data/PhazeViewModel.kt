@@ -906,7 +906,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private fun decrypt(body: String?, sender: String?): String {
         if (body == null) return ""
         val pk = sender?.let { peerKeys[it] } ?: return body
-        return try { decryptFromPeer(body, pk, keyPair.secretKey) } catch (_: Exception) { body }
+        return try { decryptFromPeer(body, pk, keyPair.secretKey) } catch (_: Exception) { "[Encrypted]" }
     }
 
     private fun observeMessages() {
@@ -1245,7 +1245,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 var text = r.optString("body", "")
                 val pk = peerKeys[if (isMe) peer else sender]
                 if (pk != null && text.isNotEmpty()) {
-                    text = try { decryptFromPeer(text, pk, keyPair.secretKey) } catch (_: Exception) { text }
+                    text = try { decryptFromPeer(text, pk, keyPair.secretKey) } catch (_: Exception) { "[Encrypted]" }
                 }
                 lines.add(ChatLine(
                     id = r.optString("msg_id", "$i"),
