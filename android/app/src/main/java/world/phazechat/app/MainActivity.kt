@@ -253,22 +253,27 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             val path = File(context.cacheDir, "phaze_voice_${System.currentTimeMillis()}.$ext").absolutePath
             voicePath = path
             @Suppress("DEPRECATION")
-            val mr = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()).apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
+            val mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
+            try {
+                mr.setAudioSource(MediaRecorder.AudioSource.MIC)
                 if (useOgg) {
-                    setOutputFormat(MediaRecorder.OutputFormat.OGG)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+                    mr.setOutputFormat(MediaRecorder.OutputFormat.OGG)
+                    mr.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
                 } else {
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 }
-                setAudioSamplingRate(16000)
-                setOutputFile(path)
-                prepare()
-                start()
+                mr.setAudioSamplingRate(16000)
+                mr.setOutputFile(path)
+                mr.prepare()
+                mr.start()
+                recorder = mr
+                recording = true
+            } catch (e: Exception) {
+                mr.release()
+                voicePath = null
+                android.widget.Toast.makeText(context, "Couldn't start recording: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
             }
-            recorder = mr
-            recording = true
         }
     }
 
