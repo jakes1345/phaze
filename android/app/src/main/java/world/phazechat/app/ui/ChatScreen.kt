@@ -47,6 +47,7 @@ fun ChatScreen(
     onEdit: (String, String) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {},
     onReact: (String, String) -> Unit = { _, _ -> },
+    canSend: Boolean = true,
 ) {
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -159,7 +160,7 @@ fun ChatScreen(
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(
                         onClick = {
-                            if (draft.isNotBlank()) {
+                            if (draft.isNotBlank() && canSend) {
                                 onSend(draft.trim())
                                 draft = ""
                                 scope.launch {
@@ -167,7 +168,7 @@ fun ChatScreen(
                                 }
                             }
                         },
-                        enabled = draft.isNotBlank(),
+                        enabled = draft.isNotBlank() && canSend,
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, "Send")
                     }

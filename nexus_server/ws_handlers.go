@@ -215,6 +215,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
+			if len(msg.DisplayName) > 64 || len(msg.Mood) > 140 {
+				client.Send(NexusMessage{Type: "update_result", Error: "Display name max 64 chars, mood max 140"})
+				continue
+			}
 			_, err := s.DB.Exec("UPDATE users SET mood = ?, display_name = ? WHERE username = ?",
 				msg.Mood, msg.DisplayName, username)
 			if err != nil {
@@ -700,6 +704,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				})
 				continue
 			}
+			if len(msg.Body) > 65536 {
+				client.Send(NexusMessage{Type: "msg_status", Body: "error", Sender: msg.Recipient, Error: "message too long"})
+				continue
+			}
 			log.Printf("Message from %s to %s", msg.Sender, msg.Recipient)
 			// Durable cross-device history: store the ciphertext exactly as
 			// the sender produced it. Idempotent on msg_id so retries are
@@ -834,7 +842,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 
 		case "typing":
-			if username == "" {
+			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			if !s.areFriends(username, msg.Recipient) {
 				continue
 			}
 			s.Mu.RLock()

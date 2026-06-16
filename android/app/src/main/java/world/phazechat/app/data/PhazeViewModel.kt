@@ -87,6 +87,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _myDisplayName = MutableStateFlow(prefs.getString("display_name", "") ?: "")
     val myDisplayName = _myDisplayName.asStateFlow()
 
+    // Connection state (forwarded from NexusClient for UI guards)
+    val connState = nexus.state
+
     // Device Linking State
     private val _activeLinkCode = MutableStateFlow<String?>(null)
     val activeLinkCode = _activeLinkCode.asStateFlow()
