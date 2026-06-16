@@ -1206,6 +1206,16 @@ export default function App() {
           tearDownCall()
           break
 
+        case 'call_busy':
+          tearDownCall()
+          setErr(`${msg.sender || 'User'} is already in a call.`)
+          break
+
+        case 'call_error':
+          tearDownCall()
+          setErr(msg.error || msg.body || 'Call failed — user may be offline.')
+          break
+
         case 'call_invite':
           if (msg.sender && msg.channel_id) {
             setGroupCallInvite({ from: msg.sender, room: msg.channel_id })
