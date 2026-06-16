@@ -2,6 +2,7 @@ package world.phazechat.app
 
 import android.Manifest
 import android.app.Activity
+import world.phazechat.app.data.ConnState
 import android.content.Context
 import android.content.Intent
 import android.media.MediaRecorder
@@ -101,6 +102,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val searchResults by vm.searchResults.collectAsState()
     val actionStatus by vm.actionStatus.collectAsState()
     val globalNotice by vm.globalNotice.collectAsState()
+    val connState by vm.connState.collectAsState()
 
     val pendingOpenChat by vm.pendingOpenChat.collectAsState()
 
@@ -352,6 +354,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         val peer = selectedChat!!
         val info = friends[peer]
 
+        val isConnected = connState == ConnState.CONNECTED
         if (recording) {
             // Show recording overlay instead of normal chat bottom bar
             ChatScreen(
@@ -359,6 +362,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onBack = { stopVoiceRecord(false); vm.selectChat("") },
                 onSend = { vm.sendMessage(it) },
                 onCall = { vm.startCall(peer) },
+                canSend = isConnected,
             )
             VoiceRecordingOverlay(
                 onSend = { stopVoiceRecord(true) },
@@ -380,6 +384,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 onEdit = { id, text -> vm.editMessage(id, text) },
                 onDelete = { id -> vm.deleteMessage(id) },
                 onReact = { id, emoji -> vm.reactMessage(id, emoji) },
+                canSend = isConnected,
             )
         }
         return
