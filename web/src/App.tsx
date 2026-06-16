@@ -1220,8 +1220,13 @@ export default function App() {
 
         case 'kicked':
           localStorage.removeItem(SESSION_KEY)
-          setErr(msg.body || 'Kicked')
+          peerKeysRef.current = {}
+          setFriends({})
+          setPending([])
+          setSelected(null)
+          setLog([])
           setMe(null)
+          setErr(msg.body || 'Signed in from another location.')
           break
 
         case 'delete_account_result':

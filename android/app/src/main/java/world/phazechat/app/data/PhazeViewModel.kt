@@ -936,6 +936,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         publicKey = encodePublicKeyB64(keyPair.publicKey),
                         keyFingerprint = fingerprint(keyPair.publicKey),
                     ))
+                    val fcmToken = prefs.getString("fcm_token", null)
+                    if (!fcmToken.isNullOrEmpty()) {
+                        nexus.send(NexusMessage(type = "register_fcm_token", body = fcmToken))
+                    }
                     loadSpaces()
                 } else if (msg.error != null) {
                     linkPollJob?.cancel()
@@ -984,6 +988,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     // Refresh open chat after reconnect so missed messages appear
                     _selectedChat.value?.let { peer ->
                         nexus.send(NexusMessage(type = "dm_history", sender = msg.sender, recipient = peer))
+                    }
+                    // Register FCM token so push notifications work on this device
+                    val fcmToken = prefs.getString("fcm_token", null)
+                    if (!fcmToken.isNullOrEmpty()) {
+                        nexus.send(NexusMessage(type = "register_fcm_token", body = fcmToken))
                     }
                     loadSpaces()
                 } else {
@@ -1073,6 +1082,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             "report_result" -> {
                 if (msg.status == "received") _actionStatus.value = "Report received. Thank you."
                 else msg.error?.let { _actionStatus.value = "Report: $it" }
+            }
+
+            "kicked" -> {
+                _authError.value = msg.body ?: "Signed in from another location"
+                signOut()
             }
 
             // Account deletion confirmation
