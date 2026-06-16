@@ -1126,6 +1126,10 @@ export default function App() {
           }
           break
 
+        case 'msg_edit_result':
+          if (msg.error) setErr(msg.error)
+          break
+
         case 'msg_delete':
           if (msg.sender && msg.msg_id) {
             mutateMessage(msg.sender, msg.msg_id, (l) => ({ ...l, text: '', deleted: true, file: undefined }))
@@ -1359,7 +1363,7 @@ export default function App() {
       // If the peer key isn't loaded yet, leave as-is; the next presence
       // exchange will provide it and a later refresh will resolve.
       if (text && peerKey) {
-        try { text = decryptFromPeer(text, peerKey, mySec) } catch { /* leave raw */ }
+        try { text = decryptFromPeer(text, peerKey, mySec) } catch { text = '[Encrypted]' }
       }
       const file = decodeFileBody(text) || undefined
       const ts = Date.parse(r.created_at + 'Z') || Date.now()
