@@ -1081,6 +1081,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            "msg_status" -> {
+                msg.error?.let { _actionStatus.value = it }
+            }
+
             "dm_history" -> handleDmHistory(msg)
 
             "key_request" -> {
