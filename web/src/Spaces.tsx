@@ -250,6 +250,8 @@ export default function Spaces({ me, send, subscribe, turn = null, onUserClick, 
         case 'channel_history_result':
           if (m.status === 'ok' && m.channel_id && m.messages) {
             setMessagesByChannel((mc) => ({ ...mc, [m.channel_id!]: m.messages! }))
+          } else if (m.error) {
+            toast(m.error, 'error')
           }
           break
         case 'channel_msg_in':
