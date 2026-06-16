@@ -91,7 +91,7 @@ fun SettingsScreen(
 
         OutlinedTextField(
             value = editName,
-            onValueChange = { editName = it },
+            onValueChange = { editName = it; saved = false },
             label = { Text("Display Name") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -100,7 +100,7 @@ fun SettingsScreen(
 
         OutlinedTextField(
             value = editMood,
-            onValueChange = { editMood = it },
+            onValueChange = { editMood = it; saved = false },
             label = { Text("Mood / Status") },
             placeholder = { Text("What are you up to?") },
             singleLine = true,
