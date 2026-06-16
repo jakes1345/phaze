@@ -447,10 +447,11 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                     val twoFactorUri by vm.twoFactorUri.collectAsState()
                     val twoFactorStatus by vm.twoFactorStatus.collectAsState()
                     val twoFactorBackupCodes by vm.twoFactorBackupCodes.collectAsState()
+                    val myDisplayName by vm.myDisplayName.collectAsState()
                     SettingsScreen(
                         me = me!!,
                         mood = friends[me]?.mood ?: "",
-                        displayName = "",
+                        displayName = myDisplayName,
                         onUpdateProfile = { name, mood -> vm.updateProfile(name, mood) },
                         onEnable2FA = { vm.enable2FA() },
                         onConfirm2FA = { code -> vm.confirm2FA(code) },

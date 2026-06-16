@@ -83,6 +83,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _authError = MutableStateFlow<String?>(null)
     val authError = _authError.asStateFlow()
 
+    // Profile
+    private val _myDisplayName = MutableStateFlow(prefs.getString("display_name", "") ?: "")
+    val myDisplayName = _myDisplayName.asStateFlow()
+
     // Device Linking State
     private val _activeLinkCode = MutableStateFlow<String?>(null)
     val activeLinkCode = _activeLinkCode.asStateFlow()
@@ -581,7 +585,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateProfile(displayName: String, mood: String) {
         val me = _me.value ?: return
-        nexus.send(NexusMessage(type = "status_update", sender = me, body = mood, displayName = displayName, status = "Online"))
+        _myDisplayName.value = displayName
+        nexus.send(NexusMessage(type = "update_profile", sender = me, displayName = displayName, mood = mood))
+        nexus.send(NexusMessage(type = "status_update", sender = me, body = mood, status = "Online"))
     }
 
     /** Step 1 of enrollment: ask the server for a TOTP secret/URI. */
@@ -614,9 +620,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _me.value = null
         _sessionToken.value = null
         _friends.value = emptyMap()
+        _pending.value = emptyList()
         _chatLog.value = emptyList()
         _selectedChat.value = null
+        _unread.value = emptyMap()
         _spaces.value = emptyList()
+        peerKeys.clear()
         nexus.disconnect()
         nexus.connect()
     }
@@ -1005,6 +1014,23 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     "ok" -> "Account created. Sign in."
                     "pending_verification" -> "Check email for verification code."
                     else -> msg.error ?: "Registration failed"
+                }
+            }
+
+            "update_result" -> {
+                if (msg.status == "ok") {
+                    prefs.edit().putString("display_name", _myDisplayName.value).apply()
+                }
+            }
+
+            "profile_update" -> {
+                msg.sender?.let { sender ->
+                    _friends.value = _friends.value.toMutableMap().apply {
+                        val existing = get(sender)
+                        if (existing != null) {
+                            put(sender, existing.copy(mood = msg.mood ?: existing.mood))
+                        }
+                    }
                 }
             }
 
