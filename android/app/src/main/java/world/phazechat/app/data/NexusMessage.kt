@@ -56,6 +56,7 @@ data class NexusMessage(
         qrToken?.let { put("qr_token", it) }
         email?.let { put("email", it) }
         mood?.let { put("mood", it) }
+        displayName?.let { put("display_name", it) }
         totpCode?.let { put("totp_code", it) }
         deviceInfo?.let { put("device_info", it) }
         publicKey?.let { put("public_key", it) }
