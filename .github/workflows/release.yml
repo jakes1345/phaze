@@ -53,3 +53,92 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           gh release upload "$TAG" Phaze.apk Phaze.aab --clobber
+
+  # Windows desktop — Wails app with WebView2, packaged as an NSIS installer.
+  # The installer is what gets submitted to winget.
+  desktop-windows:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install NSIS
+        run: choco install nsis --yes
+
+      - name: Build web frontend
+        working-directory: web
+        env:
+          VITE_BASE: /
+        run: |
+          npm ci
+          npm run build
+
+      - name: Copy dist to desktop
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force desktop/dist -ErrorAction SilentlyContinue
+          Copy-Item -Recurse web/dist desktop/dist
+
+      - name: Build Wails Windows installer
+        working-directory: desktop
+        run: wails build -platform windows/amd64 -nsis
+
+      - name: Rename installer to stable filename
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem desktop/build/bin -Filter "*installer*" | Select-Object -First 1
+          Copy-Item $src.FullName Phaze-windows-setup.exe
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release upload "$TAG" Phaze-windows-setup.exe --clobber
+
+  # Linux desktop — Wails app using WebKit2GTK 4.1.
+  desktop-linux:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: bash build.sh
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          cp desktop/build/bin/Phaze Phaze-linux-amd64
+          gh release upload "$TAG" Phaze-linux-amd64 --clobber

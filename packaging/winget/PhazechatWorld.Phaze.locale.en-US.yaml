@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: PhazechatWorld.Phaze
+PackageVersion: 1.5.0
+PackageLocale: en-US
+Publisher: Phazechat World
+PublisherUrl: https://phazechat.world
+PublisherSupportUrl: https://github.com/jakes1345/skype7-reborn/issues
+PackageName: Phaze
+PackageUrl: https://phazechat.world
+License: Proprietary
+Copyright: Copyright © 2026 Phazechat World
+ShortDescription: Encrypted messaging, voice and video calls — a modern Skype alternative
+Description: |-
+  Phaze is a free encrypted messaging app with end-to-end encrypted DMs, voice and
+  video calls, group chats, spaces (servers), stories, and screen share. Works on
+  Windows, Linux, Android, and the web. No phone number required.
+Moniker: phaze
+Tags:
+  - chat
+  - messaging
+  - encrypted
+  - voip
+  - video-call
+  - e2ee
+ReleaseNotesUrl: https://github.com/jakes1345/skype7-reborn/releases/tag/v1.5.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
