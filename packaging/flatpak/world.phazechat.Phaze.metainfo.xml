@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>world.phazechat.Phaze</id>
+  <name>Phaze</name>
+  <summary>Encrypted messaging, voice and video calls</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+
+  <description>
+    <p>
+      Phaze is a free encrypted messaging app with end-to-end encrypted direct messages,
+      voice and video calls, group chats, Spaces (community servers), Stories, and screen
+      share. No phone number required — just pick a username and go.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>End-to-end encrypted DMs using NaCl box encryption</li>
+      <li>Voice and video calls via WebRTC</li>
+      <li>Group chats and community Spaces (like Discord servers)</li>
+      <li>Screen share and remote desktop</li>
+      <li>Stories with 24-hour expiry</li>
+      <li>File sharing up to 100 MB</li>
+      <li>Two-factor authentication (TOTP)</li>
+      <li>Cross-device key backup with PIN encryption</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">world.phazechat.Phaze.desktop</launchable>
+
+  <url type="homepage">https://phazechat.world</url>
+  <url type="bugtracker">https://github.com/jakes1345/skype7-reborn/issues</url>
+
+  <developer id="world.phazechat">
+    <name>Phazechat World</name>
+  </developer>
+
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+
+  <keywords>
+    <keyword>chat</keyword>
+    <keyword>messaging</keyword>
+    <keyword>encrypted</keyword>
+    <keyword>e2ee</keyword>
+    <keyword>voice</keyword>
+    <keyword>video</keyword>
+    <keyword>call</keyword>
+  </keywords>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <releases>
+    <release version="1.5.0" date="2026-06-16">
+      <description>
+        <p>
+          Comprehensive bug sweep: fixed settings sync across devices, Spaces server
+          events on Android, call lifecycle edge cases, server input validation,
+          and voice recording crash on Android.
+        </p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-audio">intense</content_attribute>
+    <content_attribute id="social-contacts">intense</content_attribute>
+  </content_rating>
+</component>

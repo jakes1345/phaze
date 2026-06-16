@@ -1,0 +1,59 @@
+app-id: world.phazechat.Phaze
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+  - org.freedesktop.Sdk.Extension.node20
+command: Phaze
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --filesystem=xdg-download
+
+build-options:
+  append-path: /usr/lib/sdk/golang/bin:/usr/lib/sdk/node20/bin
+  env:
+    GOPATH: /run/build/Phaze/gopath
+    GOCACHE: /run/build/Phaze/go-build-cache
+    GOFLAGS: -mod=vendor
+    HOME: /run/build/Phaze
+    CGO_ENABLED: '1'
+
+modules:
+  - name: Phaze
+    buildsystem: simple
+    build-commands:
+      # Build web frontend with offline npm cache
+      - cd web && npm run build
+      # Embed compiled frontend into desktop
+      - cp -r web/dist desktop/dist
+      # Build Wails binary (go:embed picks up desktop/dist automatically)
+      - cd desktop && go build -v -tags webkit2_41 -o Phaze .
+      # Install binary
+      - install -Dm755 desktop/Phaze /app/bin/Phaze
+      # Desktop entry + icon + metainfo
+      - install -Dm644 packaging/flatpak/world.phazechat.Phaze.desktop
+          /app/share/applications/world.phazechat.Phaze.desktop
+      - install -Dm644 desktop/assets/icon.png
+          /app/share/icons/hicolor/512x512/apps/world.phazechat.Phaze.png
+      - install -Dm644 packaging/flatpak/world.phazechat.Phaze.metainfo.xml
+          /app/share/metainfo/world.phazechat.Phaze.metainfo.xml
+
+    sources:
+      - type: git
+        url: https://github.com/jakes1345/skype7-reborn.git
+        tag: v1.5.0
+        commit: placeholder-run-generate-sources-sh
+
+      # Generated offline Go module cache — run packaging/flatpak/generate-sources.sh
+      - generated-go-sources.json
+
+      # Generated offline npm cache — run packaging/flatpak/generate-sources.sh
+      - generated-node-sources.json

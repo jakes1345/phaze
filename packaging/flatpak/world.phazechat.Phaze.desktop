@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Phaze
+Comment=Encrypted messaging, voice and video calls
+Exec=Phaze
+Icon=world.phazechat.Phaze
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;Chat;
+Keywords=chat;messaging;encrypted;voice;video;call;e2ee;
+StartupWMClass=Phaze
+StartupNotify=true
