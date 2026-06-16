@@ -629,6 +629,7 @@ func (s *NexusServer) initDB() {
 		// notification, then grants the badge — see supporters.go.
 		`ALTER TABLE users ADD COLUMN supporter INTEGER DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN supporter_since DATETIME`,
+		`ALTER TABLE offline_messages ADD COLUMN msg_id TEXT DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS supporter_requests (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT,
@@ -1503,9 +1504,9 @@ func (s *NexusServer) fetchDMHistory(a, b string, beforeID int64, limit int) []D
 	return out
 }
 
-func (s *NexusServer) storeOfflineMessage(sender, recipient, body, msgType string) {
-	if _, err := s.DB.Exec("INSERT INTO offline_messages (sender, recipient, body, msg_type) VALUES (?, ?, ?, ?)",
-		sender, recipient, body, msgType); err != nil {
+func (s *NexusServer) storeOfflineMessage(sender, recipient, body, msgType, msgID string) {
+	if _, err := s.DB.Exec("INSERT INTO offline_messages (sender, recipient, body, msg_type, msg_id) VALUES (?, ?, ?, ?, ?)",
+		sender, recipient, body, msgType, msgID); err != nil {
 		log.Printf("[offline] store %s->%s (%s) failed: %v", sender, recipient, msgType, err)
 	}
 	go s.sendWebPush(recipient, sender, body)
@@ -1629,7 +1630,7 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 		return
 	}
 
-	rows, err := s.DB.Query("SELECT id, sender, body, msg_type, created_at FROM offline_messages WHERE recipient = ? ORDER BY created_at ASC", username)
+	rows, err := s.DB.Query("SELECT id, sender, body, msg_type, created_at, COALESCE(msg_id,'') FROM offline_messages WHERE recipient = ? ORDER BY created_at ASC", username)
 	if err != nil {
 		return
 	}
@@ -1638,8 +1639,8 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 	var ids []int64
 	for rows.Next() {
 		var id int64
-		var sender, body, msgType, createdAt string
-		if err := rows.Scan(&id, &sender, &body, &msgType, &createdAt); err != nil {
+		var sender, body, msgType, createdAt, msgID string
+		if err := rows.Scan(&id, &sender, &body, &msgType, &createdAt, &msgID); err != nil {
 			log.Printf("[db] deliverOfflineMessages scan: %v", err)
 			continue
 		}
@@ -1647,6 +1648,7 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 			Type:   msgType,
 			Sender: sender,
 			Body:   body,
+			MsgID:  msgID,
 			Status: "offline:" + createdAt,
 		})
 		ids = append(ids, id)

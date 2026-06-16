@@ -712,7 +712,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if online {
 				recipientClient.Send(msg)
 			} else {
-				s.storeOfflineMessage(msg.Sender, msg.Recipient, msg.Body, "msg")
+				s.storeOfflineMessage(msg.Sender, msg.Recipient, msg.Body, "msg", msg.MsgID)
 				client.Send(NexusMessage{
 					Type:   "msg_status",
 					Body:   "delivered_offline",
