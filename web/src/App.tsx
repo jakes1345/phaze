@@ -986,7 +986,12 @@ export default function App() {
           break
 
         case 'friend_status':
-          if (msg.sender) setFriends((f) => ({ ...f, [msg.sender!]: msg.status || 'Offline' }))
+          if (msg.sender) {
+            setFriends((f) => ({ ...f, [msg.sender!]: msg.status || 'Offline' }))
+            if (msg.status === 'Offline' && callStateRef.current?.peer === msg.sender) {
+              tearDownCall()
+            }
+          }
           break
 
         case 'pending_requests':
