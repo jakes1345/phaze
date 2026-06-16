@@ -602,7 +602,7 @@ export default function App() {
     document.documentElement.dataset.theme = theme
     // Sync theme preference to server when logged in.
     if (meRef.current) {
-      sendRef.current({ type: 'settings_set', sender: meRef.current, body: JSON.stringify({ theme }) })
+      sendRef.current({ type: 'settings_set', sender: meRef.current, body: JSON.stringify({ key: 'theme', value: theme }) })
     }
   }, [theme])
 
@@ -1292,14 +1292,9 @@ export default function App() {
           break
 
         case 'settings_result':
-          // Server-side settings loaded — apply theme if set
-          if (msg.body) {
-            try {
-              const saved = JSON.parse(msg.body) as Record<string, unknown>
-              if (saved.theme === 'dark' || saved.theme === 'light' || saved.theme === 'skype7') {
-                setTheme(saved.theme as 'light' | 'dark' | 'skype7')
-              }
-            } catch { /* ignore */ }
+          if (msg.status === 'ok' && msg.envelopes) {
+            const t = msg.envelopes['theme']
+            if (t === 'dark' || t === 'light' || t === 'skype7') setTheme(t)
           }
           break
 
