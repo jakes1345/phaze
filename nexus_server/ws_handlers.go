@@ -1168,6 +1168,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" || msg.ConvoID == "" {
 				continue
 			}
+			if len(msg.Body) > 65536 {
+				continue
+			}
 			metrics.convoMessages.Add(1)
 			members := s.conversationMembers(msg.ConvoID)
 			var convoName string
@@ -1743,6 +1746,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "channel_edit":
 			if username == "" || msg.MsgID == "" || msg.Body == "" {
+				continue
+			}
+			if len(msg.Body) > 8000 {
 				continue
 			}
 			id64, perr := strconv.ParseInt(msg.MsgID, 10, 64)
