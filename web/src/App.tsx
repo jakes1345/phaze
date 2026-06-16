@@ -1131,6 +1131,10 @@ export default function App() {
           }
           break
 
+        case 'msg_status':
+          if (msg.error) setErr(msg.error)
+          break
+
         case 'msg_edit_result':
           if (msg.error) setErr(msg.error)
           break
