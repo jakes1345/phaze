@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition } from 'react'
+import faviconUrl from '/icon-192.png'
 import jsQR from 'jsqr'
 import type { NexusMessage, TurnConfig } from './nexusTypes'
 import {
@@ -12,17 +13,32 @@ import {
 import { loadPins, savePins } from './keyPins'
 import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup } from './keyBackup'
 import { playPhazeSound } from './phazeSounds'
-import Spaces from './Spaces'
-import LivePage from './LivePage'
-import VoiceRoom from './VoiceRoom'
+const Spaces = lazy(() => import('./Spaces'))
+const LivePage = lazy(() => import('./LivePage'))
+const VoiceRoom = lazy(() => import('./VoiceRoom'))
+const Stories = lazy(() => import('./Stories'))
+const Onboarding = lazy(() => import('./Onboarding'))
+const RemoteControl = lazy(() => import('./RemoteControl'))
 import UserProfile from './UserProfile'
 import SupportBubble from './SupportBubble'
 import SupportForm from './SupportForm'
-import Stories from './Stories'
-import Onboarding from './Onboarding'
 import Settings from './Settings'
-import RemoteControl from './RemoteControl'
+import DesktopTitleBar from './DesktopTitleBar'
 import './App.css'
+
+// Wails desktop bridge — only present when running inside the Wails desktop app.
+const wails = (() => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = window as any
+  if (typeof g?.go?.main?.App?.Notify === 'function') return g.go.main.App as {
+    Notify: (title: string, body: string) => void
+    SetUnread: (count: number) => void
+    WindowMinimise: () => void
+    WindowToggleMaximise: () => void
+    WindowClose: () => void
+  }
+  return null
+})()
 
 const SESSION_KEY = 'phaze_session_token_v1'
 const KEYS_KEY = 'phaze_nacl_keys_v1'
@@ -148,6 +164,7 @@ type ChatLine = {
   deleted?: boolean
   reactions?: Record<string, string[]> // emoji -> users
   file?: FileAttachment
+  seen?: boolean // peer has opened the conversation since this message was sent
 }
 
 const FILE_PREFIX = 'phaze-file'
@@ -367,11 +384,15 @@ export default function App() {
   const [e2eReady, setE2eReady] = useState(false)
   const [typingPeers, setTypingPeers] = useState<Set<string>>(new Set())
   const [callState, setCallState] = useState<CallState | null>(null)
+  const [callSeconds, setCallSeconds] = useState(0)
+  const [callMuted, setCallMuted] = useState(false)
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Auth + registration UI state hoisted above WS handler (ESLint no-use-before-define)
   const [loginUser, setLoginUser] = useState('')
   const [loginPass, setLoginPass] = useState('')
   const [loginTotp, setLoginTotp] = useState('')
+  const [needsTotp, setNeedsTotp] = useState(false)
   const [addFriend, setAddFriend] = useState('')
   const [profileUser, setProfileUser] = useState<string | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState<boolean>(() => {
@@ -741,6 +762,7 @@ export default function App() {
 
   const tearDownCall = useCallback(() => {
     if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
+    if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null }
     pcRef.current?.close()
     pcRef.current = null
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -750,6 +772,8 @@ export default function App() {
     cameraTrackRef.current = null
     incomingCallSdpRef.current = null
     setSharingScreen(false)
+    setCallSeconds(0)
+    setCallMuted(false)
     setCallState(null)
   }, [])
 
@@ -795,6 +819,15 @@ export default function App() {
     setSharingScreen(true)
   }, [])
   useEffect(() => { toggleScreenShareRef.current = () => { void toggleScreenShare() } }, [toggleScreenShare])
+
+  const toggleMute = useCallback(() => {
+    const stream = localStreamRef.current
+    if (!stream) return
+    const audio = stream.getAudioTracks()[0]
+    if (!audio) return
+    audio.enabled = !audio.enabled
+    setCallMuted(!audio.enabled)
+  }, [])
 
   const hangUp = useCallback(() => {
     const cs = callStateRef.current
@@ -898,6 +931,8 @@ export default function App() {
     sendRef.current({ type: 'call_answer', recipient: cs.peer, sdp: answer.sdp })
     incomingCallSdpRef.current = null
     setCallState({ ...cs, status: 'active' })
+    setCallSeconds(0)
+    callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
   }, [makePC, hangUp])
 
   const onMessageRef = useRef<(raw: NexusMessage) => void>(() => {})
@@ -945,7 +980,7 @@ export default function App() {
             }
           } else {
             localStorage.removeItem(SESSION_KEY)
-            if (msg.status === 'totp_required') setErr('2FA required: enter TOTP code.')
+            if (msg.status === 'totp_required') { setNeedsTotp(true); setErr('2FA required: enter TOTP code.') }
             else setErr(msg.error || msg.status || 'Auth failed')
           }
           break
@@ -1035,7 +1070,14 @@ export default function App() {
             appendLog(msg.sender, msg.body || '[empty]', msg.sender === my, { id: incomingId })
             // Suppress notification sound + browser notification for muted peers.
             const senderIsMuted = msg.sender ? isPeerMuted(msg.sender) : false
-            if (msg.sender !== my && !senderIsMuted) playPhazeSound('MessageReceived.wav')
+            if (msg.sender !== my && !senderIsMuted) {
+              playPhazeSound('MessageReceived.wav')
+              if (wails && document.hidden) {
+                const preview = (msg.body || '').startsWith('phaze-file')
+                  ? '📎 Attachment' : (msg.body || '').slice(0, 60)
+                wails.Notify(msg.sender, preview)
+              }
+            }
           }
           break
 
@@ -1106,6 +1148,20 @@ export default function App() {
           }
           break
 
+        case 'read_receipt':
+          // Mark all our sent messages in this conversation as seen (in-memory + localStorage)
+          if (msg.sender && msg.sender !== meRef.current) {
+            setLog((prev) => prev.map((l) => l.me && !l.seen ? { ...l, seen: true } : l))
+            const my = meRef.current; const peer = msg.sender
+            if (my && peer) {
+              const stored = loadHistory(my, peer)
+              if (stored.some((l) => l.me && !l.seen)) {
+                saveHistory(my, peer, stored.map((l) => l.me && !l.seen ? { ...l, seen: true } : l))
+              }
+            }
+          }
+          break
+
         case 'typing':
           if (msg.sender && msg.sender !== meRef.current) {
             const peer = msg.sender
@@ -1129,6 +1185,8 @@ export default function App() {
             if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
             pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch((e: unknown) => setErr('Call setup failed: ' + String(e)))
             setCallState((prev) => prev ? { ...prev, status: 'active' } : null)
+            setCallSeconds(0)
+            callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
           }
           break
 
@@ -1270,6 +1328,9 @@ export default function App() {
   const send = useCallback((m: NexusMessage) => { sendRef.current(m) }, [])
 
   const doAuth = (username: string, password: string, totp: string) => {
+    if (!username && !password) { setErr('Username and password are required.'); return }
+    if (!username) { setErr('Username is required.'); return }
+    if (!password) { setErr('Password is required.'); return }
     setErr('')
     send({ type: 'auth', sender: username, body: password, totp_code: totp || undefined, device_info: `web/${window.location.hostname}` })
   }
@@ -1343,6 +1404,8 @@ export default function App() {
       // Pull durable history from the server so messages survive a localStorage
       // wipe, a new browser, or a fresh device. Server stores E2EE ciphertext.
       send({ type: 'dm_history', sender: me, recipient: name })
+      // Notify peer we've read their messages
+      send({ type: 'read_receipt', sender: me, recipient: name, body: name })
     } else {
       setLog([])
       setPinnedIds([])
@@ -1668,10 +1731,18 @@ export default function App() {
   useEffect(() => {
     const base = 'Phaze'
     document.title = totalUnread > 0 ? `(${totalUnread}) ${base}` : base
+    wails?.SetUnread(totalUnread)
   }, [totalUnread])
 
   return (
-    <div className={`app theme-${theme}`}>
+    <div className={`app theme-${theme}${wails ? ' desktop-app' : ''}`}>
+      {wails && (
+        <DesktopTitleBar
+          onMinimise={() => wails.WindowMinimise()}
+          onMaximise={() => wails.WindowToggleMaximise()}
+          onClose={() => wails.WindowClose()}
+        />
+      )}
       {snow && <Snowflakes />}
       <header className="top">
         <div className="brand">
@@ -1772,6 +1843,7 @@ export default function App() {
       )}
 
       {me && remoteOpen && (
+        <Suspense fallback={null}>
         <RemoteControl
           me={me}
           send={send}
@@ -1779,6 +1851,7 @@ export default function App() {
           turn={turn}
           onClose={() => setRemoteOpen(false)}
         />
+        </Suspense>
       )}
 
       {me && paletteOpen && (
@@ -1853,13 +1926,15 @@ export default function App() {
 
       {/* ── Onboarding (first sign-in only) ─────────────────────── */}
       {me && sessionToken && onboardingOpen && (
-        <Onboarding
-          me={me}
-          sessionToken={sessionToken}
-          onAddFriend={(name) => sendFriendRequest(name)}
-          onJump={(v) => setView(v)}
-          onClose={() => setOnboardingOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <Onboarding
+            me={me}
+            sessionToken={sessionToken}
+            onAddFriend={(name) => sendFriendRequest(name)}
+            onJump={(v) => setView(v)}
+            onClose={() => setOnboardingOpen(false)}
+          />
+        </Suspense>
       )}
 
       {/* ── Report abuse dialog ──────────────────────────────────── */}
@@ -1933,7 +2008,7 @@ export default function App() {
             <div className="call-status-text">
               {callState.status === 'ringing' && callState.direction === 'outgoing' && 'Calling…'}
               {callState.status === 'ringing' && callState.direction === 'incoming' && `${callState.type === 'video' ? '📹' : '☎'} Incoming ${callState.type} call`}
-              {callState.status === 'active' && 'Connected'}
+              {callState.status === 'active' && `${String(Math.floor(callSeconds / 60)).padStart(2, '0')}:${String(callSeconds % 60).padStart(2, '0')}`}
             </div>
             <div className="call-controls">
               {callState.direction === 'incoming' && callState.status === 'ringing' ? (
@@ -1943,6 +2018,9 @@ export default function App() {
                 </>
               ) : (
                 <>
+                  <button className={`call-btn-mute ${callMuted ? 'active' : ''}`} onClick={toggleMute} title={callMuted ? 'Unmute' : 'Mute'}>
+                    {callMuted ? '🔇 Unmute' : '🎤 Mute'}
+                  </button>
                   {callState.status === 'active' && (
                     <button className="call-btn-share" onClick={() => void toggleScreenShare()} title={sharingScreen ? 'Stop sharing' : 'Share screen'}>
                       {sharingScreen ? '🛑 Stop sharing' : '🖥 Share screen'}
@@ -1982,7 +2060,7 @@ export default function App() {
           <div className="wn-modal">
             <button type="button" className="wn-close" onClick={() => { setChangelogOpen(false); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') }}>✕</button>
             <div className="wn-header">
-              <img src="/web/favicon.svg" alt="" className="wn-logo" />
+              <img src={faviconUrl} alt="" className="wn-logo" />
               <h2>What's New</h2>
               <p>Here's everything we shipped this week.</p>
             </div>
@@ -2028,6 +2106,7 @@ export default function App() {
       {/* ── Group call overlay ────────────────────────────────── */}
       {me && groupCallRoom && (
         <div className="call-overlay" style={{ flexDirection: 'column', gap: '1rem', padding: '2rem' }}>
+          <Suspense fallback={null}>
           <VoiceRoom
             me={me}
             channelId={groupCallRoom}
@@ -2036,6 +2115,7 @@ export default function App() {
             subscribe={subscribe}
             turn={turn}
           />
+          </Suspense>
           <button
             type="button"
             className="call-btn-end"
@@ -2048,6 +2128,7 @@ export default function App() {
       )}
 
       {me && view === 'spaces' ? (
+        <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading Spaces…</div>}>
         <Spaces
           me={me}
           send={send}
@@ -2067,8 +2148,9 @@ export default function App() {
             return await resp.json()
           }}
         />
+        </Suspense>
       ) : me && view === 'live' ? (
-        <LivePage me={me} send={send} subscribe={subscribe} turn={turn} />
+        <Suspense fallback={null}><LivePage me={me} send={send} subscribe={subscribe} turn={turn} /></Suspense>
       ) : (
         <>
         {/* ── Auth (not logged in) ─────────────────────────────── */}
@@ -2076,7 +2158,7 @@ export default function App() {
           <main className="grid">
             <div className="hub-auth">
               <div className="auth-hero">
-                <img src="/web/favicon.svg" alt="Phaze" className="auth-hero-logo" />
+                <img src={faviconUrl} alt="Phaze" className="auth-hero-logo" />
                 <h2 className="auth-hero-title">Phaze</h2>
                 <p className="auth-hero-sub">Encrypted chat for everyone. Private by default.</p>
                 <div className="auth-features">
@@ -2104,11 +2186,11 @@ export default function App() {
                   <form className="form" onSubmit={(e) => { e.preventDefault(); doAuth(loginUser.trim(), loginPass, loginTotp.trim()) }}>
                     <input placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} autoComplete="username" />
                     <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} autoComplete="current-password" />
-                    <input placeholder="TOTP (if enabled)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} />
+                    {needsTotp && <input placeholder="TOTP code" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} autoFocus />}
                     <button type="submit">Sign in</button>
-                    <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setRegStep('form') }}>Create an account</button>
-                    <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr('') }}>Forgot password?</button>
-                    <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr('') }}>Sign in with a link code from another device</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setNeedsTotp(false); setRegStep('form') }}>Create an account</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr(''); setNeedsTotp(false) }}>Forgot password?</button>
+                    <button type="button" className="link-btn" onClick={() => { setMode('link'); setErr(''); setNeedsTotp(false) }}>Sign in with a link code from another device</button>
                   </form>
                 ) : mode === 'forgot' ? (
                   <div className="form">
@@ -2177,7 +2259,7 @@ export default function App() {
         )}
 
         {/* ── Hub view (logged in, DMs) ───────────────────────────── */}
-        {me && sessionToken && <Stories me={me} sessionToken={sessionToken} />}
+        {me && sessionToken && <Suspense fallback={null}><Stories me={me} sessionToken={sessionToken} /></Suspense>}
         {me && (
           <main className="grid">
             <div className={`hub-content ${selected ? 'chat-open' : ''}`}>
@@ -2207,7 +2289,7 @@ export default function App() {
                         <button type="button" className={`friend-row ${selected === u ? 'sel' : ''}`} onClick={() => openChat(u)}>
                           <span className="avatar" style={{ background: avatarColor(u) }}>
                             {u[0]?.toUpperCase()}
-                            <span className="avatar-dot" style={{ background: statusColor(st) }} />
+                            <span className="avatar-dot" data-online={st === 'Online' ? '' : undefined} style={{ background: statusColor(st) }} />
                           </span>
                           <span className="friend-meta">
                             <span className="friend-line">
@@ -2358,7 +2440,7 @@ export default function App() {
                     {!selected && (
                       <div className="chat-empty">
                         <div className="chat-empty-art">
-                          <img src="/web/favicon.svg" alt="" />
+                          <img src={faviconUrl} alt="" />
                         </div>
                         <h3>Stay in phase.</h3>
                         <p>
@@ -2417,7 +2499,7 @@ export default function App() {
                             ) : (
                               <span className="bubble-text"><RichText text={line.text} me={me} />{line.edited && <span className="edited-tag"> (edited)</span>}</span>
                             )}
-                            <span className="bubble-ts">{formatTime(line.ts)}</span>
+                            <span className="bubble-ts">{formatTime(line.ts)}{line.me && <span className="receipt-tick" title={line.seen ? 'Seen' : 'Delivered'}>{line.seen ? ' ✓✓' : ' ✓'}</span>}</span>
                             {line.reactions && Object.keys(line.reactions).length > 0 && (
                               <div className="reactions">
                                 {Object.entries(line.reactions).map(([e, users]) => (

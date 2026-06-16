@@ -2,6 +2,7 @@ package world.phazechat.app.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,7 +58,7 @@ fun ChatScreen(
     var editing by remember { mutableStateOf<ChatLine?>(null) }
 
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
     }
 
     if (reportOpen) {
@@ -161,7 +163,7 @@ fun ChatScreen(
                                 onSend(draft.trim())
                                 draft = ""
                                 scope.launch {
-                                    if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size)
+                                    if (messages.isNotEmpty()) listState.animateScrollToItem(0)
                                 }
                             }
                         },
@@ -183,11 +185,12 @@ fun ChatScreen(
         } else {
             LazyColumn(
                 state = listState,
+                reverseLayout = true,
                 modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
-                items(messages, key = { it.id }) { line ->
+                items(messages.asReversed(), key = { it.id }) { line ->
                     MessageBubble(
                         line = line,
                         onEdit = { editing = line },
@@ -213,6 +216,7 @@ fun MessageBubble(
     val align = if (line.me) Arrangement.End else Arrangement.Start
     val bubbleColor = if (line.me) PhazeBrand else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (line.me) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val uriHandler = LocalUriHandler.current
     var menuOpen by remember { mutableStateOf(false) }
 
     Row(
@@ -238,7 +242,45 @@ fun MessageBubble(
                 if (line.deleted) {
                     Text("🚫 message deleted", color = textColor, fontSize = 14.sp, fontStyle = FontStyle.Italic)
                 } else {
-                    Text(line.text, color = textColor, fontSize = 15.sp, lineHeight = 20.sp)
+                    val phazeFile = remember(line.text) {
+                        if (line.text.startsWith("phaze-file{"))
+                            try { org.json.JSONObject(line.text.removePrefix("phaze-file")) } catch (_: Exception) { null }
+                        else null
+                    }
+                    if (phazeFile != null) {
+                        val name = phazeFile.optString("name", "file")
+                        val mime = phazeFile.optString("mime", "")
+                        val size = phazeFile.optLong("size", 0L)
+                        val url = phazeFile.optString("url", "")
+                        val isVoice = mime.contains("audio") || name.endsWith(".ogg") || name.endsWith(".m4a")
+                        val sizeLabel = when {
+                            size >= 1_048_576 -> "%.1f MB".format(size / 1_048_576.0)
+                            size >= 1024 -> "${size / 1024} KB"
+                            else -> "$size B"
+                        }
+                        val openModifier = if (url.isNotEmpty()) Modifier.clickable { uriHandler.openUri(url) } else Modifier
+                        if (isVoice) {
+                            Row(modifier = openModifier, verticalAlignment = Alignment.CenterVertically) {
+                                Text("🎙", fontSize = 20.sp)
+                                Spacer(Modifier.width(6.dp))
+                                Column {
+                                    Text("Voice note", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    Text(sizeLabel, color = textColor.copy(alpha = 0.6f), fontSize = 11.sp)
+                                }
+                            }
+                        } else {
+                            Row(modifier = openModifier, verticalAlignment = Alignment.CenterVertically) {
+                                Text("📎", fontSize = 20.sp)
+                                Spacer(Modifier.width(6.dp))
+                                Column {
+                                    Text(name, color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    Text(sizeLabel, color = textColor.copy(alpha = 0.6f), fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(line.text, color = textColor, fontSize = 15.sp, lineHeight = 20.sp)
+                    }
                     if (line.edited) {
                         Text("edited", color = textColor.copy(alpha = 0.6f), fontSize = 10.sp, fontStyle = FontStyle.Italic)
                     }

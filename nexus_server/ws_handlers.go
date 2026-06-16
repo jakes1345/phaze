@@ -286,7 +286,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "auth_result", Error: "Too many 2FA attempts — wait a few minutes", Status: "totp_required"})
 				continue
 			}
-			if !s.verifyTOTP(msg.Sender, msg.TOTPCode) {
+			if !s.verifyTOTP(msg.Sender, msg.TOTPCode) && !s.consumeBackupCode(msg.Sender, msg.TOTPCode) {
 				metrics.authFailure.Add(1)
 				authTracker.recordTOTPFail(msg.Sender)
 				client.Send(NexusMessage{Type: "auth_result", Error: "2FA code required or invalid", Status: "totp_required"})
@@ -540,7 +540,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			authTracker.recordTOTPSuccess(username)
-			client.Send(NexusMessage{Type: "totp_result", Status: "enabled"})
+			codes, _ := s.generateBackupCodes(username)
+			client.Send(NexusMessage{Type: "totp_result", Status: "enabled", BackupCodes: codes})
 
 		case "disable_totp":
 			if username == "" {

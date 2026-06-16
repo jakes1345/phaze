@@ -107,7 +107,8 @@ type NexusMessage struct {
 
 	// KeyBackup carries the PIN-encrypted E2EE keypair blob between client
 	// and server. Used by key_backup_put / key_backup_get cases.
-	KeyBackup *KeyBackupPayload `json:"key_backup,omitempty"`
+	KeyBackup   *KeyBackupPayload `json:"key_backup,omitempty"`
+	BackupCodes []string          `json:"backup_codes,omitempty"` // one-time TOTP recovery codes, returned on TOTP enable
 }
 
 // ServerSummary is the slim view a client gets for the server-list pane.
@@ -575,6 +576,14 @@ func (s *NexusServer) initDB() {
 			iterations INTEGER NOT NULL DEFAULT 200000,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS totp_backup_codes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL,
+			code_hash TEXT NOT NULL,
+			used INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_totp_backup_user ON totp_backup_codes(username, used)`,
 		// M3: persisted IP blocklist — survives server restarts.
 		`CREATE TABLE IF NOT EXISTS blocked_ips (
 			ip TEXT PRIMARY KEY,
@@ -779,10 +788,21 @@ func (s *NexusServer) deleteAccount(username string) error {
 	}{
 		{`DELETE FROM friends WHERE user_a = ? OR user_b = ?`, []any{username, username}},
 		{`DELETE FROM offline_messages WHERE sender = ? OR recipient = ?`, []any{username, username}},
+		{`DELETE FROM dm_messages WHERE sender = ? OR recipient = ?`, []any{username, username}},
+		{`DELETE FROM dm_reactions WHERE username = ?`, []any{username}},
 		{`DELETE FROM conversation_members WHERE username = ?`, []any{username}},
 		{`DELETE FROM conversations WHERE created_by = ?`, []any{username}},
 		{`DELETE FROM blocks WHERE blocker = ? OR blocked = ?`, []any{username, username}},
 		{`DELETE FROM abuse_reports WHERE reporter = ?`, []any{username}},
+		{`DELETE FROM server_members WHERE username = ?`, []any{username}},
+		{`DELETE FROM channel_messages WHERE sender = ?`, []any{username}},
+		{`DELETE FROM channel_reactions WHERE username = ?`, []any{username}},
+		{`DELETE FROM story_views WHERE viewer = ?`, []any{username}},
+		{`DELETE FROM stories WHERE author = ?`, []any{username}},
+		{`DELETE FROM user_settings WHERE username = ?`, []any{username}},
+		{`DELETE FROM push_subscriptions WHERE username = ?`, []any{username}},
+		{`DELETE FROM key_backups WHERE username = ?`, []any{username}},
+		{`DELETE FROM totp_backup_codes WHERE username = ?`, []any{username}},
 		{`DELETE FROM session_tokens WHERE username = ?`, []any{username}},
 		{`DELETE FROM password_resets WHERE username = ?`, []any{username}},
 		{`DELETE FROM qr_login_tokens WHERE username = ?`, []any{username}},
