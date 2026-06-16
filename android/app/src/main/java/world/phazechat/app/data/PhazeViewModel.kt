@@ -1103,7 +1103,14 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             "server_info_result", "server_channels_updated" -> handleChannels(msg)
             "channel_history_result" -> handleChannelHistory(msg)
             "channel_msg" -> handleChannelMsg(msg)
-            "server_created", "server_joined" -> loadSpaces()
+            "server_result", "server_join_result" -> {
+                if (msg.status == "ok") loadSpaces()
+                else msg.error?.let { _actionStatus.value = it }
+            }
+            "server_leave_result" -> {
+                if (msg.status == "ok") loadSpaces()
+                else msg.error?.let { _actionStatus.value = it }
+            }
             "channel_result" -> { msg.error?.let { _actionStatus.value = "Channel: $it" } }
 
             // Search
