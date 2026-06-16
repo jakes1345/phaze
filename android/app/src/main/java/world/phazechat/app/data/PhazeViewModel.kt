@@ -1199,6 +1199,20 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 _callState.value = null
             }
 
+            "call_busy" -> {
+                callManager?.hangUp()
+                callManager = null
+                _callState.value = null
+                _actionStatus.value = "${msg.sender ?: "User"} is already in a call."
+            }
+
+            "call_error" -> {
+                callManager?.hangUp()
+                callManager = null
+                _callState.value = null
+                _actionStatus.value = msg.error ?: msg.body ?: "Call failed — user may be offline."
+            }
+
             "key_backup_result" -> handleKeyBackupResult(msg)
 
             "totp_result" -> when {
