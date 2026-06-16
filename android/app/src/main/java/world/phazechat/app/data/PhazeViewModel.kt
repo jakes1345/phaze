@@ -1044,6 +1044,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         put(sender, FriendInfo(sender, msg.status ?: "Offline", existing?.mood, msg.supporter || (existing?.supporter ?: false)))
                     }
                     msg.publicKey?.let { pk -> decodePublicKeyB64(pk)?.let { peerKeys[sender] = it } }
+                    if (msg.status == "Offline" && _callState.value?.peer == sender) {
+                        callManager?.hangUp()
+                        callManager = null
+                        _callState.value = null
+                    }
                 }
             }
 
