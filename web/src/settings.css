@@ -293,6 +293,28 @@
   color: var(--text);
 }
 
+.settings-backup-codes {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--list-hover);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius-md);
+}
+
+.settings-backup-codes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.settings-backup-code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  padding: 3px 0;
+}
+
 /* ── Mobile settings ─────────────────────────────────────────── */
 @media (max-width: 720px) {
   .settings-overlay { padding: 0; align-items: stretch; }

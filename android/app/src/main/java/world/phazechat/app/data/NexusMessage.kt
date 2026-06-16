@@ -44,6 +44,7 @@ data class NexusMessage(
     val rawServers: String? = null,
     val rawChannels: String? = null,
     val rawMessages: String? = null,
+    val rawDmHistory: String? = null,
     val backupCodes: List<String>? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -162,6 +163,7 @@ data class NexusMessage(
                 rawServers = j.optJSONArray("servers")?.toString(),
                 rawChannels = j.optJSONArray("channels")?.toString(),
                 rawMessages = j.optJSONArray("messages")?.toString(),
+                rawDmHistory = j.optJSONArray("dm_history")?.toString(),
                 backupCodes = backupCodes,
             )
         }

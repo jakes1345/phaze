@@ -61,6 +61,9 @@ export interface NexusMessage {
 
   // PIN-encrypted NaCl keypair backup blob (key_backup_put / key_backup).
   key_backup?: KeyBackup
+
+  // One-time TOTP recovery codes, returned once on 2FA enable.
+  backup_codes?: string[]
 }
 
 export interface KeyBackup {

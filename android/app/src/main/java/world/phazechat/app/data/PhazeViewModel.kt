@@ -382,7 +382,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         val body = if (peerPub != null) encryptForPeer(text, peerPub, keyPair.secretKey) else text
         val msgId = "${username}-${System.nanoTime()}"
         nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
-        appendChat(ChatLine(id = msgId, from = username, text = text, me = true))
+        appendChat(ChatLine(id = msgId, from = username, text = text, me = true, ts = System.currentTimeMillis()))
     }
 
     // ── User search ──────────────────────────────────────────────
@@ -456,8 +456,21 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val cr = getApplication<Application>().contentResolver
-                val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-                val bytes = cr.openInputStream(uri)?.readBytes() ?: return@launch
+                // Resolve a human-readable filename from the content URI
+                val fileName = run {
+                    var name: String? = null
+                    if (uri.scheme == "content") {
+                        cr.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                            if (c.moveToFirst()) name = c.getString(0)
+                        }
+                    }
+                    name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                }
+                val bytes = cr.openInputStream(uri)?.readBytes()
+                if (bytes == null) {
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { _actionStatus.value = "Could not read file" }
+                    return@launch
+                }
                 val boundary = "----PhazeUpload${System.currentTimeMillis()}"
                 val body = buildMultipart(boundary, fileName, bytes)
                 val url = java.net.URL("https://phazechat.world/api/v1/upload")
@@ -467,7 +480,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 conn.setRequestProperty("Authorization", "Bearer $token")
                 conn.doOutput = true
                 conn.outputStream.write(body)
-                if (conn.responseCode == 200) {
+                val code = conn.responseCode
+                if (code == 200) {
                     val resp = conn.inputStream.bufferedReader().readText()
                     val j = JSONObject(resp)
                     val fileUrl = j.optString("url", "")
@@ -475,21 +489,27 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     val size = j.optLong("size", bytes.size.toLong())
                     if (fileUrl.isNotEmpty()) {
                         val msgId = "${username}-${System.nanoTime()}"
-                        // Encode as phaze-file JSON so web/other clients can render it
                         val peerPub = peerKeys[peer]
                         val fileJson = JSONObject().apply {
                             put("url", fileUrl); put("name", fileName); put("mime", mime); put("size", size)
                         }
                         val plaintext = "phaze-file${fileJson}"
-                        val body = if (peerPub != null) encryptForPeer(plaintext, peerPub, keyPair.secretKey) else plaintext
-                        nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
+                        val encBody = if (peerPub != null) encryptForPeer(plaintext, peerPub, keyPair.secretKey) else plaintext
+                        nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = encBody, msgId = msgId))
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "file", fileUrl = fileUrl, fileName = fileName))
+                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "file", fileUrl = fileUrl, fileName = fileName, ts = System.currentTimeMillis()))
                         }
                     }
+                } else {
+                    val err = runCatching { conn.errorStream?.bufferedReader()?.readText() }.getOrNull() ?: ""
+                    Log.w(TAG, "sendFile HTTP $code: $err")
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { _actionStatus.value = "File upload failed ($code)" }
                 }
                 conn.disconnect()
-            } catch (e: Exception) { Log.w(TAG, "sendFile: ${e.message}") }
+            } catch (e: Exception) {
+                Log.w(TAG, "sendFile: ${e.message}")
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { _actionStatus.value = "File send error: ${e.message}" }
+            }
         }
     }
 
@@ -526,7 +546,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         val body = if (peerPub != null) encryptForPeer(plaintext, peerPub, keyPair.secretKey) else plaintext
                         nexus.send(NexusMessage(type = "msg", sender = username, recipient = peer, body = body, msgId = msgId))
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "voice", fileUrl = fileUrl, fileName = voiceFileName))
+                            appendChat(ChatLine(id = msgId, from = username, text = plaintext, me = true, kind = "voice", fileUrl = fileUrl, fileName = voiceFileName, ts = System.currentTimeMillis()))
                         }
                     }
                 }
@@ -1214,7 +1234,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private fun handleDmHistory(msg: NexusMessage) {
         val me = _me.value ?: return
         val peer = _selectedChat.value ?: return
-        val raw = msg.toJson().optString("raw_dm_history", null) ?: return
+        val raw = msg.rawDmHistory ?: return
         try {
             val arr = JSONArray(raw)
             val lines = mutableListOf<ChatLine>()

@@ -141,6 +141,8 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     // Load stories on login
     LaunchedEffect(me) { if (me != null) vm.loadStories() }
 
+    val context = LocalContext.current
+
     // Request POST_NOTIFICATIONS on Android 13+ once the user is logged in
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(me) {
@@ -153,8 +155,6 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             }
         }
     }
-
-    val context = LocalContext.current
 
     var scannedLinkCode by remember { mutableStateOf("") }
 
