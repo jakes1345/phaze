@@ -42,6 +42,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [totpCode, setTotpCode] = useState('')
   const [totpMsg, setTotpMsg] = useState('')
   const [totpPending, setTotpPending] = useState(false)
+  const [totpBackupCodes, setTotpBackupCodes] = useState<string[] | null>(null)
 
   // Privacy
   const [blocks, setBlocks] = useState<string[]>([])
@@ -104,6 +105,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
           setTotpPending(false)
           setTotpUri('')
           setTotpCode('')
+          if (msg.backup_codes?.length) setTotpBackupCodes(msg.backup_codes)
         } else if (msg.status === 'disabled') {
           setTotpMsg('2FA disabled.')
           setTotpPending(false)
@@ -476,6 +478,18 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
                 <div className="settings-row">
                   <button className="settings-btn" onClick={enableTotp}>Enable 2FA</button>
                   <button className="settings-btn-secondary" onClick={disableTotp}>Disable 2FA</button>
+                </div>
+              )}
+              {totpBackupCodes && (
+                <div className="settings-backup-codes">
+                  <p className="settings-label" style={{ fontWeight: 600, marginBottom: 4 }}>Recovery codes</p>
+                  <p className="settings-empty" style={{ marginBottom: 10 }}>Save these somewhere safe. Each can be used once if you lose your authenticator.</p>
+                  <div className="settings-backup-codes-grid">
+                    {totpBackupCodes.map((c) => (
+                      <code key={c} className="settings-backup-code">{c}</code>
+                    ))}
+                  </div>
+                  <button className="settings-btn-secondary" style={{ marginTop: 10 }} onClick={() => setTotpBackupCodes(null)}>I've saved these</button>
                 </div>
               )}
             </div>

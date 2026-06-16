@@ -1076,6 +1076,19 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   backdrop-filter: blur(8px);
 }
 .call-btn-share:hover { background: rgba(255, 255, 255, 0.18); }
+.call-btn-mute {
+  padding: 0.6rem 1.4rem;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+.call-btn-mute:hover { background: rgba(255, 255, 255, 0.18); }
+.call-btn-mute.active { background: rgba(239, 68, 68, 0.7); }
 
 /* ── Friends list avatar — larger, with presence glow ─────────── */
 .avatar {
@@ -1985,6 +1998,11 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   .auth-features { gap: 1rem; }
 }
 
+@media (max-height: 820px) {
+  .hub-auth { justify-content: flex-start; padding-top: 1.5rem; min-height: unset; }
+  .auth-hero { display: none; }
+}
+
 /* ── Hub-specific layout: when logged in, show DM hub ──────────── */
 
 /* Auth section — landing page feel */
@@ -1996,6 +2014,7 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   min-height: 70vh;
   padding: 2rem;
   gap: 1.5rem;
+  overflow-y: auto;
 }
 .auth-hero {
   display: flex;
@@ -2006,10 +2025,11 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   animation: fadeIn 0.5s ease;
 }
 .auth-hero-logo {
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
   margin-bottom: 0.5rem;
-  filter: drop-shadow(0 0 40px rgba(134, 59, 255, 0.3));
+  border-radius: 20px;
+  filter: drop-shadow(0 0 20px rgba(134, 59, 255, 0.5)) drop-shadow(0 4px 12px rgba(0,0,0,0.4));
 }
 .auth-hero-title {
   margin: 0;
@@ -2423,7 +2443,272 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   padding: 0.75rem 0.85rem 0.3rem;
 }
 
-/* Snowflakes — pure-CSS seasonal overlay (zero deps). Toggle in header. */
+/* ── Desktop Wails title bar ── */
+.desktop-titlebar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 42px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 0 14px;
+  background: linear-gradient(100deg, #0f0520 0%, #1e0745 35%, #0d1333 65%, #0f0520 100%);
+  background-size: 300% 100%;
+  animation: dtb-gradient 8s ease infinite;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.25);
+  user-select: none;
+}
+@keyframes dtb-gradient {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.desktop-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.dtb-logo-img {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.7);
+  animation: dtb-logo-pulse 2.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes dtb-logo-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(124, 58, 237, 0.7); }
+  50%       { box-shadow: 0 0 16px rgba(168, 85, 247, 1); }
+}
+.desktop-titlebar-name {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  background: linear-gradient(90deg, #e879f9, #a78bfa, #60a5fa);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: dtb-text-shimmer 4s ease infinite;
+}
+@keyframes dtb-text-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.desktop-titlebar-controls {
+  display: flex;
+  height: 100%;
+}
+.dtb-btn {
+  width: 46px;
+  height: 42px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.45);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.dtb-btn:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
+.dtb-close:hover { background: #dc2626 !important; color: #fff; }
+.desktop-app {
+  padding-top: 42px;
+  background: #0f0520; /* fill gap with title bar colour — no black void */
+}
+.desktop-app .top {
+  top: 42px;
+  background: linear-gradient(90deg, rgba(12, 4, 28, 0.97) 0%, rgba(18, 6, 42, 0.97) 100%);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+}
+/* Title bar already shows the brand — hide the duplicate in the sticky header */
+.desktop-app .top .brand { display: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   PHAZE VISUAL UPGRADE — color, animation, depth
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Auth page: animated mesh gradient background ── */
+.app.theme-dark .hub-auth,
+.app:not(.theme-light):not(.theme-skype7) .hub-auth {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%,   rgba(124, 58, 237, 0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 100%,  rgba(99,  102, 241, 0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 50% 50%,  rgba(168, 85, 247, 0.08) 0%, transparent 70%);
+  animation: auth-bg-shift 10s ease-in-out infinite alternate;
+}
+@keyframes auth-bg-shift {
+  0%   { background-position: 0% 0%, 100% 100%, 50% 50%; }
+  100% { background-position: 10% 10%, 90% 90%, 55% 45%; }
+}
+
+/* Auth panel: glass with purple tint */
+.app.theme-dark .hub-auth .panel,
+.app:not(.theme-light):not(.theme-skype7) .hub-auth .panel {
+  background: rgba(15, 5, 30, 0.75);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.08), 0 32px 80px rgba(0, 0, 0, 0.6), 0 0 60px rgba(124, 58, 237, 0.08);
+}
+
+/* Auth hero title: shimmer animation */
+.auth-hero-title {
+  background: linear-gradient(110deg, var(--brand) 20%, #c084fc 45%, #818cf8 60%, var(--brand) 80%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: hero-shimmer 4s linear infinite;
+}
+@keyframes hero-shimmer {
+  0%   { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+/* ── Sidebar: purple-tinted glass ── */
+@media (min-width: 960px) {
+  .app.theme-dark .hub-sidebar,
+  .app:not(.theme-light):not(.theme-skype7) .hub-sidebar {
+    background: linear-gradient(180deg, rgba(15, 5, 35, 0.98) 0%, rgba(10, 5, 25, 0.98) 100%);
+    border-right: 1px solid rgba(124, 58, 237, 0.15);
+  }
+}
+
+/* ── Top bar: colored in dark mode ── */
+.app.theme-dark .top,
+.app:not(.theme-light):not(.theme-skype7) .top {
+  background: linear-gradient(90deg, rgba(10, 5, 25, 0.95) 0%, rgba(15, 8, 35, 0.95) 100%);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ── Chat area: subtle depth ── */
+.app.theme-dark .hub-chat-view,
+.app:not(.theme-light):not(.theme-skype7) .hub-chat-view {
+  background: linear-gradient(160deg, rgba(8, 4, 20, 1) 0%, rgba(5, 3, 15, 1) 100%);
+}
+
+/* ── Message bubbles: more depth + glow on outgoing ── */
+.bubble.me {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%);
+  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.35), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.app.theme-dark .bubble:not(.me),
+.app:not(.theme-light):not(.theme-skype7) .bubble:not(.me) {
+  background: rgba(30, 20, 55, 0.9);
+  border: 1px solid rgba(124, 58, 237, 0.12);
+}
+
+/* Bubble entrance animation */
+.bubble-row {
+  animation: bubble-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Online presence dot: pulse ── */
+.avatar-dot {
+  transition: background 0.3s;
+}
+.avatar-dot[data-online] {
+  animation: presence-pulse 2.5s ease-in-out infinite;
+}
+@keyframes presence-pulse {
+  0%, 100% { box-shadow: 0 0 0 2.5px var(--chrome), 0 0 0 4px rgba(34, 197, 94, 0); }
+  50%       { box-shadow: 0 0 0 2.5px var(--chrome), 0 0 0 5px rgba(34, 197, 94, 0.35); }
+}
+
+/* ── Unread badge: glow ── */
+.unread-badge {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.6);
+  animation: badge-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes badge-pop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+/* ── Friend row: hover glow ── */
+.app.theme-dark button.friend-row:hover,
+.app:not(.theme-light):not(.theme-skype7) button.friend-row:hover {
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.12), rgba(99, 102, 241, 0.06));
+  border-radius: var(--radius-md);
+}
+.app.theme-dark button.friend-row.active,
+.app:not(.theme-light):not(.theme-skype7) button.friend-row.active {
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.18), rgba(99, 102, 241, 0.1));
+  border-left: 2px solid #7c3aed;
+}
+
+/* ── Input fields: glass with purple focus ── */
+.app.theme-dark .form input,
+.app.theme-dark .draft-wrap input,
+.app.theme-dark .draft-wrap textarea,
+.app:not(.theme-light):not(.theme-skype7) .form input,
+.app:not(.theme-light):not(.theme-skype7) .draft-wrap input,
+.app:not(.theme-light):not(.theme-skype7) .draft-wrap textarea {
+  background: rgba(20, 10, 40, 0.8);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.app.theme-dark .form input:focus,
+.app.theme-dark .draft-wrap input:focus,
+.app.theme-dark .draft-wrap textarea:focus,
+.app:not(.theme-light):not(.theme-skype7) .form input:focus,
+.app:not(.theme-light):not(.theme-skype7) .draft-wrap input:focus,
+.app:not(.theme-light):not(.theme-skype7) .draft-wrap textarea:focus {
+  border-color: rgba(124, 58, 237, 0.6);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12), 0 0 20px rgba(124, 58, 237, 0.08);
+  outline: none;
+}
+
+/* ── Send row: glass footer ── */
+.app.theme-dark .row.send,
+.app:not(.theme-light):not(.theme-skype7) .row.send {
+  background: rgba(8, 4, 20, 0.9);
+  border-top: 1px solid rgba(124, 58, 237, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Chat header bar: glass ── */
+.app.theme-dark .chat-header-bar,
+.app:not(.theme-light):not(.theme-skype7) .chat-header-bar {
+  background: rgba(10, 5, 25, 0.92);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ── Home hero (no chat selected): more colorful ── */
+.app.theme-dark .hub-home-hero,
+.app:not(.theme-light):not(.theme-skype7) .hub-home-hero {
+  background: radial-gradient(ellipse 70% 50% at 50% 40%, rgba(124, 58, 237, 0.1) 0%, transparent 70%);
+}
+
+/* ── Section labels: colored ── */
+.app.theme-dark .sidebar-section-label,
+.app:not(.theme-light):not(.theme-skype7) .sidebar-section-label {
+  color: rgba(167, 139, 250, 0.6);
+  letter-spacing: 0.1em;
+}
+
+/* ── Scrollbars: purple tint ── */
+.app.theme-dark ::-webkit-scrollbar { width: 4px; height: 4px; }
+.app.theme-dark ::-webkit-scrollbar-track { background: transparent; }
+.app.theme-dark ::-webkit-scrollbar-thumb { background: rgba(124, 58, 237, 0.3); border-radius: 2px; }
+.app.theme-dark ::-webkit-scrollbar-thumb:hover { background: rgba(124, 58, 237, 0.55); }
+
+/* ── Snowflakes — pure-CSS seasonal overlay (zero deps). Toggle in header. */
 .snow-layer { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
 .snow-layer i {
   position: absolute; top: -10px; display: block; color: #fff;
