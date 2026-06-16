@@ -60,18 +60,23 @@ function isPeerMuted(peer: string): boolean {
 const THEME_KEY = 'phaze_theme_v1'
 const SNOW_KEY = 'phaze_snow_v1'
 
+const SNOW_FLAKES = Array.from({ length: 40 }, (_, i) => ({
+  i,
+  left: Math.random() * 100,
+  dur: 6 + Math.random() * 8,
+  delay: -Math.random() * 14,
+  size: 0.6 + Math.random() * 1.1,
+}))
+
 /** Pure-CSS seasonal snow overlay (zero deps). */
 function Snowflakes() {
-  const flakes = Array.from({ length: 40 }, (_, i) => {
-    const left = Math.random() * 100
-    const dur = 6 + Math.random() * 8
-    const delay = -Math.random() * 14
-    const size = 0.6 + Math.random() * 1.1
-    return (
-      <i key={i} style={{ left: `${left}vw`, animationDuration: `${dur}s`, animationDelay: `${delay}s`, fontSize: `${size}rem` }}>❄</i>
-    )
-  })
-  return <div className="snow-layer" aria-hidden="true">{flakes}</div>
+  return (
+    <div className="snow-layer" aria-hidden="true">
+      {SNOW_FLAKES.map(({ i, left, dur, delay, size }) => (
+        <i key={i} style={{ left: `${left}vw`, animationDuration: `${dur}s`, animationDelay: `${delay}s`, fontSize: `${size}rem` }}>❄</i>
+      ))}
+    </div>
+  )
 }
 const BACKUP_NAG_KEY = 'phaze_backup_nag_dismissed_at_v1'
 const BACKUP_NAG_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
