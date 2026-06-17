@@ -2738,9 +2738,16 @@ func (s *NexusServer) adminLoginHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	role := s.userRole(body.Username)
+	// is_admin=1 accounts created via seed-admin count as super_admin
+	// even if the role column wasn't set by an older version of the tool.
 	if roleRank(role) < roleRank("helper") {
-		http.Error(w, "not a staff account", http.StatusForbidden)
-		return
+		var isAdmin int
+		s.DB.QueryRow(`SELECT COALESCE(is_admin,0) FROM users WHERE username=?`, body.Username).Scan(&isAdmin)
+		if isAdmin != 1 {
+			http.Error(w, "not a staff account", http.StatusForbidden)
+			return
+		}
+		role = "super_admin"
 	}
 	tok, err := s.issueAdminSessionToken(body.Username)
 	if err != nil {
