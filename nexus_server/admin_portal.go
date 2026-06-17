@@ -10,6 +10,7 @@ const adminPortalHTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phaze · Command Center</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif; background: #000; color: #f5f5f7; }
@@ -374,7 +375,7 @@ function renderContent() {
   }
 
   if (STATE.tab === 'reports') {
-    if (!STATE.reports.length && STATE.reports !== null) { el.innerHTML = '<div class="empty">Loading…</div>'; loadReports(); return; }
+    if (STATE.reports !== null && !STATE.reports.length) { el.innerHTML = '<div class="empty">Loading…</div>'; loadReports(); return; }
     if (!STATE.reports.length) { el.innerHTML = '<h1 class="page-title">Reports</h1><div class="empty">No reports.</div>'; return; }
     el.innerHTML = '<h1 class="page-title">Reports</h1><p class="page-sub">' + STATE.reports.length + ' total</p>' +
       '<table class="tbl"><thead><tr><th>ID</th><th>Reporter</th><th>Subject</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>' +
@@ -405,7 +406,7 @@ function renderContent() {
   }
 
   if (STATE.tab === 'pending') {
-    if (!STATE.pending.length && STATE.pending !== null) { el.innerHTML = '<div class="empty">Loading…</div>'; loadPending(); return; }
+    if (STATE.pending !== null && !STATE.pending.length) { el.innerHTML = '<div class="empty">Loading…</div>'; loadPending(); return; }
     if (!STATE.pending.length) { el.innerHTML = '<h1 class="page-title">Pending Verifications</h1><div class="empty">None in the last 24h.</div>'; return; }
     el.innerHTML = '<h1 class="page-title">Pending Verifications</h1><p class="page-sub">' + STATE.pending.length + ' waiting</p>' +
       '<table class="tbl"><thead><tr><th>Username</th><th>Email</th><th>Code</th><th>Created</th></tr></thead><tbody>' +

@@ -2480,11 +2480,11 @@ func (s *NexusServer) adminPendingVerificationsHandler(w http.ResponseWriter, r 
 		return
 	}
 	defer rows.Close()
-	var out []map[string]string
+	out := []map[string]string{}
 	for rows.Next() {
 		var u, e, c, t string
 		if err := rows.Scan(&u, &e, &c, &t); err == nil {
-			out = append(out, map[string]string{"username": u, "email": e, "code": c, "created_at": t})
+			out = append(out, map[string]string{"username": u, "email": e, "verification_code": c, "created_at": t})
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
