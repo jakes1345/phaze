@@ -1853,6 +1853,27 @@ func (s *NexusServer) streamList() []string {
 	return out
 }
 
+// streamAreParticipants returns true when a and b are in the same stream
+// (one is the broadcaster, the other is a registered viewer). Used to gate
+// stream_signal so arbitrary users cannot inject WebRTC signals.
+func (s *NexusServer) streamAreParticipants(a, b string) bool {
+	s.VoiceRoomsMu.RLock()
+	defer s.VoiceRoomsMu.RUnlock()
+	// a is broadcaster, b is viewer
+	if st, ok := s.Streams[a]; ok {
+		if _, in := st.Viewers[b]; in {
+			return true
+		}
+	}
+	// b is broadcaster, a is viewer
+	if st, ok := s.Streams[b]; ok {
+		if _, in := st.Viewers[a]; in {
+			return true
+		}
+	}
+	return false
+}
+
 // streamBroadcastList pushes the live list to every connected client so a
 // "Live now" banner can appear in real time.
 func (s *NexusServer) streamBroadcastList() {
@@ -3051,8 +3072,12 @@ func (s *NexusServer) adminGeoHandler(w http.ResponseWriter, r *http.Request) {
 
 // adminPortalHandler serves the single-page HTML admin dashboard.
 func (s *NexusServer) adminPortalHandler(w http.ResponseWriter, r *http.Request) {
+	writeSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	// Admin portal uses inline scripts so we allow 'unsafe-inline' here only.
+	// All API endpoints use a stricter 'none' policy via the rateLimit middleware.
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
 	w.Write([]byte(adminPortalHTML))
 }
 
