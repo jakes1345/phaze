@@ -376,9 +376,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         _selectedChat.value = peer
         _unread.value = _unread.value.toMutableMap().apply { remove(peer) }
         _chatLog.value = emptyList()
-        _me.value?.let {
-            nexus.send(NexusMessage(type = "dm_history", sender = it, recipient = peer))
-            nexus.send(NexusMessage(type = "read_receipt", sender = it, recipient = peer, body = peer))
+        _me.value?.let { me ->
+            nexus.send(NexusMessage(type = "dm_history", sender = me, recipient = peer))
+            nexus.send(NexusMessage(type = "read_receipt", sender = me, recipient = peer, body = peer))
+            if (!peerKeys.containsKey(peer)) {
+                nexus.send(NexusMessage(type = "key_request", sender = me, recipient = peer))
+            }
         }
     }
 
@@ -1062,6 +1065,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            "friend_removed" -> {
+                msg.sender?.let { s ->
+                    _friends.value = _friends.value.toMutableMap().apply { remove(s) }
+                }
+            }
+
             "pending_requests" -> { _pending.value = msg.results ?: emptyList() }
 
             "msg" -> {
@@ -1136,6 +1145,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 else msg.error?.let { _actionStatus.value = it }
             }
             "channel_result" -> { msg.error?.let { _actionStatus.value = "Channel: $it" } }
+            "channel_msg_result" -> { msg.error?.let { _actionStatus.value = it } }
 
             // Search
             "search_results" -> _searchResults.value = msg.results ?: emptyList()
@@ -1189,8 +1199,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
             // Live edit / delete / react relays for DMs
             "read_receipt" -> {
-                // Mark all our sent messages to this peer as seen
-                _chatLog.value = _chatLog.value.map { if (it.me && !it.seen) it.copy(seen = true) else it }
+                if (msg.sender == _selectedChat.value) {
+                    _chatLog.value = _chatLog.value.map { if (it.me && !it.seen) it.copy(seen = true) else it }
+                }
             }
             "msg_edit" -> {
                 val id = msg.msgId ?: return
@@ -1339,7 +1350,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 val r = arr.getJSONObject(i)
                 val sender = r.getString("sender")
                 val isMe = sender == me
-                var text = r.optString("body", "")
+                val isDeleted = r.optBoolean("deleted", false)
+                val isEdited = r.optBoolean("edited", false)
+                var text = if (isDeleted) "" else r.optString("body", "")
                 val pk = peerKeys[if (isMe) peer else sender]
                 if (pk != null && text.isNotEmpty()) {
                     text = try { decryptFromPeer(text, pk, keyPair.secretKey) } catch (_: Exception) { "[Encrypted]" }
@@ -1347,6 +1360,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 lines.add(ChatLine(
                     id = r.optString("msg_id", "$i"),
                     from = sender, text = text, me = isMe,
+                    edited = isEdited,
+                    deleted = isDeleted,
                     ts = try {
                         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
                         sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")

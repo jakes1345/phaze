@@ -1014,6 +1014,12 @@ export default function App() {
           }
           break
 
+        case 'friend_removed':
+          if (msg.sender) {
+            setFriends((f) => { const n = { ...f }; delete n[msg.sender!]; return n })
+          }
+          break
+
         case 'register_result':
           if (msg.status === 'ok') {
             // Anonymous registration — no email, no verify step. Sign in straight away.
@@ -1283,7 +1289,9 @@ export default function App() {
 
         case 'block_result':
           if (msg.status === 'blocked' && msg.recipient) {
-            setErr(`Blocked ${msg.recipient}.`)
+            const blocked = msg.recipient
+            setFriends((f) => { const n = { ...f }; delete n[blocked]; return n })
+            if (selectedRef.current === blocked) { setSelected(null); setLog([]) }
           }
           break
 
