@@ -235,27 +235,29 @@ func (s *NexusServer) bmcWebhookHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// BMC payload shape (covers both donation and membership events).
+	// BMC payload — amount is a JSON number, everything else is a string.
 	var payload struct {
-		Type  string `json:"type"`
-		Data  struct {
-			SupporterName  string `json:"supporter_name"`
-			SupporterEmail string `json:"supporter_email"`
-			Amount         string `json:"amount"`
-			Message        string `json:"message"`
+		Type string `json:"type"`
+		Data struct {
+			SupporterName  string          `json:"supporter_name"`
+			SupporterEmail string          `json:"supporter_email"`
+			Amount         json.Number     `json:"amount"`
+			Message        string          `json:"message"`
+			SupportNote    string          `json:"support_note"`
 		} `json:"data"`
-		// Some BMC webhook versions are flat (no data wrapper).
-		SupporterName  string `json:"supporter_name"`
-		SupporterEmail string `json:"supporter_email"`
-		Amount         string `json:"amount"`
-		Message        string `json:"message"`
+		// Flat variants (older BMC webhook versions).
+		SupporterName  string      `json:"supporter_name"`
+		SupporterEmail string      `json:"supporter_email"`
+		Amount         json.Number `json:"amount"`
+		Message        string      `json:"message"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("[bmc] json parse error: %v — body: %s", err, string(body[:min(len(body), 512)]))
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 
-	// Normalise — handle both flat and nested payload shapes.
+	// Normalise — handle both nested (data.*) and flat payload shapes.
 	name := payload.Data.SupporterName
 	if name == "" {
 		name = payload.SupporterName
@@ -264,11 +266,14 @@ func (s *NexusServer) bmcWebhookHandler(w http.ResponseWriter, r *http.Request) 
 	if email == "" {
 		email = strings.ToLower(strings.TrimSpace(payload.SupporterEmail))
 	}
-	amount := payload.Data.Amount
-	if amount == "" {
-		amount = payload.Amount
+	amount := payload.Data.Amount.String()
+	if amount == "" || amount == "0" {
+		amount = payload.Amount.String()
 	}
-	message := payload.Data.Message
+	message := payload.Data.SupportNote
+	if message == "" {
+		message = payload.Data.Message
+	}
 	if message == "" {
 		message = payload.Message
 	}
