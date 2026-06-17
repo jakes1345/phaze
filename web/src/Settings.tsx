@@ -117,9 +117,14 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
         if (msg.results) setBlocks(msg.results)
         break
       case 'block_result':
-        if (msg.status === 'unblocked' && msg.recipient) {
+        if (msg.status === 'blocked' && msg.recipient) {
+          setBlocks((b) => b.includes(msg.recipient!) ? b : [...b, msg.recipient!])
+          setBlockMsg(`Blocked ${msg.recipient}.`)
+        } else if (msg.status === 'unblocked' && msg.recipient) {
           setBlocks((b) => b.filter((x) => x !== msg.recipient))
           setBlockMsg(`Unblocked ${msg.recipient}.`)
+        } else if (msg.error) {
+          setBlockMsg(msg.error)
         }
         break
       case 'phone_link_result':
