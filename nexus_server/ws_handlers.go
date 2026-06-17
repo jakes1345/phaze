@@ -627,7 +627,12 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "change_password_result", Error: "Database error"})
 				continue
 			}
-			log.Printf("[security] %s changed password", username)
+			// Revoke all OTHER sessions — stolen tokens can't be reused after
+			// the user changes their password. Keep the current session so the
+			// user isn't immediately logged out on the device they changed it on.
+			s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE username = ? AND token != ?",
+				username, msg.QRToken)
+			log.Printf("[security] %s changed password, revoked all other sessions", username)
 			client.Send(NexusMessage{Type: "change_password_result", Status: "ok"})
 
 		case "qr_login_create":
