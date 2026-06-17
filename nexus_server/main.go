@@ -1255,6 +1255,10 @@ func (s *NexusServer) getFriends(username string) []string {
 }
 
 func (s *NexusServer) sendFriendRequest(from, to string) error {
+	// Blocked users cannot send friend requests (either direction).
+	if s.isBlocked(to, from) || s.isBlocked(from, to) {
+		return nil
+	}
 	// Check if already exists in either direction
 	var count int
 	s.DB.QueryRow("SELECT COUNT(*) FROM friends WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",
@@ -1525,7 +1529,9 @@ func (s *NexusServer) sendWebPush(recipient, sender, preview string) {
 	}
 	defer rows.Close()
 	msg := preview
-	if len(msg) > 80 {
+	if strings.HasPrefix(msg, "E2EE:") || strings.HasPrefix(msg, "phaze-file:") {
+		msg = "New encrypted message"
+	} else if len(msg) > 80 {
 		msg = msg[:80] + "…"
 	}
 	payload, _ := json.Marshal(map[string]string{
@@ -3357,7 +3363,9 @@ func (s *NexusServer) sendFCMPush(recipient, sender, preview string) {
 	}
 	defer rows.Close()
 	body := preview
-	if len(body) > 100 {
+	if strings.HasPrefix(body, "E2EE:") || strings.HasPrefix(body, "phaze-file:") {
+		body = "New encrypted message"
+	} else if len(body) > 100 {
 		body = body[:100] + "…"
 	}
 	for rows.Next() {
@@ -3576,7 +3584,7 @@ func main() {
 			// M1: Content-Security-Policy for the React SPA.
 			w.Header().Set("Content-Security-Policy",
 				"default-src 'self'; "+
-					"connect-src 'self' wss://phazechat.world wss://*.phazechat.world https://api.github.com; "+
+					"connect-src 'self' wss://phazechat.world wss://*.phazechat.world; "+
 					"img-src 'self' data: blob:; "+
 					"media-src 'self' blob:; "+
 					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
