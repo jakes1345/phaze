@@ -154,7 +154,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
 			if err != nil {
 				authTracker.recordFail(client.IP, "")
-				client.Send(NexusMessage{Type: "register_result", Error: err.Error()})
+				// Sanitize UNIQUE constraint errors so attackers cannot enumerate
+				// existing usernames/emails via raw SQLite column names.
+				regErr := err.Error()
+				if strings.Contains(regErr, "UNIQUE") || strings.Contains(regErr, "unique") {
+					if strings.Contains(regErr, "username") {
+						regErr = "Username already taken"
+					} else if strings.Contains(regErr, "email") {
+						regErr = "Email already registered"
+					} else {
+						regErr = "Account already exists"
+					}
+				}
+				client.Send(NexusMessage{Type: "register_result", Error: regErr})
 			} else {
 				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
 				log.Printf("New user registered: %s (%s) from %s", msg.Sender, msg.Email, client.IP)
@@ -1146,14 +1158,22 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "convo_error", Error: "No eligible members — add friends first"})
 				continue
 			}
-			if err := s.createConversation(msg.ConvoID, msg.ConvoName, username, eligible); err != nil {
-				client.Send(NexusMessage{Type: "convo_error", Error: err.Error()})
+			// Generate convo ID server-side so clients cannot pick an existing
+			// ID to hijack or inspect another group chat.
+			convoID, err := randHex(16)
+			if err != nil {
+				client.Send(NexusMessage{Type: "convo_error", Error: "server error"})
 				continue
 			}
-			members := s.conversationMembers(msg.ConvoID)
+			if err := s.createConversation(convoID, msg.ConvoName, username, eligible); err != nil {
+				log.Printf("[convo_create] db: %v", err)
+				client.Send(NexusMessage{Type: "convo_error", Error: "could not create conversation"})
+				continue
+			}
+			members := s.conversationMembers(convoID)
 			notice := NexusMessage{
 				Type:      "convo_created",
-				ConvoID:   msg.ConvoID,
+				ConvoID:   convoID,
 				ConvoName: msg.ConvoName,
 				Members:   members,
 				Sender:    username,
@@ -1165,7 +1185,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 			s.Mu.RUnlock()
-			log.Printf("Conversation %s (%s) created by %s with %d members", msg.ConvoID, msg.ConvoName, username, len(members))
+			log.Printf("Conversation %s (%s) created by %s with %d members", convoID, msg.ConvoName, username, len(members))
 
 		case "convo_msg":
 			if username == "" || msg.ConvoID == "" {
@@ -1461,31 +1481,35 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				if _, err := tx.Exec(
 					`INSERT INTO servers (id, name, description, owner, visibility, invite_code) VALUES (?,?,?,?,?,?)`,
 					id, name, strings.TrimSpace(msg.Topic), username, visibility, invite); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "create server: " + err.Error()})
+					log.Printf("[server_create] insert: %v", err)
+					client.Send(NexusMessage{Type: "server_result", Error: "could not create server"})
 					return
 				}
 				if _, err := tx.Exec(
 					`INSERT INTO server_members (server_id, username, role) VALUES (?, ?, 'owner')`,
 					id, username); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "add owner: " + err.Error()})
+					log.Printf("[server_create] add owner: %v", err)
+					client.Send(NexusMessage{Type: "server_result", Error: "could not create server"})
 					return
 				}
 				// Bootstrap channels every server has from day one.
 				for i, ch := range []string{"general", "random"} {
 					cid, err := randHex(12)
 					if err != nil {
-						client.Send(NexusMessage{Type: "server_result", Error: "rand failure"})
+						client.Send(NexusMessage{Type: "server_result", Error: "server error"})
 						return
 					}
 					if _, err := tx.Exec(
 						`INSERT INTO channels (id, server_id, name, kind, position) VALUES (?,?,?, 'text', ?)`,
 						cid, id, ch, i); err != nil {
-						client.Send(NexusMessage{Type: "server_result", Error: "channel: " + err.Error()})
+						log.Printf("[server_create] channel: %v", err)
+						client.Send(NexusMessage{Type: "server_result", Error: "could not create server"})
 						return
 					}
 				}
 				if err := tx.Commit(); err != nil {
-					client.Send(NexusMessage{Type: "server_result", Error: "commit: " + err.Error()})
+					log.Printf("[server_create] commit: %v", err)
+					client.Send(NexusMessage{Type: "server_result", Error: "could not create server"})
 					return
 				}
 				channels, _ := s.listServerChannels(id)
@@ -1513,7 +1537,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			servers, err := s.listUserServers(username)
 			if err != nil {
-				client.Send(NexusMessage{Type: "server_list_result", Error: "db: " + err.Error()})
+				log.Printf("[server_list] %v", err)
+				client.Send(NexusMessage{Type: "server_list_result", Error: "could not load servers"})
 				continue
 			}
 			client.Send(NexusMessage{Type: "server_list_result", Status: "ok", Servers: servers})
@@ -1524,7 +1549,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			servers, err := s.listPublicServers(username)
 			if err != nil {
-				client.Send(NexusMessage{Type: "server_discover_result", Error: "db: " + err.Error()})
+				log.Printf("[server_discover] %v", err)
+				client.Send(NexusMessage{Type: "server_discover_result", Error: "could not load servers"})
 				continue
 			}
 			client.Send(NexusMessage{Type: "server_discover_result", Status: "ok", Servers: servers})
@@ -1558,7 +1584,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if _, err := s.DB.Exec(
 				`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`,
 				serverID, username); err != nil {
-				client.Send(NexusMessage{Type: "server_join_result", Error: "db: " + err.Error()})
+				log.Printf("[server_join] %v", err)
+				client.Send(NexusMessage{Type: "server_join_result", Error: "could not join server"})
 				continue
 			}
 			channels, _ := s.listServerChannels(serverID)
@@ -1589,7 +1616,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if _, err := s.DB.Exec(
 				`DELETE FROM server_members WHERE server_id = ? AND username = ?`,
 				msg.ServerID, username); err != nil {
-				client.Send(NexusMessage{Type: "server_leave_result", Error: "db: " + err.Error()})
+				log.Printf("[server_leave] %v", err)
+				client.Send(NexusMessage{Type: "server_leave_result", Error: "could not leave server"})
 				continue
 			}
 			client.Send(NexusMessage{Type: "server_leave_result", Status: "ok", ServerID: msg.ServerID})
@@ -1686,7 +1714,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				`INSERT INTO channel_messages (channel_id, sender, body) VALUES (?,?,?)`,
 				msg.ChannelID, username, body)
 			if err != nil {
-				client.Send(NexusMessage{Type: "channel_msg_result", Error: "db: " + err.Error()})
+				log.Printf("[channel_msg] %v", err)
+				client.Send(NexusMessage{Type: "channel_msg_result", Error: "could not send message"})
 				continue
 			}
 			id, _ := res.LastInsertId()
@@ -1718,7 +1747,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			history, err := s.channelHistory(msg.ChannelID, msg.HistoryFrom, 50)
 			if err != nil {
-				client.Send(NexusMessage{Type: "channel_history_result", Error: "db: " + err.Error()})
+				log.Printf("[channel_history] %v", err)
+				client.Send(NexusMessage{Type: "channel_history_result", Error: "could not load history"})
 				continue
 			}
 			client.Send(NexusMessage{
@@ -1883,7 +1913,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if _, err := s.DB.Exec(`UPDATE users SET email = '' WHERE username = ?`, username); err != nil {
-				client.Send(NexusMessage{Type: "purge_email_result", Error: "db: " + err.Error()})
+				log.Printf("[purge_email] %v", err)
+				client.Send(NexusMessage{Type: "purge_email_result", Error: "could not remove email"})
 				continue
 			}
 			log.Printf("[privacy] %s purged email", username)
@@ -1896,7 +1927,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			rows, err := s.DB.Query(`SELECT key, value FROM user_settings WHERE username = ?`, username)
 			if err != nil {
-				client.Send(NexusMessage{Type: "settings_result", Error: "db: " + err.Error()})
+				log.Printf("[settings_get] %v", err)
+				client.Send(NexusMessage{Type: "settings_result", Error: "could not load settings"})
 				continue
 			}
 			settings := map[string]string{}
