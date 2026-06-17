@@ -648,8 +648,6 @@ func (s *NexusServer) initDB() {
 			matched_username TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`ALTER TABLE users ADD COLUMN microsoft_oid TEXT DEFAULT ''`,
-		`CREATE INDEX IF NOT EXISTS idx_users_ms_oid ON users(microsoft_oid)`,
 		`CREATE TABLE IF NOT EXISTS skype_import_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT NOT NULL,
@@ -4106,11 +4104,6 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	// Buy Me a Coffee webhook — called by BMC on every new payment.
 	http.HandleFunc("/api/v1/webhooks/buymeacoffee", rateLimit(server.bmcWebhookHandler))
 	http.HandleFunc("/api/v1/admin/bmc-payments", adminIPGate(rateLimit(server.adminBMCPaymentsHandler)))
-
-	// Microsoft OAuth — init, callback, poll
-	http.HandleFunc("/api/v1/auth/microsoft", rateLimit(server.msAuthInitHandler))
-	http.HandleFunc("/api/v1/auth/microsoft/callback", server.msAuthCallbackHandler)
-	http.HandleFunc("/api/v1/auth/microsoft/poll", rateLimit(server.msAuthPollHandler))
 
 	// Skype data import — upload ZIP, list contacts, send invites
 	http.HandleFunc("/api/v1/import/skype", rateLimit(server.skypeImportHandler))
