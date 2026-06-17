@@ -873,6 +873,12 @@ func (s *NexusServer) consumePasswordReset(token, newPassword string) error {
 		tx.Rollback()
 		return err
 	}
+	// Revoke all sessions so a stolen token can no longer be used after
+	// the victim resets their password.
+	if _, err := tx.Exec("UPDATE session_tokens SET revoked = 1 WHERE username = ?", username); err != nil {
+		tx.Rollback()
+		return err
+	}
 	return tx.Commit()
 }
 
