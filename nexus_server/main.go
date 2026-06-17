@@ -2694,6 +2694,65 @@ func (s *NexusServer) adminBMCPaymentsHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(out)
 }
 
+// adminDMsHandler searches DM messages by sender/recipient/body.
+// DELETE ?id=<msgID> deletes a specific DM.
+func (s *NexusServer) adminDMsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	if r.Method == http.MethodDelete {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "id required", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.DB.Exec(`DELETE FROM dm_messages WHERE id=?`, id); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[admin] DM %s deleted", id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) > 200 {
+		q = q[:200]
+	}
+	if q == "" {
+		http.Error(w, "q required", http.StatusBadRequest)
+		return
+	}
+	rows, err := s.DB.Query(`
+		SELECT id, sender, recipient, body, CAST(created_at AS TEXT)
+		  FROM dm_messages
+		 WHERE sender LIKE ? OR recipient LIKE ? OR body LIKE ?
+		 ORDER BY created_at DESC LIMIT 100`,
+		"%"+q+"%", "%"+q+"%", "%"+q+"%")
+	if err != nil {
+		log.Printf("[admin] DM search: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type dmRow struct {
+		ID        int64  `json:"id"`
+		Sender    string `json:"sender"`
+		Recipient string `json:"recipient"`
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := []dmRow{}
+	for rows.Next() {
+		var m dmRow
+		if err := rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Body, &m.CreatedAt); err == nil {
+			out = append(out, m)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 // adminGrantSupporterHandler grants a supporter badge directly by username,
 // bypassing the supporter_requests queue. For when someone emails you
 // without using the in-app form.
@@ -4016,6 +4075,7 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/grant-supporter", adminIPGate(rateLimit(server.adminGrantSupporterHandler)))
 	http.HandleFunc("/api/v1/admin/servers", adminIPGate(rateLimit(server.adminServersHandler)))
 	http.HandleFunc("/api/v1/admin/messages", adminIPGate(rateLimit(server.adminMessagesHandler)))
+	http.HandleFunc("/api/v1/admin/dms", adminIPGate(rateLimit(server.adminDMsHandler)))
 
 	// Public: opt-in supporter form behind the "Support Phaze" button.
 	http.HandleFunc("/api/v1/support/request", rateLimit(server.supportRequestHandler))

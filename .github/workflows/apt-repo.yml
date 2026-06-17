@@ -55,15 +55,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${{ steps.ver.outputs.tag }}" \
-            --pattern "Phaze-linux-amd64" \
+            --pattern "Phaze.linux" \
             --dir /tmp/phaze-bin
-          chmod +x /tmp/phaze-bin/Phaze-linux-amd64
+          chmod +x /tmp/phaze-bin/Phaze.linux
 
       - name: Build .deb
         run: |
           chmod +x packaging/debian/build-deb.sh
           packaging/debian/build-deb.sh \
-            /tmp/phaze-bin/Phaze-linux-amd64 \
+            /tmp/phaze-bin/Phaze.linux \
             "${{ steps.ver.outputs.version }}" \
             desktop/assets/icon.png
 
