@@ -648,6 +648,30 @@ func (s *NexusServer) initDB() {
 			matched_username TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`ALTER TABLE users ADD COLUMN microsoft_oid TEXT DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_users_ms_oid ON users(microsoft_oid)`,
+		`CREATE TABLE IF NOT EXISTS skype_import_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			conversation_display TEXT,
+			sender_display TEXT,
+			body TEXT NOT NULL,
+			sent_at TEXT,
+			UNIQUE(username, conversation_id, sent_at, body)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_skype_msgs_user ON skype_import_messages(username)`,
+		`CREATE TABLE IF NOT EXISTS skype_import_contacts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL,
+			skype_id TEXT NOT NULL,
+			display_name TEXT,
+			email TEXT DEFAULT '',
+			phaze_username TEXT,
+			invite_sent INTEGER DEFAULT 0,
+			UNIQUE(username, skype_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_skype_contacts_user ON skype_import_contacts(username)`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") && !strings.Contains(err.Error(), "already exists") {
@@ -4082,6 +4106,16 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	// Buy Me a Coffee webhook — called by BMC on every new payment.
 	http.HandleFunc("/api/v1/webhooks/buymeacoffee", rateLimit(server.bmcWebhookHandler))
 	http.HandleFunc("/api/v1/admin/bmc-payments", adminIPGate(rateLimit(server.adminBMCPaymentsHandler)))
+
+	// Microsoft OAuth — init, callback, poll
+	http.HandleFunc("/api/v1/auth/microsoft", rateLimit(server.msAuthInitHandler))
+	http.HandleFunc("/api/v1/auth/microsoft/callback", server.msAuthCallbackHandler)
+	http.HandleFunc("/api/v1/auth/microsoft/poll", rateLimit(server.msAuthPollHandler))
+
+	// Skype data import — upload ZIP, list contacts, send invites
+	http.HandleFunc("/api/v1/import/skype", rateLimit(server.skypeImportHandler))
+	http.HandleFunc("/api/v1/import/skype/contacts", rateLimit(server.skypeContactsHandler))
+	http.HandleFunc("/api/v1/import/skype/invite", rateLimit(server.skypeInviteHandler))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
