@@ -171,11 +171,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
 				log.Printf("New user registered: %s (%s) from %s", msg.Sender, msg.Email, client.IP)
 				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
-				go s.sendEmailLogged(msg.Email, "Activate your Phaze Identity",
-					"<h1>Welcome to Phaze</h1>"+
-						"<p>Click the button below to verify your account:</p>"+
-						"<p style=\"margin:24px 0\"><a href=\""+verifyLink+"\" style=\"background:#863bff;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:16px\">Verify My Account</a></p>"+
-						"<p style=\"color:#888\">Or enter this code manually in the app: <b>"+code+"</b></p>")
+				go s.sendEmailLogged(msg.Email, "Activate your Phaze account",
+					emailVerification(msg.Sender, verifyLink, code))
 				client.Send(NexusMessage{Type: "register_result", Status: "pending_verification"})
 			}
 
@@ -519,7 +516,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			go s.sendEmailLogged(email, "Your Phaze activation code",
-				"<h1>New code</h1><p>Your activation code is: <b>"+code+"</b></p>")
+				emailResendCode(code))
 			client.Send(NexusMessage{Type: "register_result", Status: "code_resent"})
 
 		case "enable_totp":
@@ -585,7 +582,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				}
 				link := "https://phazechat.world/reset?token=" + tok
 				s.sendEmailLogged(addr, "Reset your Phaze password",
-					"<h1>Reset password</h1><p>Hello "+user+",</p><p>Click to reset (valid 1 hour): <a href=\""+link+"\">"+link+"</a></p>")
+					emailPasswordReset(user, link))
 			}(msg.Email)
 			client.Send(NexusMessage{Type: "forgot_password_result", Status: "sent"})
 
@@ -841,9 +838,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.DB.Exec("INSERT INTO invite_codes (code, inviter, email) VALUES (?, ?, ?)", code, username, msg.Email)
 			link := "https://phazechat.world/web?invite=" + code
 			go s.sendEmailLogged(msg.Email, username+" invited you to Phaze",
-				"<h1>You've been invited to Phaze!</h1><p><b>"+username+"</b> wants to chat with you on Phaze — free encrypted messaging, calls, and more.</p>"+
-					"<p><a href=\""+link+"\" style=\"background:#863bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;\">Join Phaze</a></p>"+
-					"<p style=\"font-size:12px;color:#666\">Or paste this link: "+link+"</p>")
+				emailInvite(username, link))
 			client.Send(NexusMessage{Type: "invite_result", Status: "sent"})
 
 		case "report_abuse":

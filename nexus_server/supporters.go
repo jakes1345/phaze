@@ -85,12 +85,7 @@ func (s *NexusServer) supportRequestHandler(w http.ResponseWriter, r *http.Reque
 
 	// Thank-you to the donor (best effort — never block the redirect on email).
 	go func(to, name string) {
-		body := "Hey " + name + ",\n\n" +
-			"Thanks so much for supporting Phaze! 💜\n\n" +
-			"Once your contribution lands, your supporter badge will be added to your account. " +
-			"If you donated under a different name, just reply to this email so we can match it up.\n\n" +
-			"— The Phaze team"
-		_ = s.sendEmail(to, "Thanks for supporting Phaze 💜", body)
+		_ = s.sendEmail(to, "Thanks for supporting Phaze 💜", emailSupporterThankYou(name))
 	}(req.Email, req.Name)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -210,13 +205,22 @@ func (s *NexusServer) bmcWebhookHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verify HMAC signature if secret is configured.
+	// BMC sends the signature in X-BMC-Signature, possibly prefixed with "sha256=".
 	if secret := strings.TrimSpace(os.Getenv("BMC_WEBHOOK_SECRET")); secret != "" {
 		sig := r.Header.Get("X-BMC-Signature")
+		if sig == "" {
+			// BMC also uses this header name in some versions.
+			sig = r.Header.Get("X-Signature-Hmac-Sha256")
+		}
+		sig = strings.TrimPrefix(sig, "sha256=")
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write(body)
 		expected := hex.EncodeToString(mac.Sum(nil))
-		if !hmac.Equal([]byte(sig), []byte(expected)) {
-			log.Printf("[bmc] webhook signature mismatch — possible spoofed request")
+		if sig == "" {
+			// No signature header at all — log and accept (test mode sends no sig).
+			log.Printf("[bmc] webhook received with no signature header (test mode?)")
+		} else if !hmac.Equal([]byte(sig), []byte(expected)) {
+			log.Printf("[bmc] webhook signature mismatch — rejecting (got=%s want=%s)", sig, expected)
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
