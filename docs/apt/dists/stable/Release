@@ -1,0 +1,14 @@
+Origin: Phaze
+Label: Phaze
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Phaze official APT repository
+Date: Wed, 17 Jun 2026 21:53:54 +0000
+MD5Sum:
+ e0f0f9265e8f1637257cfb332c447684 828 main/binary-amd64/Packages
+ 98eedcdadb3798e87e3cc27b95de49b3 566 main/binary-amd64/Packages.gz
+SHA256:
+ 326c7e28294e9e0cfd0583f16e583690b9942648d72339387e0f001411a25939 828 main/binary-amd64/Packages
+ 58c8448b6489ac16529e1482c546bbe363bb7bd3458b751aefad5c46a4c01df2 566 main/binary-amd64/Packages.gz
