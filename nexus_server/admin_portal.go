@@ -116,7 +116,7 @@ const STATE = {
   reports: [], pending: [], supporters: [], supportersLoaded: false, geoCache: {},
   payments: [], paymentsLoaded: false,
   servers: [], serversLoaded: false,
-  messages: [], messagesLoaded: false, msgSearch: '',
+  messages: [], dms: [], messagesLoaded: false, msgSearch: '',
   search: '',
 };
 
@@ -185,8 +185,15 @@ async function grantSupporterDirect(u) { if (!u) return; if (!confirm('Grant sup
 async function loadPayments() { STATE.payments = await api('GET', '/api/v1/admin/bmc-payments'); STATE.paymentsLoaded = true; renderContent(); }
 async function loadServers() { STATE.servers = await api('GET', '/api/v1/admin/servers'); STATE.serversLoaded = true; renderContent(); }
 async function deleteServer(id, name) { if (!confirm('Delete server "' + name + '" and all its messages? Cannot undo.')) return; if (prompt('Type server name to confirm:') !== name) return; await api('DELETE', '/api/v1/admin/servers?id=' + encodeURIComponent(id)); loadServers(); }
-async function searchMessages(q) { STATE.messages = await api('GET', '/api/v1/admin/messages?q=' + encodeURIComponent(q)); STATE.messagesLoaded = true; renderContent(); }
+async function searchMessages(q) {
+  const [ch, dm] = await Promise.all([
+    api('GET', '/api/v1/admin/messages?q=' + encodeURIComponent(q)),
+    api('GET', '/api/v1/admin/dms?q=' + encodeURIComponent(q)),
+  ]);
+  STATE.messages = ch; STATE.dms = dm; STATE.messagesLoaded = true; renderContent();
+}
 async function deleteMessage(id) { if (!confirm('Delete message #' + id + '?')) return; await api('DELETE', '/api/v1/admin/messages?id=' + id); STATE.messages = STATE.messages.filter(m => m.id !== id); renderContent(); }
+async function deleteDM(id) { if (!confirm('Delete DM #' + id + '?')) return; await api('DELETE', '/api/v1/admin/dms?id=' + id); STATE.dms = STATE.dms.filter(m => m.id !== id); renderContent(); }
 async function banUser(u) { const r = prompt('Reason:', 'TOS violation'); if (r === null) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/ban', { reason: r }); loadUsers(); }
 async function unbanUser(u) { if (!confirm('Unban ' + u + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/unban'); loadUsers(); }
 async function setRole(u, role) { if (!confirm('Set ' + u + ' → ' + role + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/role', { role }); loadUsers(); }
@@ -470,19 +477,33 @@ function renderContent() {
       el.querySelector('#msg-search').focus();
       return;
     }
-    el.innerHTML = '<h1 class="page-title">Messages</h1><p class="page-sub">Showing ' + STATE.messages.length + ' results for <strong>' + esc(STATE.msgSearch) + '</strong></p>' + searchBar +
-      (STATE.messages.length === 0 ? '<div class="empty">No messages found.</div>' :
-      '<table class="tbl"><thead><tr><th>Sender</th><th>Server / Channel</th><th>Message</th><th>Time</th><th></th></tr></thead><tbody>' +
-      STATE.messages.map(m =>
-        '<tr><td><strong>' + esc(m.sender) + '</strong></td>' +
-        '<td style="font-size:0.78rem">' + esc(m.server_name) + ' / #' + esc(m.channel_name) + '</td>' +
-        '<td style="max-width:320px;word-break:break-word">' + esc(m.body) + '</td>' +
-        '<td>' + relTime(m.created_at) + '</td>' +
-        '<td><button class="btn danger" data-del-msg="' + m.id + '">Delete</button></td></tr>'
-      ).join('') + '</tbody></table>');
+    const total = STATE.messages.length + STATE.dms.length;
+    el.innerHTML = '<h1 class="page-title">Messages</h1><p class="page-sub">Showing ' + total + ' results for <strong>' + esc(STATE.msgSearch) + '</strong></p>' + searchBar +
+      (STATE.messages.length === 0 && STATE.dms.length === 0 ? '<div class="empty">No messages found.</div>' : '') +
+      (STATE.messages.length > 0 ?
+        '<h2 style="font-size:0.9rem;font-weight:700;margin:1rem 0 0.5rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Channel Messages (' + STATE.messages.length + ')</h2>' +
+        '<table class="tbl"><thead><tr><th>Sender</th><th>Server / Channel</th><th>Message</th><th>Time</th><th></th></tr></thead><tbody>' +
+        STATE.messages.map(m =>
+          '<tr><td><strong>' + esc(m.sender) + '</strong></td>' +
+          '<td style="font-size:0.78rem">' + esc(m.server_name) + ' / #' + esc(m.channel_name) + '</td>' +
+          '<td style="max-width:300px;word-break:break-word">' + esc(m.body) + '</td>' +
+          '<td>' + relTime(m.created_at) + '</td>' +
+          '<td><button class="btn danger" data-del-msg="' + m.id + '">Delete</button></td></tr>'
+        ).join('') + '</tbody></table>' : '') +
+      (STATE.dms.length > 0 ?
+        '<h2 style="font-size:0.9rem;font-weight:700;margin:1.5rem 0 0.5rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Direct Messages (' + STATE.dms.length + ')</h2>' +
+        '<table class="tbl"><thead><tr><th>From</th><th>To</th><th>Message</th><th>Time</th><th></th></tr></thead><tbody>' +
+        STATE.dms.map(m =>
+          '<tr><td><strong>' + esc(m.sender) + '</strong></td>' +
+          '<td>' + esc(m.recipient) + '</td>' +
+          '<td style="max-width:300px;word-break:break-word">' + esc(m.body) + '</td>' +
+          '<td>' + relTime(m.created_at) + '</td>' +
+          '<td><button class="btn danger" data-del-dm="' + m.id + '">Delete</button></td></tr>'
+        ).join('') + '</tbody></table>' : '');
     el.querySelector('#msg-search').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
     el.querySelector('#msg-search-btn').addEventListener('click', doSearch);
     el.querySelectorAll('[data-del-msg]').forEach(b => b.addEventListener('click', () => deleteMessage(+b.dataset.delMsg)));
+    el.querySelectorAll('[data-del-dm]').forEach(b => b.addEventListener('click', () => deleteDM(+b.dataset.delDm)));
     return;
   }
 
