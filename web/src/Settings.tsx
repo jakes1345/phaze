@@ -3,7 +3,7 @@ import QRCode from 'qrcode'
 import type { NexusMessage } from './nexusTypes'
 import './settings.css'
 
-type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications' | 'invite'
+type Tab = 'profile' | 'security' | 'devices' | 'privacy' | 'sessions' | 'danger' | 'notifications' | 'invite' | 'import'
 
 interface Session {
   token: string
@@ -72,6 +72,13 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [delPw, setDelPw] = useState('')
   const [delMsg, setDelMsg] = useState('')
 
+  // Skype import
+  const [importBusy, setImportBusy] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
+  const [importedCount, setImportedCount] = useState<number | null>(null)
+  const [skypeContacts, setSkypeContacts] = useState<{ display_name: string; phaze_username: string; on_phaze: boolean; invite_sent: boolean }[]>([])
+  const [contactsLoaded, setContactsLoaded] = useState(false)
+
   const inviteLink = `https://phazechat.world/web?ref=${encodeURIComponent(me)}`
 
   useEffect(() => {
@@ -80,6 +87,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
 
   useEffect(() => {
     if (tab === 'sessions') send({ type: 'list_sessions' })
+    if (tab === 'import') loadSkypeContacts()
   }, [tab, send])
 
   const onMsg = useCallback((msg: NexusMessage) => {
@@ -212,6 +220,45 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
     send({ type: 'delete_account', sender: me, body: delPw })
   }
 
+  const importSkype = async (file: File) => {
+    if (!sessionToken) return
+    setImportBusy(true)
+    setImportMsg('Uploading…')
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch('/api/v1/import/skype', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        body: form,
+      })
+      if (!res.ok) { setImportMsg('Upload failed — make sure this is the .zip from go.skype.com/export'); return }
+      const data = await res.json()
+      setImportedCount(data.messages_imported ?? 0)
+      setSkypeContacts(data.contacts ?? [])
+      setContactsLoaded(true)
+      setImportMsg(`Done! Imported ${data.messages_imported ?? 0} messages and found ${(data.contacts ?? []).length} contacts.`)
+    } catch {
+      setImportMsg('Error uploading file.')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
+  const loadSkypeContacts = async () => {
+    if (!sessionToken || contactsLoaded) return
+    try {
+      const res = await fetch('/api/v1/import/skype/contacts', {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSkypeContacts(data ?? [])
+        setContactsLoaded(true)
+      }
+    } catch { /* ignore */ }
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'invite', label: '🎁 Invite Friends' },
     { id: 'profile', label: '👤 Profile' },
@@ -221,6 +268,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
     { id: 'privacy', label: '🛡 Privacy' },
     { id: 'sessions', label: '📱 Sessions' },
     { id: 'danger', label: '⚠ Danger' },
+    { id: 'import', label: '📥 Skype Import' },
   ]
 
   // ── Backup & Devices state ───────────────────────────────────
@@ -724,6 +772,64 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
           )}
 
           {/* ── Danger ───────────────────────────────────────── */}
+          {tab === 'import' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Import from Skype</h3>
+              <p className="settings-label" style={{ marginBottom: '0.75rem' }}>
+                Bring your Skype message history and contacts to Phaze. Export your data first at{' '}
+                <a href="https://go.skype.com/export" target="_blank" rel="noreferrer" style={{ color: 'var(--brand)' }}>go.skype.com/export</a>
+                {' '}then upload the .zip below. Text messages import fine — images and files can't be recovered (Microsoft's CDN is gone).
+              </p>
+              <label style={{ display: 'block', cursor: importBusy ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="file"
+                  accept=".zip"
+                  style={{ display: 'none' }}
+                  disabled={importBusy}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) importSkype(f) }}
+                />
+                <span className={`settings-btn${importBusy ? ' disabled' : ''}`} style={{ display: 'inline-block' }}>
+                  {importBusy ? 'Importing…' : '📂 Choose Skype export .zip'}
+                </span>
+              </label>
+              {importMsg && <p className="settings-msg" style={{ marginTop: '0.5rem' }}>{importMsg}</p>}
+
+              {contactsLoaded && skypeContacts.length > 0 && (
+                <>
+                  <hr className="settings-divider" />
+                  <h3 className="settings-section-title">Your Skype contacts</h3>
+                  <p className="settings-label" style={{ marginBottom: '0.75rem' }}>
+                    <strong>{skypeContacts.filter(c => c.on_phaze).length}</strong> already on Phaze · <strong>{skypeContacts.filter(c => !c.on_phaze).length}</strong> not yet
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {skypeContacts.map((c) => (
+                      <div key={c.display_name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'var(--surface)', borderRadius: '8px' }}>
+                        <div>
+                          <span style={{ fontWeight: 600 }}>{c.display_name}</span>
+                          {c.on_phaze && <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: 'var(--brand)' }}>on Phaze as @{c.phaze_username}</span>}
+                        </div>
+                        {c.on_phaze ? (
+                          <button className="settings-btn" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+                            onClick={() => send({ type: 'friend_request', recipient: c.phaze_username })}>
+                            Add friend
+                          </button>
+                        ) : (
+                          <button className="settings-btn" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', opacity: 0.7 }}
+                            onClick={() => navigator.clipboard.writeText('https://phazechat.world')}>
+                            Copy invite link
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {contactsLoaded && skypeContacts.length === 0 && importedCount !== null && (
+                <p className="settings-label" style={{ marginTop: '0.5rem' }}>No contacts found in the export.</p>
+              )}
+            </div>
+          )}
+
           {tab === 'danger' && (
             <div className="settings-section">
               <h3 className="settings-section-title">Sign out</h3>
@@ -735,8 +841,6 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
               <h3 className="settings-section-title">Export your data</h3>
               <p className="settings-label" style={{ marginBottom: '0.5rem' }}>Download a copy of your profile, friends, and queued messages (GDPR Article 20).</p>
               <button className="settings-btn" onClick={exportData}>Download my data</button>
-
-              <hr className="settings-divider" />
 
               <h3 className="settings-section-title danger-title">Delete account</h3>
               <p className="settings-label">This permanently erases your account, all messages, friends, and encryption keys. <strong>Cannot be undone.</strong></p>

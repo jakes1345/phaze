@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.Image
@@ -22,9 +23,12 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import world.phazechat.app.BuildConfig
+import world.phazechat.app.data.PhazeViewModel
 
 @Composable
 fun SettingsScreen(
@@ -58,6 +62,14 @@ fun SettingsScreen(
     onRestoreKeys: ((String) -> Unit)? = null,
     onClearKeyBackupStatus: (() -> Unit)? = null,
     onDeleteAccount: ((String) -> Unit)? = null,
+    // Skype import
+    skypeImportBusy: Boolean = false,
+    skypeImportStatus: String? = null,
+    skypeContacts: List<PhazeViewModel.SkypeContact> = emptyList(),
+    onImportSkype: ((Uri) -> Unit)? = null,
+    onLoadSkypeContacts: (() -> Unit)? = null,
+    onAddFriendFromSkype: ((String) -> Unit)? = null,
+    onClearSkypeStatus: (() -> Unit)? = null,
 ) {
     var editMood by remember { mutableStateOf(mood) }
     var editName by remember { mutableStateOf(displayName.ifEmpty { me }) }
@@ -467,6 +479,69 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
         HorizontalDivider()
         Spacer(Modifier.height(16.dp))
+
+        if (onImportSkype != null) {
+            val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                uri?.let { onImportSkype(it) }
+            }
+            LaunchedEffect(Unit) { onLoadSkypeContacts?.invoke() }
+
+            Text("SKYPE IMPORT", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Import your Skype message history and contacts. Export your data at go.skype.com/export then upload the .zip.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { filePicker.launch("application/zip") },
+                enabled = !skypeImportBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (skypeImportBusy) "Importing…" else "📂 Choose Skype export .zip") }
+            if (skypeImportStatus != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(skypeImportStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                TextButton(onClick = { onClearSkypeStatus?.invoke() }) { Text("Dismiss", fontSize = 11.sp) }
+            }
+
+            if (skypeContacts.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                val onPhaze = skypeContacts.count { it.onPhaze }
+                Text(
+                    "$onPhaze on Phaze · ${skypeContacts.size - onPhaze} not yet",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                skypeContacts.forEach { c ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(c.displayName, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                if (c.onPhaze) Text("@${c.phazeUsername}", fontSize = 11.sp, color = PhazeBrandDark)
+                            }
+                            if (c.onPhaze) {
+                                Button(
+                                    onClick = { onAddFriendFromSkype?.invoke(c.phazeUsername) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                ) { Text("Add", fontSize = 12.sp) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { /* TODO: share invite link */ },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                ) { Text("Invite", fontSize = 12.sp) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+        }
 
         Text("SUPPORT PHAZE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
         Spacer(Modifier.height(8.dp))
