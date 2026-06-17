@@ -454,7 +454,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
               <hr className="settings-divider" />
 
               <h3 className="settings-section-title">Two-factor authentication (TOTP)</h3>
-              {totpMsg && <p className={`settings-msg ${totpMsg.startsWith('2FA') ? 'ok' : 'err'}`}>{totpMsg}</p>}
+              {totpMsg && <p className={`settings-msg ${totpMsg.startsWith('2FA') || totpMsg.startsWith('Scan') ? 'ok' : 'err'}`}>{totpMsg}</p>}
               {totpUri && (
                 <div className="settings-totp-uri">
                   <p className="settings-label">Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.):</p>
