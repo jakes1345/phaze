@@ -488,6 +488,13 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onRestoreKeys = { pin -> vm.restoreKeys(pin) },
                         onClearKeyBackupStatus = { vm.clearKeyBackupStatus() },
                         onDeleteAccount = { pw -> vm.deleteAccount(pw) },
+                        skypeImportBusy = vm.skypeImportBusy.collectAsState().value,
+                        skypeImportStatus = vm.skypeImportStatus.collectAsState().value,
+                        skypeContacts = vm.skypeContacts.collectAsState().value,
+                        onImportSkype = { uri -> vm.importSkype(uri) },
+                        onLoadSkypeContacts = { vm.loadSkypeContacts() },
+                        onAddFriendFromSkype = { username -> vm.sendFriendRequest(username) },
+                        onClearSkypeStatus = { vm.clearSkypeImportStatus() },
                     )
                 }
             }
