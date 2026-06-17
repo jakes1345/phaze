@@ -205,22 +205,31 @@ func (s *NexusServer) bmcWebhookHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verify HMAC signature if secret is configured.
-	// BMC sends the signature in X-BMC-Signature, possibly prefixed with "sha256=".
+	// BMC sends the signature in X-BMC-Signature or X-Signature-Hmac-Sha256,
+	// possibly prefixed with "sha256=". The dashboard shows the secret as a
+	// hex string; BMC signs using the decoded raw bytes, not the ASCII hex.
 	if secret := strings.TrimSpace(os.Getenv("BMC_WEBHOOK_SECRET")); secret != "" {
 		sig := r.Header.Get("X-BMC-Signature")
 		if sig == "" {
-			// BMC also uses this header name in some versions.
 			sig = r.Header.Get("X-Signature-Hmac-Sha256")
 		}
 		sig = strings.TrimPrefix(sig, "sha256=")
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(body)
-		expected := hex.EncodeToString(mac.Sum(nil))
+
+		// Try hex-decoded key first (BMC displays secret as hex but signs with raw bytes).
+		// Fall back to ASCII key in case they change this.
+		valid := false
+		for _, key := range bmcSigningKeys(secret) {
+			m := hmac.New(sha256.New, key)
+			m.Write(body)
+			if hmac.Equal([]byte(sig), []byte(hex.EncodeToString(m.Sum(nil)))) {
+				valid = true
+				break
+			}
+		}
 		if sig == "" {
-			// No signature header at all — log and accept (test mode sends no sig).
-			log.Printf("[bmc] webhook received with no signature header (test mode?)")
-		} else if !hmac.Equal([]byte(sig), []byte(expected)) {
-			log.Printf("[bmc] webhook signature mismatch — rejecting (got=%s want=%s)", sig, expected)
+			log.Printf("[bmc] no signature header — accepting (test mode?)")
+		} else if !valid {
+			log.Printf("[bmc] signature mismatch — rejecting")
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
@@ -320,4 +329,16 @@ func (s *NexusServer) bmcGrantByEmail(email, name string) string {
 
 	log.Printf("[bmc] no Phaze account found for email %s — stored in bmc_payments for manual review", email)
 	return ""
+}
+
+// bmcSigningKeys returns candidate HMAC keys to try when verifying a BMC
+// webhook signature. BMC displays the secret as a hex string in their
+// dashboard; they sign using the decoded raw bytes. We try both forms so
+// the check works regardless of which encoding BMC uses internally.
+func bmcSigningKeys(secret string) [][]byte {
+	keys := [][]byte{[]byte(secret)}
+	if decoded, err := hex.DecodeString(secret); err == nil {
+		keys = append([][]byte{decoded}, keys...)
+	}
+	return keys
 }
