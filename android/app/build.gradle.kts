@@ -18,7 +18,7 @@ fun localProp(key: String, fallback: String = "") =
     (localProps[key] as? String)?.takeIf { it.isNotBlank() } ?: fallback
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-val appVersionCode = 20
+val appVersionCode = 21
 val appVersionName = "1.5.1"
 
 android {
@@ -63,6 +63,13 @@ android {
         language { enableSplit = true }
         density { enableSplit = true }
         abi { enableSplit = true }
+    }
+
+    // Store native .so files uncompressed and 16 KB-aligned so Android 15
+    // devices with 16 KB page sizes can load them directly from the ZIP.
+    // AGP 8.3+ handles the alignment automatically with this flag.
+    packaging {
+        jniLibs { useLegacyPackaging = false }
     }
 
     compileOptions {
