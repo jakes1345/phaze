@@ -1,7 +1,12 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/mail"
 	"os"
@@ -182,4 +187,133 @@ func (s *NexusServer) adminSupporterActionHandler(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// bmcWebhookHandler handles Buy Me a Coffee webhook events.
+// BMC sends a POST for every new donation/membership. We match by email:
+//   1. Check supporter_requests for a pending row with that email → grant it
+//   2. Check users table for a verified account with that email → grant directly
+//   3. No match → store in bmc_payments for manual resolution in the portal
+//
+// Set BMC_WEBHOOK_SECRET in Fly secrets to the token from your BMC dashboard.
+// BMC signs requests with HMAC-SHA256 in the X-BMC-Signature header.
+func (s *NexusServer) bmcWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+
+	// Verify HMAC signature if secret is configured.
+	if secret := strings.TrimSpace(os.Getenv("BMC_WEBHOOK_SECRET")); secret != "" {
+		sig := r.Header.Get("X-BMC-Signature")
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if !hmac.Equal([]byte(sig), []byte(expected)) {
+			log.Printf("[bmc] webhook signature mismatch — possible spoofed request")
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// BMC payload shape (covers both donation and membership events).
+	var payload struct {
+		Type  string `json:"type"`
+		Data  struct {
+			SupporterName  string `json:"supporter_name"`
+			SupporterEmail string `json:"supporter_email"`
+			Amount         string `json:"amount"`
+			Message        string `json:"message"`
+		} `json:"data"`
+		// Some BMC webhook versions are flat (no data wrapper).
+		SupporterName  string `json:"supporter_name"`
+		SupporterEmail string `json:"supporter_email"`
+		Amount         string `json:"amount"`
+		Message        string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	// Normalise — handle both flat and nested payload shapes.
+	name := payload.Data.SupporterName
+	if name == "" {
+		name = payload.SupporterName
+	}
+	email := strings.ToLower(strings.TrimSpace(payload.Data.SupporterEmail))
+	if email == "" {
+		email = strings.ToLower(strings.TrimSpace(payload.SupporterEmail))
+	}
+	amount := payload.Data.Amount
+	if amount == "" {
+		amount = payload.Amount
+	}
+	message := payload.Data.Message
+	if message == "" {
+		message = payload.Message
+	}
+
+	if email == "" {
+		log.Printf("[bmc] webhook received but no email in payload — type=%s", payload.Type)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	log.Printf("[bmc] payment from %s <%s> amount=%s", name, email, amount)
+
+	matched := s.bmcGrantByEmail(email, name)
+
+	// Store for audit trail regardless of match outcome.
+	matchedUser := ""
+	if matched != "" {
+		matchedUser = matched
+	}
+	s.DB.Exec(
+		`INSERT INTO bmc_payments (supporter_name, supporter_email, amount, message, matched_username)
+		 VALUES (?,?,?,?,?)`, name, email, amount, message, matchedUser)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// bmcGrantByEmail finds a Phaze account for the given BMC email and grants
+// the supporter badge. Returns the matched username, or "" if no match.
+func (s *NexusServer) bmcGrantByEmail(email, name string) string {
+	// 1. Match against a pending supporter_requests row (user filled the form).
+	var reqID int
+	var reqUsername string
+	err := s.DB.QueryRow(
+		`SELECT id, COALESCE(username,'') FROM supporter_requests
+		  WHERE LOWER(email)=? AND status='pending'
+		  ORDER BY id DESC LIMIT 1`, email).Scan(&reqID, &reqUsername)
+	if err == nil {
+		s.DB.Exec(`UPDATE supporter_requests SET status='granted' WHERE id=?`, reqID)
+		if reqUsername != "" {
+			s.DB.Exec(`UPDATE users SET supporter=1, supporter_since=CURRENT_TIMESTAMP WHERE username=?`, reqUsername)
+			log.Printf("[bmc] auto-granted badge to %s (via supporter_requests)", reqUsername)
+			return reqUsername
+		}
+	}
+
+	// 2. Match against a verified user account by email.
+	var username string
+	err = s.DB.QueryRow(
+		`SELECT username FROM users WHERE LOWER(email)=? AND is_verified=1 LIMIT 1`, email).Scan(&username)
+	if err == nil && username != "" {
+		s.DB.Exec(`UPDATE users SET supporter=1, supporter_since=CURRENT_TIMESTAMP WHERE username=?`, username)
+		s.DB.Exec(
+			`INSERT OR IGNORE INTO supporter_requests (username, name, email, status)
+			 VALUES (?,?,?,'granted')`, username, name, email)
+		log.Printf("[bmc] auto-granted badge to %s (matched by email)", username)
+		return username
+	}
+
+	log.Printf("[bmc] no Phaze account found for email %s — stored in bmc_payments for manual review", email)
+	return ""
 }

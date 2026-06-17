@@ -114,6 +114,7 @@ const STATE = {
   users: [], totalUsers: 0, limit: 50, offset: 0, usersLoaded: false,
   stats: null, statsLoaded: false,
   reports: [], pending: [], supporters: [], supportersLoaded: false, geoCache: {},
+  payments: [], paymentsLoaded: false,
   servers: [], serversLoaded: false,
   messages: [], messagesLoaded: false, msgSearch: '',
   search: '',
@@ -181,6 +182,7 @@ async function loadSupporters() { STATE.supporters = await api('GET', '/api/v1/a
 async function grantSupporter(id, u) { if (!confirm('Grant supporter badge to @' + (u || '(no account)') + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/grant'); loadSupporters(); }
 async function dismissSupporter(id) { if (!confirm('Dismiss request #' + id + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/dismiss'); loadSupporters(); }
 async function grantSupporterDirect(u) { if (!u) return; if (!confirm('Grant supporter badge directly to @' + u + '?')) return; await api('POST', '/api/v1/admin/grant-supporter', { username: u }); loadSupporters(); }
+async function loadPayments() { STATE.payments = await api('GET', '/api/v1/admin/bmc-payments'); STATE.paymentsLoaded = true; renderContent(); }
 async function loadServers() { STATE.servers = await api('GET', '/api/v1/admin/servers'); STATE.serversLoaded = true; renderContent(); }
 async function deleteServer(id, name) { if (!confirm('Delete server "' + name + '" and all its messages? Cannot undo.')) return; if (prompt('Type server name to confirm:') !== name) return; await api('DELETE', '/api/v1/admin/servers?id=' + encodeURIComponent(id)); loadServers(); }
 async function searchMessages(q) { STATE.messages = await api('GET', '/api/v1/admin/messages?q=' + encodeURIComponent(q)); STATE.messagesLoaded = true; renderContent(); }
@@ -231,7 +233,7 @@ function renderLogin() {
   root.appendChild(wrap);
 }
 
-function setTab(t) { STATE.tab = t; STATE.search = ''; STATE.offset = 0; STATE.usersLoaded = false; STATE.statsLoaded = false; STATE.supportersLoaded = false; STATE.serversLoaded = false; STATE.messagesLoaded = false; STATE.messages = []; renderNav(); renderContent(); }
+function setTab(t) { STATE.tab = t; STATE.search = ''; STATE.offset = 0; STATE.usersLoaded = false; STATE.statsLoaded = false; STATE.supportersLoaded = false; STATE.serversLoaded = false; STATE.messagesLoaded = false; STATE.messages = []; STATE.paymentsLoaded = false; renderNav(); renderContent(); }
 
 function renderNav() {
   document.querySelectorAll('.sidebar nav button').forEach(b => {
@@ -250,6 +252,7 @@ function renderShell() {
     { id: 'reports', icon: '⚑', label: 'Reports' },
     { id: 'supporters', icon: '💜', label: 'Supporters' },
     { id: 'pending', icon: '⏳', label: 'Pending' },
+    { id: 'payments', icon: '💰', label: 'BMC Payments' },
     { id: 'servers', icon: '🖥', label: 'Servers' },
     { id: 'messages', icon: '🔍', label: 'Messages' },
     { id: 'logs', icon: '📋', label: 'Activity Log' },
@@ -418,6 +421,25 @@ function renderContent() {
       el.querySelectorAll('button[data-dismiss]').forEach(b => b.addEventListener('click', () => dismissSupporter(+b.dataset.dismiss)));
     }
     el.querySelector('#direct-grant-btn').addEventListener('click', () => grantSupporterDirect(el.querySelector('#direct-grant-u').value.trim()));
+    return;
+  }
+
+  if (STATE.tab === 'payments') {
+    if (!STATE.paymentsLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; loadPayments(); return; }
+    if (!STATE.payments.length) { el.innerHTML = '<h1 class="page-title">BMC Payments</h1><p class="page-sub">Payments received via Buy Me a Coffee webhook. Unmatched = no Phaze account found for that email.</p><div class="empty">No payments recorded yet.</div>'; return; }
+    const unmatched = STATE.payments.filter(p => !p.matched_username).length;
+    el.innerHTML = '<h1 class="page-title">BMC Payments</h1><p class="page-sub">' + STATE.payments.length + ' total · <span style="color:var(--warn)">' + unmatched + ' unmatched</span></p>' +
+      '<table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Amount</th><th>Message</th><th>Matched to</th><th>Date</th></tr></thead><tbody>' +
+      STATE.payments.map(p =>
+        '<tr><td>' + esc(p.supporter_name) + '</td>' +
+        '<td style="font-size:0.78rem">' + esc(p.supporter_email) + '</td>' +
+        '<td>$' + esc(p.amount) + '</td>' +
+        '<td style="max-width:200px;font-size:0.78rem">' + esc(p.message) + '</td>' +
+        '<td>' + (p.matched_username
+          ? '<span class="badge verified">@' + esc(p.matched_username) + '</span>'
+          : '<span class="badge unverified">unmatched</span>') + '</td>' +
+        '<td>' + fmtDate(p.created_at) + '</td></tr>'
+      ).join('') + '</tbody></table>';
     return;
   }
 
