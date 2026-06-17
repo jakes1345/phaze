@@ -1102,7 +1102,31 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             "server_discover_result" -> handleDiscoverList(msg)
             "server_info_result", "server_channels_updated" -> handleChannels(msg)
             "channel_history_result" -> handleChannelHistory(msg)
-            "channel_msg" -> handleChannelMsg(msg)
+            "channel_msg_in" -> handleChannelMsg(msg)
+            "channel_edit_in" -> {
+                if (msg.channelId != _activeChannel.value) return
+                val raw = msg.rawMessages ?: return
+                try {
+                    val m = org.json.JSONArray(raw).getJSONObject(0)
+                    val id = m.getLong("id")
+                    val body = m.optString("body", "")
+                    _channelMessages.value = _channelMessages.value.map {
+                        if (it.id == id) it.copy(body = body, edited = true) else it
+                    }
+                } catch (_: Exception) {}
+            }
+            "channel_delete_in" -> {
+                if (msg.channelId != _activeChannel.value) return
+                val raw = msg.rawMessages ?: return
+                try {
+                    val id = org.json.JSONArray(raw).getJSONObject(0).getLong("id")
+                    _channelMessages.value = _channelMessages.value.map {
+                        if (it.id == id) it.copy(body = "", deleted = true) else it
+                    }
+                } catch (_: Exception) {}
+            }
+            // channel_react_in / channel_pin_in — no reaction/pin UI on Android yet; no-op to avoid body corruption
+            "channel_react_in", "channel_pin_in" -> { /* handled in future release */ }
             "server_result", "server_join_result" -> {
                 if (msg.status == "ok") loadSpaces()
                 else msg.error?.let { _actionStatus.value = it }
@@ -1409,9 +1433,23 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private fun handleChannelMsg(msg: NexusMessage) {
         if (msg.channelId != _activeChannel.value) return
         val sender = msg.sender ?: return
+        // Parse real ID + timestamp from the messages array if present
+        var realId = System.currentTimeMillis()
+        var createdAt = ""
+        msg.rawMessages?.let { raw ->
+            try {
+                val arr = org.json.JSONArray(raw)
+                if (arr.length() > 0) {
+                    val m = arr.getJSONObject(0)
+                    realId = m.optLong("id", realId)
+                    createdAt = m.optString("created_at", "")
+                }
+            } catch (_: Exception) {}
+        }
+        if (_channelMessages.value.any { it.id == realId }) return
         _channelMessages.value = _channelMessages.value + ChannelMsg(
-            id = System.currentTimeMillis(), sender = sender,
-            body = msg.body ?: "", createdAt = "",
+            id = realId, sender = sender,
+            body = msg.body ?: "", createdAt = createdAt,
         )
     }
 }
