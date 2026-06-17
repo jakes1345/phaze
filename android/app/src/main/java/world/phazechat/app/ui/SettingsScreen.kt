@@ -7,6 +7,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -17,7 +19,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import world.phazechat.app.BuildConfig
 
 @Composable
@@ -157,17 +163,40 @@ fun SettingsScreen(
         var disablePw by remember { mutableStateOf("") }
 
         if (twoFactorUri != null) {
-            // Enrollment pending: show the secret to add to an authenticator app,
-            // then confirm with a generated code.
-            val secret = remember(twoFactorUri) {
-                Regex("secret=([A-Z0-9]+)").find(twoFactorUri)?.groupValues?.get(1) ?: twoFactorUri
+            // Enrollment pending: show a scannable QR code, plus the raw secret as a fallback.
+            val qrBitmap = remember(twoFactorUri) {
+                try {
+                    val size = 300
+                    val bits = QRCodeWriter().encode(twoFactorUri, BarcodeFormat.QR_CODE, size, size)
+                    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+                    for (x in 0 until size) for (y in 0 until size)
+                        bmp.setPixel(x, y, if (bits[x, y]) Color.BLACK else Color.WHITE)
+                    bmp
+                } catch (_: Exception) { null }
             }
-            Text("Add this secret to your authenticator app:", fontSize = 13.sp)
-            Spacer(Modifier.height(6.dp))
-            SelectionContainer {
-                Text(secret, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            val secret = remember(twoFactorUri) {
+                Regex("secret=([A-Z2-7]+)").find(twoFactorUri)?.groupValues?.get(1) ?: ""
+            }
+            Text("Scan this QR code with your authenticator app:", fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            if (qrBitmap != null) {
+                Image(
+                    bitmap = qrBitmap.asImageBitmap(),
+                    contentDescription = "2FA QR Code",
+                    modifier = Modifier
+                        .size(200.dp)
+                        .align(Alignment.CenterHorizontally),
+                )
             }
             Spacer(Modifier.height(10.dp))
+            if (secret.isNotEmpty()) {
+                Text("Can't scan? Enter this key manually:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                SelectionContainer {
+                    Text(secret, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             OutlinedTextField(
                 value = totpCode, onValueChange = { totpCode = it.filter { c -> c.isDigit() }.take(6) },
                 label = { Text("6-digit code") }, singleLine = true,
