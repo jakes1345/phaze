@@ -36,6 +36,7 @@
     <application
         android:name=".PhazeApp"
         android:allowBackup="false"
+        android:extractNativeLibs="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Phaze"
         android:supportsRtl="true"
