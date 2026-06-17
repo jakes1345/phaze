@@ -1341,7 +1341,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun handleDmHistory(msg: NexusMessage) {
         val me = _me.value ?: return
-        val peer = _selectedChat.value ?: return
+        val peer = msg.recipient ?: return
+        if (peer != _selectedChat.value) return  // stale: user switched chats before response arrived
         val raw = msg.rawDmHistory ?: return
         try {
             val arr = JSONArray(raw)
@@ -1369,11 +1370,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (_: Exception) { 0L },
                 ))
             }
-            // Preserve optimistic messages we sent that haven't been persisted yet
-            val existingOptimistic = _chatLog.value.filter { existing ->
-                existing.me && lines.none { l -> l.id == existing.id }
-            }
-            _chatLog.value = (lines + existingOptimistic).sortedBy { it.ts }
+            // Preserve any in-flight messages (sent or received) not yet in server history
+            val pending = _chatLog.value.filter { existing -> lines.none { l -> l.id == existing.id } }
+            _chatLog.value = (lines + pending).sortedBy { it.ts }
         } catch (e: Exception) {
             Log.w(TAG, "dm_history parse: ${e.message}")
         }
@@ -1431,6 +1430,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun handleChannelHistory(msg: NexusMessage) {
+        val channelId = msg.channelId ?: return
+        if (channelId != _activeChannel.value) return  // stale: user switched channels before response arrived
         val raw = msg.rawMessages ?: return
         try {
             val arr = JSONArray(raw)
