@@ -1,0 +1,20 @@
+Package: phaze
+Version: 1.0.0
+Architecture: amd64
+Maintainer: Phaze <support@phazechat.world>
+Depends: libwebkit2gtk-4.1-0 (>= 2.36) | libwebkit2gtk-4.0-30 (>= 2.36)
+Filename: pool/main/p/phaze/phaze_1.0.0_amd64.deb
+Size: 31766768
+MD5sum: ef0cd4bcdd8f90ccad765f40fdbb279d
+SHA1: e465378d0fcb8e35038a34a09d07cac306db641f
+SHA256: 0beca1caa2c0836fd52e8fe7f83d04b117e5bbd29c8a615501ec47bf3f2e7277
+Section: net
+Priority: optional
+Homepage: https://phazechat.world
+Description: Phaze — encrypted chat, voice and video calls
+ Phaze is an end-to-end encrypted messaging app with voice calls,
+ video calls, spaces (group channels), and real-time presence.
+ Messages are encrypted with NaCl box (libsodium) — the server
+ never sees plaintext. Supports 2FA (TOTP), QR-code device linking,
+ file and voice message sharing, and Stories.
+

@@ -1,0 +1,33 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Phaze
+Label: Phaze
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Phaze official APT repository
+Date: Wed, 17 Jun 2026 21:53:54 +0000
+MD5Sum:
+ e0f0f9265e8f1637257cfb332c447684 828 main/binary-amd64/Packages
+ 98eedcdadb3798e87e3cc27b95de49b3 566 main/binary-amd64/Packages.gz
+SHA256:
+ 326c7e28294e9e0cfd0583f16e583690b9942648d72339387e0f001411a25939 828 main/binary-amd64/Packages
+ 58c8448b6489ac16529e1482c546bbe363bb7bd3458b751aefad5c46a4c01df2 566 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEENSbbNmv0Wdx0iirR2FAlWDb33eAFAmozF3IACgkQ2FAlWDb3
+3eAyOxAAjX9HOLV8oyT++EPBl2aeZ7wNvq416Wtyymd3hnWE6BUZC+gKq4heDd9m
+TvHiR4eAQlryvC3wkmgocgC1DMBF0UjBM4+fMxbwvbLNP9pBq6riPYUE2NMKMBRv
+DGI2whSWj0oeX/VnKguumC4a1JjSwxVEknw3OgTJFrwSmhCG/WONu+lc3kecluC0
+FrD/1zsT8zSCqUXEFEbB4QZGQ4ueqLg0tVJ62VmnQlSY2+bNEFi6E4IPkrVp0Aw/
+JCeLhZJkekD7hlyTKb2UlmbtLPhol1A/PCcgplX7Y/hNdv4qBA/W2dkiEra64yQ6
+M8jIpD+rn+EmM/m1qkaF20a4OXTSslmT3pdnujLUwZSElM7Za12qdoxt5X2BqARB
+tOXkhjKEnPTJmXOAOLalBc+IcJ/TyLZs+Ei9oh8FlarGcAhxReAA92elE+wgeEHW
+e1YBApAw4icFUOZ3AEtQIu7HvD2Jjdtv6A7LBdfMHF9w5N0TMS4i7bwhBecpsqUy
+kzTvAKYWW14DA2P3T5909wbMwHebP8hWheeNLt/OWx8t4ZaoR66xKv1hLAdgRhVN
+5mXkr9+DV17BXN7OKEm0NLdj578smXuW4XoftyhjJuecckYOrDionxA28dhL8eTy
+uC+yXZB5ZEDrRJBuCDfiy7KYEBaiIvHUQm5sQTm1cfGI5KvWe58=
+=2Yak
+-----END PGP SIGNATURE-----
