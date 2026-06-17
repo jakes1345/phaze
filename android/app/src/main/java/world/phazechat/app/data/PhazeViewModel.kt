@@ -153,6 +153,88 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     val actionStatus = _actionStatus.asStateFlow()
     fun clearActionStatus() { _actionStatus.value = null }
 
+    // Skype import
+    data class SkypeContact(val displayName: String, val phazeUsername: String, val onPhaze: Boolean, val inviteSent: Boolean)
+    private val _skypeImportStatus = MutableStateFlow<String?>(null)
+    val skypeImportStatus = _skypeImportStatus.asStateFlow()
+    private val _skypeImportBusy = MutableStateFlow(false)
+    val skypeImportBusy = _skypeImportBusy.asStateFlow()
+    private val _skypeContacts = MutableStateFlow<List<SkypeContact>>(emptyList())
+    val skypeContacts = _skypeContacts.asStateFlow()
+    fun clearSkypeImportStatus() { _skypeImportStatus.value = null }
+
+    fun importSkype(uri: android.net.Uri) {
+        val token = _sessionToken.value ?: return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _skypeImportBusy.value = true
+            _skypeImportStatus.value = "Uploading…"
+            try {
+                val bytes = getApplication<Application>().contentResolver.openInputStream(uri)?.readBytes()
+                if (bytes == null) { _skypeImportStatus.value = "Could not read file"; return@launch }
+                val boundary = "----PhazeSkype${System.currentTimeMillis()}"
+                val body = buildMultipart(boundary, "skype_export.zip", bytes)
+                val conn = java.net.URL("https://phazechat.world/api/v1/import/skype")
+                    .openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                conn.doOutput = true
+                conn.outputStream.write(body)
+                val code = conn.responseCode
+                if (code == 200) {
+                    val resp = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val msgs = resp.optInt("messages_imported", 0)
+                    val arr = resp.optJSONArray("contacts") ?: org.json.JSONArray()
+                    val contacts = (0 until arr.length()).map { i ->
+                        val c = arr.getJSONObject(i)
+                        SkypeContact(
+                            displayName = c.optString("display_name"),
+                            phazeUsername = c.optString("phaze_username"),
+                            onPhaze = c.optBoolean("on_phaze"),
+                            inviteSent = c.optBoolean("invite_sent"),
+                        )
+                    }
+                    _skypeContacts.value = contacts
+                    _skypeImportStatus.value = "Imported $msgs messages · ${contacts.size} contacts found"
+                } else {
+                    _skypeImportStatus.value = "Upload failed ($code) — make sure this is the .zip from go.skype.com/export"
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "importSkype: ${e.message}")
+                _skypeImportStatus.value = "Error: ${e.message}"
+            } finally {
+                _skypeImportBusy.value = false
+            }
+        }
+    }
+
+    fun loadSkypeContacts() {
+        val token = _sessionToken.value ?: return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val conn = java.net.URL("https://phazechat.world/api/v1/import/skype/contacts")
+                    .openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                if (conn.responseCode == 200) {
+                    val arr = org.json.JSONArray(conn.inputStream.bufferedReader().readText())
+                    _skypeContacts.value = (0 until arr.length()).map { i ->
+                        val c = arr.getJSONObject(i)
+                        SkypeContact(
+                            displayName = c.optString("display_name"),
+                            phazeUsername = c.optString("phaze_username"),
+                            onPhaze = c.optBoolean("on_phaze"),
+                            inviteSent = c.optBoolean("invite_sent"),
+                        )
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "loadSkypeContacts: ${e.message}")
+            }
+        }
+    }
+
     // Admin global notice popup — broadcast from the admin portal to every client.
     private val _globalNotice = MutableStateFlow<GlobalNotice?>(null)
     val globalNotice = _globalNotice.asStateFlow()
