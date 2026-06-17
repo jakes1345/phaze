@@ -1,0 +1,14 @@
+Package: phaze
+Version: VERSION_PLACEHOLDER
+Architecture: amd64
+Maintainer: Phaze <support@phazechat.world>
+Homepage: https://phazechat.world
+Depends: libwebkit2gtk-4.1-0 (>= 2.36) | libwebkit2gtk-4.0-30 (>= 2.36)
+Section: net
+Priority: optional
+Description: Phaze — encrypted chat, voice and video calls
+ Phaze is an end-to-end encrypted messaging app with voice calls,
+ video calls, spaces (group channels), and real-time presence.
+ Messages are encrypted with NaCl box (libsodium) — the server
+ never sees plaintext. Supports 2FA (TOTP), QR-code device linking,
+ file and voice message sharing, and Stories.
