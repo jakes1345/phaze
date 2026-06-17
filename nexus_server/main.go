@@ -2469,7 +2469,8 @@ func (s *NexusServer) adminPendingVerificationsHandler(w http.ResponseWriter, r 
 		FROM users WHERE is_verified = 0 AND created_at > datetime('now','-24 hours')
 		ORDER BY created_at DESC LIMIT 100`)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		log.Printf("[admin] pending-verifications: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -4054,6 +4055,15 @@ func (s *NexusServer) uploadsServeHandler(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Force download for non-image files — prevents a browser from executing
+	// HTML/SVG/JS if one somehow slips through the extension allowlist.
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic":
+		// Images inline fine; browsers treat them as media, not scripts.
+	default:
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	}
 	http.ServeFile(w, r, full)
 }
 
