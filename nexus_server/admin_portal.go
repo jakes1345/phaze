@@ -114,6 +114,8 @@ const STATE = {
   users: [], totalUsers: 0, limit: 50, offset: 0, usersLoaded: false,
   stats: null, statsLoaded: false,
   reports: [], pending: [], supporters: [], supportersLoaded: false, geoCache: {},
+  servers: [], serversLoaded: false,
+  messages: [], messagesLoaded: false, msgSearch: '',
   search: '',
 };
 
@@ -178,6 +180,11 @@ async function loadPending() { STATE.pending = await api('GET', '/api/v1/admin/p
 async function loadSupporters() { STATE.supporters = await api('GET', '/api/v1/admin/supporters'); renderContent(); }
 async function grantSupporter(id, u) { if (!confirm('Grant supporter badge to @' + (u || '(no account)') + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/grant'); loadSupporters(); }
 async function dismissSupporter(id) { if (!confirm('Dismiss request #' + id + '?')) return; await api('POST', '/api/v1/admin/supporters/' + id + '/dismiss'); loadSupporters(); }
+async function grantSupporterDirect(u) { if (!u) return; if (!confirm('Grant supporter badge directly to @' + u + '?')) return; await api('POST', '/api/v1/admin/grant-supporter', { username: u }); loadSupporters(); }
+async function loadServers() { STATE.servers = await api('GET', '/api/v1/admin/servers'); STATE.serversLoaded = true; renderContent(); }
+async function deleteServer(id, name) { if (!confirm('Delete server "' + name + '" and all its messages? Cannot undo.')) return; if (prompt('Type server name to confirm:') !== name) return; await api('DELETE', '/api/v1/admin/servers?id=' + encodeURIComponent(id)); loadServers(); }
+async function searchMessages(q) { STATE.messages = await api('GET', '/api/v1/admin/messages?q=' + encodeURIComponent(q)); STATE.messagesLoaded = true; renderContent(); }
+async function deleteMessage(id) { if (!confirm('Delete message #' + id + '?')) return; await api('DELETE', '/api/v1/admin/messages?id=' + id); STATE.messages = STATE.messages.filter(m => m.id !== id); renderContent(); }
 async function banUser(u) { const r = prompt('Reason:', 'TOS violation'); if (r === null) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/ban', { reason: r }); loadUsers(); }
 async function unbanUser(u) { if (!confirm('Unban ' + u + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/unban'); loadUsers(); }
 async function setRole(u, role) { if (!confirm('Set ' + u + ' → ' + role + '?')) return; await api('POST', '/api/v1/admin/users/' + encodeURIComponent(u) + '/role', { role }); loadUsers(); }
@@ -224,7 +231,7 @@ function renderLogin() {
   root.appendChild(wrap);
 }
 
-function setTab(t) { STATE.tab = t; STATE.search = ''; STATE.offset = 0; STATE.usersLoaded = false; STATE.statsLoaded = false; STATE.supportersLoaded = false; renderNav(); renderContent(); }
+function setTab(t) { STATE.tab = t; STATE.search = ''; STATE.offset = 0; STATE.usersLoaded = false; STATE.statsLoaded = false; STATE.supportersLoaded = false; STATE.serversLoaded = false; STATE.messagesLoaded = false; STATE.messages = []; renderNav(); renderContent(); }
 
 function renderNav() {
   document.querySelectorAll('.sidebar nav button').forEach(b => {
@@ -243,6 +250,8 @@ function renderShell() {
     { id: 'reports', icon: '⚑', label: 'Reports' },
     { id: 'supporters', icon: '💜', label: 'Supporters' },
     { id: 'pending', icon: '⏳', label: 'Pending' },
+    { id: 'servers', icon: '🖥', label: 'Servers' },
+    { id: 'messages', icon: '🔍', label: 'Messages' },
     { id: 'logs', icon: '📋', label: 'Activity Log' },
     { id: 'broadcast', icon: '📢', label: 'Broadcast' },
     { id: 'notice', icon: '🔔', label: 'Global Notice' },
@@ -388,20 +397,70 @@ function renderContent() {
 
   if (STATE.tab === 'supporters') {
     if (!STATE.supportersLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; STATE.supportersLoaded = true; loadSupporters(); return; }
-    if (!STATE.supporters.length) { el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">People who opted in via the Support form. Match each to your Buy Me a Coffee payment notification, then grant the badge.</p><div class="empty">No pending supporter requests.</div>'; return; }
-    el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">' + STATE.supporters.length + ' pending · match each to your Buy Me a Coffee email, then grant.</p>' +
-      '<table class="tbl"><thead><tr><th>Phaze user</th><th>Name</th><th>Email</th><th>Requested</th><th>Actions</th></tr></thead><tbody>' +
-      STATE.supporters.map(s => '<tr>' +
-        '<td><strong>' + (s.username ? esc(s.username) : '<span style="color:var(--muted)">— none —</span>') + '</strong></td>' +
-        '<td>' + esc(s.name) + '</td>' +
-        '<td style="font-size:0.78rem">' + esc(s.email) + '</td>' +
+    const directRow = '<div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1.25rem">' +
+      '<input id="direct-grant-u" placeholder="Username (direct grant)" style="flex:1;padding:0.6rem 0.85rem;border-radius:10px;border:1px solid var(--edge);background:var(--chrome);color:var(--text);font-size:0.9rem;font-family:inherit">' +
+      '<button class="btn brand" id="direct-grant-btn">💜 Grant badge</button></div>';
+    if (!STATE.supporters.length) {
+      el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">Grant directly by username, or match queue requests to your Buy Me a Coffee email.</p>' + directRow + '<div class="empty">No pending supporter requests.</div>';
+    } else {
+      el.innerHTML = '<h1 class="page-title">Supporters</h1><p class="page-sub">' + STATE.supporters.length + ' pending · match each to your Buy Me a Coffee email, then grant.</p>' + directRow +
+        '<table class="tbl"><thead><tr><th>Phaze user</th><th>Name</th><th>Email</th><th>Requested</th><th>Actions</th></tr></thead><tbody>' +
+        STATE.supporters.map(s => '<tr>' +
+          '<td><strong>' + (s.username ? esc(s.username) : '<span style="color:var(--muted)">— none —</span>') + '</strong></td>' +
+          '<td>' + esc(s.name) + '</td>' +
+          '<td style="font-size:0.78rem">' + esc(s.email) + '</td>' +
+          '<td>' + fmtDate(s.created_at) + '</td>' +
+          '<td><div class="actions">' +
+            '<button class="btn brand" data-grant="' + s.id + '" data-u="' + esc(s.username) + '">💜 Grant badge</button> ' +
+            '<button class="btn" data-dismiss="' + s.id + '">Dismiss</button>' +
+          '</div></td></tr>').join('') + '</tbody></table>';
+      el.querySelectorAll('button[data-grant]').forEach(b => b.addEventListener('click', () => grantSupporter(+b.dataset.grant, b.dataset.u)));
+      el.querySelectorAll('button[data-dismiss]').forEach(b => b.addEventListener('click', () => dismissSupporter(+b.dataset.dismiss)));
+    }
+    el.querySelector('#direct-grant-btn').addEventListener('click', () => grantSupporterDirect(el.querySelector('#direct-grant-u').value.trim()));
+    return;
+  }
+
+  if (STATE.tab === 'servers') {
+    if (!STATE.serversLoaded) { el.innerHTML = '<div class="empty">Loading…</div>'; loadServers(); return; }
+    if (!STATE.servers.length) { el.innerHTML = '<h1 class="page-title">Servers</h1><div class="empty">No servers yet.</div>'; return; }
+    el.innerHTML = '<h1 class="page-title">Servers</h1><p class="page-sub">' + STATE.servers.length + ' total</p>' +
+      '<table class="tbl"><thead><tr><th>Name</th><th>Owner</th><th>Members</th><th>Visibility</th><th>Created</th><th></th></tr></thead><tbody>' +
+      STATE.servers.map(s =>
+        '<tr><td><strong>' + esc(s.name) + '</strong><br><span class="mono" style="font-size:0.7rem;color:var(--muted)">' + esc(s.id) + '</span></td>' +
+        '<td>' + esc(s.owner) + '</td>' +
+        '<td>' + s.member_count + '</td>' +
+        '<td><span class="badge ' + (s.visibility === 'public' ? 'verified' : 'offline') + '">' + esc(s.visibility) + '</span></td>' +
         '<td>' + fmtDate(s.created_at) + '</td>' +
-        '<td><div class="actions">' +
-          '<button class="btn brand" data-grant="' + s.id + '" data-u="' + esc(s.username) + '">💜 Grant badge</button> ' +
-          '<button class="btn" data-dismiss="' + s.id + '">Dismiss</button>' +
-        '</div></td></tr>').join('') + '</tbody></table>';
-    el.querySelectorAll('button[data-grant]').forEach(b => b.addEventListener('click', () => grantSupporter(+b.dataset.grant, b.dataset.u)));
-    el.querySelectorAll('button[data-dismiss]').forEach(b => b.addEventListener('click', () => dismissSupporter(+b.dataset.dismiss)));
+        '<td><button class="btn danger" data-del-id="' + esc(s.id) + '" data-del-name="' + esc(s.name) + '">Delete</button></td></tr>'
+      ).join('') + '</tbody></table>';
+    el.querySelectorAll('[data-del-id]').forEach(b => b.addEventListener('click', () => deleteServer(b.dataset.delId, b.dataset.delName)));
+    return;
+  }
+
+  if (STATE.tab === 'messages') {
+    const searchBar = '<div class="search-bar"><input id="msg-search" placeholder="Search by username or message content…" value="' + esc(STATE.msgSearch) + '"><button class="btn brand" id="msg-search-btn">Search</button></div>';
+    const doSearch = () => { STATE.msgSearch = el.querySelector('#msg-search').value.trim(); if (STATE.msgSearch) searchMessages(STATE.msgSearch); };
+    if (!STATE.messagesLoaded) {
+      el.innerHTML = '<h1 class="page-title">Messages</h1><p class="page-sub">Search channel messages by sender or content. Results capped at 100.</p>' + searchBar;
+      el.querySelector('#msg-search').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+      el.querySelector('#msg-search-btn').addEventListener('click', doSearch);
+      el.querySelector('#msg-search').focus();
+      return;
+    }
+    el.innerHTML = '<h1 class="page-title">Messages</h1><p class="page-sub">Showing ' + STATE.messages.length + ' results for <strong>' + esc(STATE.msgSearch) + '</strong></p>' + searchBar +
+      (STATE.messages.length === 0 ? '<div class="empty">No messages found.</div>' :
+      '<table class="tbl"><thead><tr><th>Sender</th><th>Server / Channel</th><th>Message</th><th>Time</th><th></th></tr></thead><tbody>' +
+      STATE.messages.map(m =>
+        '<tr><td><strong>' + esc(m.sender) + '</strong></td>' +
+        '<td style="font-size:0.78rem">' + esc(m.server_name) + ' / #' + esc(m.channel_name) + '</td>' +
+        '<td style="max-width:320px;word-break:break-word">' + esc(m.body) + '</td>' +
+        '<td>' + relTime(m.created_at) + '</td>' +
+        '<td><button class="btn danger" data-del-msg="' + m.id + '">Delete</button></td></tr>'
+      ).join('') + '</tbody></table>');
+    el.querySelector('#msg-search').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+    el.querySelector('#msg-search-btn').addEventListener('click', doSearch);
+    el.querySelectorAll('[data-del-msg]').forEach(b => b.addEventListener('click', () => deleteMessage(+b.dataset.delMsg)));
     return;
   }
 

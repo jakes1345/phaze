@@ -2523,6 +2523,169 @@ func (s *NexusServer) adminReportsHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(out)
 }
 
+// adminServersHandler lists all servers with owner + member count.
+// DELETE ?id=<id> deletes a server and all its channels/messages.
+func (s *NexusServer) adminServersHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	if r.Method == http.MethodDelete {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "id required", http.StatusBadRequest)
+			return
+		}
+		tx, err := s.DB.Begin()
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		tx.Exec(`DELETE FROM channel_messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id=?)`, id)
+		tx.Exec(`DELETE FROM channels WHERE server_id=?`, id)
+		tx.Exec(`DELETE FROM server_members WHERE server_id=?`, id)
+		tx.Exec(`DELETE FROM servers WHERE id=?`, id)
+		if err := tx.Commit(); err != nil {
+			tx.Rollback()
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[admin] server %s deleted", id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+	rows, err := s.DB.Query(`
+		SELECT s.id, s.name, s.owner, s.visibility, CAST(s.created_at AS TEXT),
+		       COUNT(sm.username) AS member_count
+		  FROM servers s
+		  LEFT JOIN server_members sm ON sm.server_id = s.id
+		 GROUP BY s.id
+		 ORDER BY s.created_at DESC LIMIT 500`)
+	if err != nil {
+		log.Printf("[admin] servers list: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type serverRow struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Owner       string `json:"owner"`
+		Visibility  string `json:"visibility"`
+		CreatedAt   string `json:"created_at"`
+		MemberCount int    `json:"member_count"`
+	}
+	out := []serverRow{}
+	for rows.Next() {
+		var sr serverRow
+		if err := rows.Scan(&sr.ID, &sr.Name, &sr.Owner, &sr.Visibility, &sr.CreatedAt, &sr.MemberCount); err == nil {
+			out = append(out, sr)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// adminMessagesHandler searches channel messages by sender or body fragment.
+// DELETE ?id=<msgID> deletes a specific message.
+func (s *NexusServer) adminMessagesHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	if r.Method == http.MethodDelete {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "id required", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.DB.Exec(`DELETE FROM channel_messages WHERE id=?`, id); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[admin] channel message %s deleted", id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) > 200 {
+		q = q[:200]
+	}
+	if q == "" {
+		http.Error(w, "q required", http.StatusBadRequest)
+		return
+	}
+	rows, err := s.DB.Query(`
+		SELECT cm.id, cm.channel_id, c.name, s.name, cm.sender, cm.body, CAST(cm.created_at AS TEXT)
+		  FROM channel_messages cm
+		  JOIN channels c ON c.id = cm.channel_id
+		  JOIN servers s ON s.id = c.server_id
+		 WHERE cm.sender LIKE ? OR cm.body LIKE ?
+		 ORDER BY cm.created_at DESC LIMIT 100`,
+		"%"+q+"%", "%"+q+"%")
+	if err != nil {
+		log.Printf("[admin] messages search: %v", err)
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type msgRow struct {
+		ID          int64  `json:"id"`
+		ChannelID   string `json:"channel_id"`
+		ChannelName string `json:"channel_name"`
+		ServerName  string `json:"server_name"`
+		Sender      string `json:"sender"`
+		Body        string `json:"body"`
+		CreatedAt   string `json:"created_at"`
+	}
+	out := []msgRow{}
+	for rows.Next() {
+		var m msgRow
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.ChannelName, &m.ServerName, &m.Sender, &m.Body, &m.CreatedAt); err == nil {
+			out = append(out, m)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// adminGrantSupporterHandler grants a supporter badge directly by username,
+// bypassing the supporter_requests queue. For when someone emails you
+// without using the in-app form.
+func (s *NexusServer) adminGrantSupporterHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Username) == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(body.Username)
+	var exists int
+	if err := s.DB.QueryRow(`SELECT 1 FROM users WHERE username=?`, username).Scan(&exists); err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if _, err := s.DB.Exec(
+		`UPDATE users SET supporter=1, supporter_since=CURRENT_TIMESTAMP WHERE username=?`, username,
+	); err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	s.DB.Exec(`INSERT OR IGNORE INTO supporter_requests (username, name, email, status) VALUES (?,?,'','granted')`,
+		username, username)
+	log.Printf("[admin] supporter badge granted directly to %s", username)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (s *NexusServer) adminResolveReportHandler(w http.ResponseWriter, r *http.Request) {
 	admin := s.adminFromRequest(w, r)
 	if admin == "" {
@@ -3805,6 +3968,9 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	http.HandleFunc("/api/v1/admin/banned", adminIPGate(rateLimit(server.adminBannedUsersHandler)))
 	http.HandleFunc("/api/v1/admin/supporters", adminIPGate(rateLimit(server.adminSupportersHandler)))
 	http.HandleFunc("/api/v1/admin/supporters/", adminIPGate(rateLimit(server.adminSupporterActionHandler))) // /{id}/(grant|dismiss)
+	http.HandleFunc("/api/v1/admin/grant-supporter", adminIPGate(rateLimit(server.adminGrantSupporterHandler)))
+	http.HandleFunc("/api/v1/admin/servers", adminIPGate(rateLimit(server.adminServersHandler)))
+	http.HandleFunc("/api/v1/admin/messages", adminIPGate(rateLimit(server.adminMessagesHandler)))
 
 	// Public: opt-in supporter form behind the "Support Phaze" button.
 	http.HandleFunc("/api/v1/support/request", rateLimit(server.supportRequestHandler))

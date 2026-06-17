@@ -16,7 +16,8 @@ COPY nexus_server/ ./nexus_server/
 RUN cd nexus_server \
  && VER="$(cat /src/VERSION)" \
  && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VER" -o /out/nexus-server . \
- && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/seed-admin ./cmd/seed-admin
+ && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/seed-admin ./cmd/seed-admin \
+ && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/grant-supporter ./cmd/grant-supporter
 
 # Build Kai bot
 COPY kai_bot/go.mod kai_bot/go.sum ./kai_bot/
@@ -53,6 +54,7 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=go-build      /out/nexus-server                    /app/nexus-server
 COPY --from=go-build      /out/seed-admin                      /app/seed-admin
+COPY --from=go-build      /out/grant-supporter                 /app/grant-supporter
 COPY --from=go-build      /out/kai-bot                         /app/kai-bot
 COPY --from=litestream-dl /usr/local/bin/litestream            /usr/local/bin/litestream
 COPY --from=web-build     /src/web/dist                        /app/web
