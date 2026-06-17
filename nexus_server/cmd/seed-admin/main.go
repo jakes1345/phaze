@@ -157,14 +157,14 @@ func main() {
 		// is_admin column may not exist yet on older schemas. Try the
 		// UPDATE; if the column is missing, advise the operator to deploy
 		// the new server first.
-		if _, err := db.Exec(`UPDATE users SET is_admin = 1 WHERE username = ?`, *username); err != nil {
+		if _, err := db.Exec(`UPDATE users SET is_admin = 1, role = 'super_admin' WHERE username = ?`, *username); err != nil {
 			if strings.Contains(err.Error(), "no such column: is_admin") {
 				fmt.Println("note: is_admin column missing — deploy the new nexus_server build first, then re-run with -admin")
 			} else {
 				fatal("promote admin: %v", err)
 			}
 		} else {
-			fmt.Printf("promoted %q to admin\n", *username)
+			fmt.Printf("promoted %q to super_admin\n", *username)
 		}
 	}
 
