@@ -639,6 +639,15 @@ func (s *NexusServer) initDB() {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_supporter_requests_status ON supporter_requests(status)`,
+		`CREATE TABLE IF NOT EXISTS bmc_payments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			supporter_name TEXT,
+			supporter_email TEXT,
+			amount TEXT,
+			message TEXT,
+			matched_username TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") && !strings.Contains(err.Error(), "already exists") {
@@ -2649,6 +2658,42 @@ func (s *NexusServer) adminMessagesHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
+// adminBMCPaymentsHandler lists bmc_payments rows — unmatched payments show
+// matched_username=''. Admin can match them manually via grant-supporter CLI
+// or the direct-grant input in the portal.
+func (s *NexusServer) adminBMCPaymentsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.adminFromRequest(w, r) == "" {
+		return
+	}
+	rows, err := s.DB.Query(`SELECT id, supporter_name, supporter_email, amount, message,
+		COALESCE(matched_username,''), CAST(created_at AS TEXT)
+		FROM bmc_payments ORDER BY id DESC LIMIT 200`)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	type row struct {
+		ID              int    `json:"id"`
+		SupporterName   string `json:"supporter_name"`
+		SupporterEmail  string `json:"supporter_email"`
+		Amount          string `json:"amount"`
+		Message         string `json:"message"`
+		MatchedUsername string `json:"matched_username"`
+		CreatedAt       string `json:"created_at"`
+	}
+	out := []row{}
+	for rows.Next() {
+		var rr row
+		if err := rows.Scan(&rr.ID, &rr.SupporterName, &rr.SupporterEmail, &rr.Amount,
+			&rr.Message, &rr.MatchedUsername, &rr.CreatedAt); err == nil {
+			out = append(out, rr)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 // adminGrantSupporterHandler grants a supporter badge directly by username,
 // bypassing the supporter_requests queue. For when someone emails you
 // without using the in-app form.
@@ -3974,6 +4019,9 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 
 	// Public: opt-in supporter form behind the "Support Phaze" button.
 	http.HandleFunc("/api/v1/support/request", rateLimit(server.supportRequestHandler))
+	// Buy Me a Coffee webhook — called by BMC on every new payment.
+	http.HandleFunc("/api/v1/webhooks/buymeacoffee", rateLimit(server.bmcWebhookHandler))
+	http.HandleFunc("/api/v1/admin/bmc-payments", adminIPGate(rateLimit(server.adminBMCPaymentsHandler)))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
