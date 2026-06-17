@@ -1173,10 +1173,13 @@ export default function App() {
           break
 
         case 'read_receipt':
-          // Mark all our sent messages in this conversation as seen (in-memory + localStorage)
+          // Mark our sent messages as seen — only update the live view if the receipt is from the open chat
           if (msg.sender && msg.sender !== meRef.current) {
-            setLog((prev) => prev.map((l) => l.me && !l.seen ? { ...l, seen: true } : l))
-            const my = meRef.current; const peer = msg.sender
+            const peer = msg.sender
+            if (peer === selectedRef.current) {
+              setLog((prev) => prev.map((l) => l.me && !l.seen ? { ...l, seen: true } : l))
+            }
+            const my = meRef.current
             if (my && peer) {
               const stored = loadHistory(my, peer)
               if (stored.some((l) => l.me && !l.seen)) {
