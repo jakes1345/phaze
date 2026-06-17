@@ -1053,6 +1053,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
+			if len(msg.Body) > 100 {
+				continue
+			}
 			log.Printf("User %s searching for: %s", username, msg.Body)
 			results := s.searchUsers(msg.Body, username)
 			client.Send(NexusMessage{
@@ -1173,6 +1176,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			metrics.convoMessages.Add(1)
 			members := s.conversationMembers(msg.ConvoID)
+			// Verify sender is actually a member — prevents message injection
+			// into arbitrary group chats by any authenticated user who learns
+			// or guesses a convo ID.
+			senderInConvo := false
+			for _, m := range members {
+				if m == username {
+					senderInConvo = true
+					break
+				}
+			}
+			if !senderInConvo {
+				continue
+			}
 			var convoName string
 			_ = s.DB.QueryRow(`SELECT name FROM conversations WHERE id = ?`, msg.ConvoID).Scan(&convoName)
 			pushTitle := username
@@ -1213,7 +1229,15 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.Mu.RUnlock()
 
 		case "convo_leave":
-			if username == "" {
+			if username == "" || msg.ConvoID == "" {
+				continue
+			}
+			// Only broadcast if the user was actually a member; prevents
+			// unauthenticated convo_left spam to group members.
+			var wasMember int
+			s.DB.QueryRow(`SELECT 1 FROM conversation_members WHERE convo_id=? AND username=?`,
+				msg.ConvoID, username).Scan(&wasMember)
+			if wasMember == 0 {
 				continue
 			}
 			_ = s.leaveConversation(msg.ConvoID, username)
@@ -2027,7 +2051,13 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "stream_signal":
 			// Relay WebRTC signaling between broadcaster and a specific viewer.
+			// Require that sender and recipient are actual stream participants
+			// (one is host, the other is their registered viewer) to prevent
+			// arbitrary signal injection by unrelated authenticated users.
 			if username == "" || msg.Recipient == "" {
+				continue
+			}
+			if !s.streamAreParticipants(username, msg.Recipient) {
 				continue
 			}
 			s.Mu.RLock()
