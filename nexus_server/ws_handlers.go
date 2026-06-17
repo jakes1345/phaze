@@ -151,6 +151,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				time.Sleep(2 * time.Second)
 				continue
 			}
+			if isVPNOrDatacenter(client.IP) {
+				log.Printf("[security] registration blocked from VPN/datacenter IP %s", client.IP)
+				client.Send(NexusMessage{Type: "register_result", Error: "Registration is not available from VPN or proxy connections. Please disable your VPN and try again."})
+				continue
+			}
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
 			if err != nil {
 				authTracker.recordFail(client.IP, "")
