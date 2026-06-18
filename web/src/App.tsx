@@ -975,9 +975,11 @@ export default function App() {
 
       switch (msg.type) {
         case 'auth_result':
-          if (msg.status === 'ok' && msg.qr_token) {
-            localStorage.setItem(SESSION_KEY, msg.qr_token)
-            setSessionToken(msg.qr_token)
+          if (msg.status === 'ok' && (msg.qr_token || msg.sender)) {
+            if (msg.qr_token) {
+              localStorage.setItem(SESSION_KEY, msg.qr_token)
+              setSessionToken(msg.qr_token)
+            }
             setMe(msg.sender ?? null)
             setErr('')
             if (msg.turn_config) setTurn(msg.turn_config)
