@@ -54,14 +54,11 @@ export default function SupportBubble({ sessionToken, me }: Props) {
     setDraft('')
     setBusy(true)
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`
-      // Strip the initial greeting from history sent to the model — it's
-      // UI scaffolding, not a real assistant turn.
       const apiMessages = next.filter((m, i) => !(i === 0 && m === GREETING))
       const resp = await fetch('/api/v1/support/chat', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ messages: apiMessages }),
       })
       if (!resp.ok) {
@@ -82,11 +79,10 @@ export default function SupportBubble({ sessionToken, me }: Props) {
     if (escalated) return
     const note = msgs.map((m) => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.content}`).slice(-8).join('\n')
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`
       const resp = await fetch('/api/v1/support/escalate', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username: me ?? '', note }),
       })
       if (!resp.ok) {

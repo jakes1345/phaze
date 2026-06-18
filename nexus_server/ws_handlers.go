@@ -71,6 +71,42 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 	var username string
 
+	// Cookie pre-auth: web clients set an HttpOnly cookie at login time.
+	// The browser sends it automatically with every WS upgrade request, so
+	// we can authenticate the connection without a session_auth message —
+	// the token never has to touch JS memory or localStorage.
+	if u := s.sessionUsername(tokenFromRequest(r)); u != "" {
+		if banned, reason := s.userBanInfo(u); !banned {
+			username = u
+			s.DB.Exec("UPDATE users SET last_ip = ?, last_login_at = CURRENT_TIMESTAMP WHERE username = ?", clientIP(r), username)
+			s.autoJoinGlobalSpace(username)
+			s.Mu.Lock()
+			if existing, ok := s.Clients[username]; ok {
+				existing.Send(NexusMessage{Type: "kicked", Body: "Logged in from another location"})
+				existing.Conn.Close()
+			}
+			client.Username = username
+			client.Status = "Online"
+			s.Clients[username] = client
+			s.Mu.Unlock()
+			log.Printf("User %s pre-authed via cookie from %s", username, clientIP(r))
+			client.Send(NexusMessage{
+				Type:       "auth_result",
+				Status:     "ok",
+				Sender:     username,
+				TurnConfig: s.generateMediaToken(username),
+			})
+			s.broadcastPresence(username, "Online")
+			s.deliverOfflineMessages(username)
+		} else {
+			msg := "Account suspended"
+			if reason != "" {
+				msg += ": " + reason
+			}
+			client.Send(NexusMessage{Type: "auth_result", Error: msg, Status: "banned"})
+		}
+	}
+
 	for {
 		var msg NexusMessage
 		err := ws.ReadJSON(&msg)

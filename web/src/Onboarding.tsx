@@ -37,7 +37,7 @@ export default function Onboarding({ me, sessionToken, onAddFriend, onJump, onCl
     fd.append('file', file)
     const r = await fetch('/api/v1/upload', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
       body: fd,
     })
     if (!r.ok) return
