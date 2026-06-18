@@ -327,11 +327,13 @@
     .partial { color: #f59e0b; }
 
     /* ── SCROLL ANIMATIONS ─────────────────────────────── */
-    .reveal {
-      opacity: 0; transform: translateY(32px);
+    /* Default visible — JS enhances with animation, never hides content */
+    .reveal { opacity: 1; transform: translateY(0); }
+    .reveal.will-animate {
+      opacity: 0; transform: translateY(28px);
       transition: opacity .6s ease, transform .6s ease;
     }
-    .reveal.visible { opacity: 1; transform: translateY(0); }
+    .reveal.will-animate.visible { opacity: 1; transform: translateY(0); }
 
     /* ── RESPONSIVE ────────────────────────────────────── */
     @media (max-width: 768px) {
@@ -688,11 +690,20 @@
 </footer>
 
 <script>
-  // Scroll reveal
+  // Scroll reveal — mark elements for animation only if JS is running,
+  // so content is never hidden from crawlers or users with slow JS.
+  const revealEls = document.querySelectorAll('.reveal')
+  revealEls.forEach(el => el.classList.add('will-animate'))
   const observer = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible') })
-  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' })
-  document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target) } })
+  }, { threshold: 0.08, rootMargin: '0px 0px -20px 0px' })
+  revealEls.forEach(el => {
+    if (el.getBoundingClientRect().top < window.innerHeight) {
+      el.classList.add('visible') // already in viewport on load
+    } else {
+      observer.observe(el)
+    }
+  })
 
   // Smooth nav link highlighting
   const sections = document.querySelectorAll('section[id]')
