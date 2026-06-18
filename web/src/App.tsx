@@ -1004,10 +1004,11 @@ export default function App() {
               localStorage.setItem(SESSION_KEY, msg.qr_token)
               setSessionToken(msg.qr_token)
             }
+            const wasLoggedIn = !!meRef.current
             setMe(msg.sender ?? null)
             setErr('')
             if (msg.turn_config) setTurn(msg.turn_config)
-            playPhazeSound('Login.wav')
+            if (!wasLoggedIn) playPhazeSound('Login.wav')
             sendRef.current({
               type: 'presence',
               sender: msg.sender,
@@ -1253,6 +1254,13 @@ export default function App() {
             incomingCallSdpRef.current = msg.sdp
             setCallState({ peer: msg.sender, type: (msg.body as 'audio' | 'video') || 'audio', status: 'ringing', direction: 'incoming' })
             startRinger('CallIncoming.wav')
+            if (Notification.permission === 'granted') {
+              new Notification(`Incoming call from ${msg.sender}`, {
+                body: 'Open Phaze to answer',
+                icon: '/web/favicon.svg',
+                tag: 'phaze-call',
+              })
+            }
           }
           break
 
@@ -1501,6 +1509,23 @@ export default function App() {
     }
   }, [])
   useEffect(() => { ingestDMHistoryRef.current = ingestDMHistory }, [ingestDMHistory])
+
+  // Unlock browser audio on first user interaction so ringtones work without gesture.
+  useEffect(() => {
+    const unlock = () => {
+      const a = new Audio(phazeSoundUrl('Beep.wav'))
+      a.volume = 0
+      void a.play().catch(() => {})
+      document.removeEventListener('click', unlock, true)
+      document.removeEventListener('keydown', unlock, true)
+    }
+    document.addEventListener('click', unlock, true)
+    document.addEventListener('keydown', unlock, true)
+    return () => {
+      document.removeEventListener('click', unlock, true)
+      document.removeEventListener('keydown', unlock, true)
+    }
+  }, [])
 
   const openChat = (name: string) => {
     setSelected(name)
