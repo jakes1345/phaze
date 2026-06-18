@@ -7,9 +7,6 @@ interface Msg {
 }
 
 interface Props {
-  /** Auth bearer token, if user is signed in. Optional. */
-  sessionToken?: string | null
-  /** Authenticated username, optional — sent to the human-handoff endpoint. */
   me?: string | null
 }
 
@@ -20,7 +17,7 @@ const GREETING: Msg = {
   content: "Hi! I'm Phaze Helper. Ask me anything about Phaze — how to make calls, join Spaces, set up Recovery PIN, anything. Or tap \"Talk to a human\" and a live agent will follow up.",
 }
 
-export default function SupportBubble({ sessionToken, me }: Props) {
+export default function SupportBubble({ me }: Props) {
   const [open, setOpen] = useState(false)
   const [msgs, setMsgs] = useState<Msg[]>(() => {
     try {
