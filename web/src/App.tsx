@@ -2065,7 +2065,7 @@ export default function App() {
       )}
 
       {/* ── Support chat bubble (always available) ───────────────── */}
-      <SupportBubble sessionToken={sessionToken} me={me} />
+      <SupportBubble me={me} />
       {showSupport && <SupportForm me={me} bmcUrl={bmcUrl} onClose={() => setShowSupport(false)} />}
 
       {/* ── User profile modal ───────────────────────────────────── */}
