@@ -78,8 +78,6 @@ function Snowflakes() {
     </div>
   )
 }
-const BACKUP_NAG_KEY = 'phaze_backup_nag_dismissed_at_v1'
-const BACKUP_NAG_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
 const HISTORY_LIMIT = 500
 const historyKey = (me: string, peer: string) => `phaze_chat_${me}_${peer}_v1`
 const unreadKey = (me: string) => `phaze_unread_${me}_v1`
@@ -577,7 +575,6 @@ export default function App() {
   const [restorePin, setRestorePin] = useState('')
   const [restoreBusy, setRestoreBusy] = useState(false)
   const restoreCheckedRef = useRef(false)
-  const [showBackupNag, setShowBackupNag] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState('')
   const [globalSearchResults, setGlobalSearchResults] = useState<string[]>([])
@@ -1168,16 +1165,8 @@ export default function App() {
             // Server returned a backup blob. Prompt restore only if the current
             // device doesn't already have the same public key (i.e. fresh session).
             setRestoreBackup(msg.key_backup)
-          } else if (msg.status === 'not_found') {
-            // No backup on server — nag them to set a PIN. Respect 7-day cooldown.
-            const dismissedAt = Number(localStorage.getItem(BACKUP_NAG_KEY) || '0')
-            if (Date.now() - dismissedAt > BACKUP_NAG_COOLDOWN_MS) {
-              setShowBackupNag(true)
-            }
           } else if (msg.status === 'stored') {
             setErr('✓ Recovery PIN saved')
-            setShowBackupNag(false)
-            localStorage.setItem(BACKUP_NAG_KEY, String(Date.now()))
           } else if (msg.status === 'deleted') {
             setErr('Recovery backup removed')
           } else if (msg.error) {
@@ -2056,17 +2045,6 @@ export default function App() {
         </div>
       )}
 
-      {me && showBackupNag && !settingsOpen && (
-        <div className="backup-nag">
-          <span className="backup-nag-icon">🔐</span>
-          <div className="backup-nag-text">
-            <strong>Protect your chat history.</strong>
-            <span>Set a Recovery PIN so you can sign in on a new browser or device without losing your encrypted messages.</span>
-          </div>
-          <button type="button" className="backup-nag-cta" onClick={() => { setSettingsInitialTab('devices'); setSettingsOpen(true) }}>Set PIN</button>
-          <button type="button" className="backup-nag-dismiss" title="Remind me later" onClick={() => { setShowBackupNag(false); localStorage.setItem(BACKUP_NAG_KEY, String(Date.now())) }}>✕</button>
-        </div>
-      )}
 
       {/* ── Onboarding (first sign-in only) ─────────────────────── */}
       {me && sessionToken && onboardingOpen && (
