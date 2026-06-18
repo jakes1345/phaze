@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// ---------- Auth brute-force protection ----------
-
 // authFailTracker tracks per-IP and per-user consecutive failed auth attempts.
 // When thresholds are breached, connections are throttled or blocked entirely.
 type authFailTracker struct {

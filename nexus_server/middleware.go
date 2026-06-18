@@ -82,8 +82,8 @@ func writeSecurityHeaders(w http.ResponseWriter) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-	// Explicitly disable the legacy XSS auditor — modern CSP replaces it and
-	// the auditor itself has historically introduced reflected-XSS bypasses.
+	// Disable the legacy XSS auditor — modern CSP replaces it and the auditor
+	// has historically introduced reflected-XSS bypasses.
 	h.Set("X-XSS-Protection", "0")
 	// Prevent cross-origin windows from keeping a reference to this one.
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
