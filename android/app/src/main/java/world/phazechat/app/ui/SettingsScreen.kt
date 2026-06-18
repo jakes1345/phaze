@@ -70,6 +70,10 @@ fun SettingsScreen(
     onLoadSkypeContacts: (() -> Unit)? = null,
     onAddFriendFromSkype: ((String) -> Unit)? = null,
     onClearSkypeStatus: (() -> Unit)? = null,
+    // Referral
+    referralCount: Int = 0,
+    referredUsers: List<String> = emptyList(),
+    onGetReferralStats: (() -> Unit)? = null,
 ) {
     var editMood by remember { mutableStateOf(mood) }
     var editName by remember { mutableStateOf(displayName.ifEmpty { me }) }
@@ -529,7 +533,14 @@ fun SettingsScreen(
                                 ) { Text("Add", fontSize = 12.sp) }
                             } else {
                                 OutlinedButton(
-                                    onClick = { /* TODO: share invite link */ },
+                                    onClick = {
+                                        val link = "https://phazechat.world/web?ref=$me"
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, "Join me on Phaze! $link")
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Invite ${c.displayName}"))
+                                    },
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 ) { Text("Invite", fontSize = 12.sp) }
                             }
@@ -542,6 +553,71 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
         }
+
+        // ── Invite Friends ───────────────────────────────────────────
+        Text("INVITE FRIENDS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
+        Spacer(Modifier.height(8.dp))
+
+        LaunchedEffect(Unit) { onGetReferralStats?.invoke() }
+
+        if (referralCount > 0) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("$referralCount", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                    Text(if (referralCount == 1) "person joined from your link" else "people joined from your link",
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    if (referredUsers.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(referredUsers.joinToString(", "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        val inviteLink = "https://phazechat.world/web?ref=${me}"
+        val inviteText = "Join me on Phaze — encrypted chat & calls! $inviteLink"
+
+        Button(
+            onClick = {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, inviteText)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share Phaze"))
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Share my invite link") }
+
+        Spacer(Modifier.height(6.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    val uri = Uri.parse("https://twitter.com/intent/tweet?text=${Uri.encode(inviteText)}")
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Twitter / X", fontSize = 12.sp) }
+
+            OutlinedButton(
+                onClick = {
+                    val uri = Uri.parse("https://wa.me/?text=${Uri.encode(inviteText)}")
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("WhatsApp", fontSize = 12.sp) }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
 
         Text("SUPPORT PHAZE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
         Spacer(Modifier.height(8.dp))

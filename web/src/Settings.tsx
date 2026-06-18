@@ -72,6 +72,10 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   const [delPw, setDelPw] = useState('')
   const [delMsg, setDelMsg] = useState('')
 
+  // Referral stats
+  const [referralCount, setReferralCount] = useState<number | null>(null)
+  const [referredUsers, setReferredUsers] = useState<string[]>([])
+
   // Skype import
   const [importBusy, setImportBusy] = useState(false)
   const [importMsg, setImportMsg] = useState('')
@@ -88,6 +92,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   useEffect(() => {
     if (tab === 'sessions') send({ type: 'list_sessions' })
     if (tab === 'import') loadSkypeContacts()
+    if (tab === 'invite' && referralCount === null) send({ type: 'get_referral_stats' })
   }, [tab, send])
 
   const onMsg = useCallback((msg: NexusMessage) => {
@@ -154,6 +159,10 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
       case 'invite_result':
         setInviteMsg(msg.status === 'sent' ? 'Invite sent!' : (msg.error || 'Error'))
         if (msg.status === 'sent') setInviteEmail('')
+        break
+      case 'referral_stats':
+        setReferralCount(parseInt(msg.token || '0', 10))
+        setReferredUsers(msg.results || [])
         break
       case 'sessions_list':
         try { setSessions(JSON.parse(msg.body || '[]') as Session[]) } catch { /* ignore */ }
@@ -411,34 +420,63 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
           {/* ── Invite Friends ─────────────────────────────────── */}
           {tab === 'invite' && (
             <div className="settings-section">
-              <h3 className="settings-section-title">Share Phaze</h3>
-              <p className="settings-label">Every person you bring to Phaze makes the network stronger. Share your personal link or send an email invite.</p>
+              {referralCount !== null && referralCount > 0 && (
+                <div className="referral-stat-box">
+                  <span className="referral-stat-num">{referralCount}</span>
+                  <span className="referral-stat-label">{referralCount === 1 ? 'person' : 'people'} joined Phaze from your link</span>
+                  {referredUsers.length > 0 && (
+                    <p className="referral-users">{referredUsers.join(', ')}</p>
+                  )}
+                </div>
+              )}
 
+              <h3 className="settings-section-title">Your invite link</h3>
+              <p className="settings-label">Anyone who signs up through this link is counted as your referral.</p>
               <div className="invite-link-box">
                 <input className="settings-input" readOnly value={inviteLink} onClick={(e) => (e.target as HTMLInputElement).select()} />
                 <button className="settings-btn" onClick={async () => {
                   try {
-                    if (typeof navigator.share === 'function') {
-                      await navigator.share({ title: 'Join me on Phaze', text: 'Encrypted chat, calls, and more — join me on Phaze!', url: inviteLink })
-                    } else {
-                      await navigator.clipboard.writeText(inviteLink)
-                      setInviteMsg('Link copied!')
-                    }
-                  } catch { setInviteMsg('Link copied!'); void navigator.clipboard.writeText(inviteLink).catch(() => {}) }
-                }}>{typeof navigator.share === 'function' ? 'Share' : 'Copy link'}</button>
+                    await navigator.clipboard.writeText(inviteLink)
+                    setInviteMsg('Link copied!')
+                  } catch { setInviteMsg('Link copied!') }
+                }}>Copy</button>
+              </div>
+
+              <div className="invite-share-row">
+                <a
+                  className="settings-btn invite-share-btn"
+                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Join me on Phaze — encrypted chat, calls & more 🔒 ${inviteLink}`)}`}
+                  target="_blank" rel="noreferrer"
+                >Twitter / X</a>
+                <a
+                  className="settings-btn invite-share-btn"
+                  href={`https://wa.me/?text=${encodeURIComponent(`Join me on Phaze — encrypted chat & calls! ${inviteLink}`)}`}
+                  target="_blank" rel="noreferrer"
+                >WhatsApp</a>
+                <a
+                  className="settings-btn invite-share-btn"
+                  href={`https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(`Join me on Phaze — encrypted chat & calls!`)}`}
+                  target="_blank" rel="noreferrer"
+                >Telegram</a>
+                {typeof navigator.share === 'function' && (
+                  <button className="settings-btn invite-share-btn" onClick={async () => {
+                    try { await navigator.share({ title: 'Join me on Phaze', text: 'Encrypted chat, calls, and more!', url: inviteLink }) }
+                    catch { /* user cancelled */ }
+                  }}>More</button>
+                )}
               </div>
 
               <hr className="settings-divider" />
 
               <h3 className="settings-section-title">Email invite</h3>
-              <p className="settings-label">We'll send them an invite with your name on it.</p>
+              <p className="settings-label">We'll send them a personal invite email from you.</p>
               <div className="invite-link-box">
                 <input className="settings-input" type="email" placeholder="friend@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
                 <button className="settings-btn" disabled={!inviteEmail.includes('@')} onClick={() => {
                   send({ type: 'invite_email', email: inviteEmail })
                 }}>Send invite</button>
               </div>
-              {inviteMsg && <p className={`settings-msg ${inviteMsg.includes('!') ? 'ok' : 'err'}`}>{inviteMsg}</p>}
+              {inviteMsg && <p className={`settings-msg ${inviteMsg.includes('!') || inviteMsg.includes('copied') ? 'ok' : 'err'}`}>{inviteMsg}</p>}
             </div>
           )}
 
