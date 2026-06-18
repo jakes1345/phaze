@@ -335,7 +335,7 @@ var (
 // For production traffic, set PHAZE_TURN_URL + PHAZE_TURN_SECRET to point
 // at a self-hosted coturn instance — open relay has bandwidth limits.
 var openRelayTURN = &TurnConfig{
-	URL:      "turn:openrelay.metered.ca:80",
+	URL:      "turn:global.relay.metered.ca:80",
 	Username: "openrelayproject",
 	Password: "openrelayproject",
 }
