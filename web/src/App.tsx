@@ -667,6 +667,7 @@ export default function App() {
   const ingestDMHistoryRef = useRef<(peer: string, rows: import('./nexusTypes').DMMessage[]) => void>(() => {})
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const remoteAudioRef = useRef<HTMLAudioElement>(null)
 
   useEffect(() => {
     meRef.current = me
@@ -877,11 +878,17 @@ export default function App() {
 
   const makePC = useCallback((recipient: string): RTCPeerConnection => {
     const iceServers: RTCIceServer[] = turnRef.current
-      ? [{ urls: turnRef.current.url, username: turnRef.current.username, credential: turnRef.current.password }]
+      ? [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: turnRef.current.url, username: turnRef.current.username, credential: turnRef.current.password },
+        ]
       : [{ urls: 'stun:stun.l.google.com:19302' }]
     const pc = new RTCPeerConnection({ iceServers })
     pc.ontrack = (e) => {
-      if (remoteVideoRef.current && e.streams[0]) remoteVideoRef.current.srcObject = e.streams[0]
+      const stream = e.streams[0]
+      if (!stream) return
+      if (remoteAudioRef.current) remoteAudioRef.current.srcObject = stream
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream
     }
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -2065,6 +2072,8 @@ export default function App() {
       {/* ── Call overlay ─────────────────────────────────────────── */}
       {callState && (
         <div className="call-overlay">
+          {/* Always-present audio element so remote audio plays in audio-only calls */}
+          <audio ref={remoteAudioRef} autoPlay style={{ display: 'none' }} />
           {callState.type === 'video' && (
             <div className="call-videos">
               <video ref={remoteVideoRef} autoPlay playsInline className="call-remote" />
