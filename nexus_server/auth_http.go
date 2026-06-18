@@ -6,10 +6,6 @@ import (
 	"time"
 )
 
-// POST /api/v1/auth/login
-// Body: {"username":"...","password":"...","totp_code":"..."}
-// On success: sets HttpOnly phaze_session cookie, returns {"username","display_name"}.
-// The session token is NEVER in the response body — only in the cookie.
 func (s *NexusServer) httpLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -104,8 +100,6 @@ func (s *NexusServer) httpLoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/v1/auth/logout
-// Revokes the current cookie session.
 func (s *NexusServer) httpLogoutHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -119,9 +113,6 @@ func (s *NexusServer) httpLogoutHandler(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GET /api/v1/auth/me
-// Returns the current user's basic info if the session cookie is valid.
-// Used by the web app on startup to check if still logged in.
 func (s *NexusServer) httpMeHandler(w http.ResponseWriter, r *http.Request) {
 	tok := tokenFromRequest(r)
 	username := s.sessionUsername(tok)

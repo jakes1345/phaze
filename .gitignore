@@ -1,7 +1,4 @@
-# Phaze Sovereign Git Ignore
-# Protects raw assets and build artifacts from the tree.
-
-# Local Make overrides (paths, secrets for dev machines)
+# build artifacts, local overrides, secrets
 local.mk
 
 # Build artifacts
@@ -13,7 +10,7 @@ fyne-cross/
 *.log
 .fuse_hidden*
 
-# Client binaries (repo-root + per-module)
+# Client binaries
 /tazher-client
 /tazher-nexus
 /tazher-nexus-linux
@@ -46,14 +43,12 @@ nexus_server/nexus-server
 nexus_server/skype-nexus
 nexus_server/tazher-nexus
 
-# Raw Assets (Sovereign Lockdown): unencrypted source assets stay local.
+# Local assets (unencrypted source stays off the repo)
 native_client/assets/
 assets_sovereign_backup/
 research_files/
 
-# Keep the encrypted vault in the tree.
 !native_client/assets.vault
-# fyne-cross needs the public app icon at build time; not a secret.
 !native_client/assets/Icon.png
 
 # Local databases
@@ -61,7 +56,7 @@ research_files/
 *.db-shm
 *.db-wal
 
-# Dev tooling (vault packer is local-only, ignored from source)
+# Dev tooling
 native_client/vault_lock.go
 
 # Android
@@ -70,11 +65,14 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/app/phaze-release.keystore
 
 # System
 .DS_Store
-
-# Legacy reverse-engineering trees (Skype dumps, Ghidra exports) are intentionally
-# not part of this repo — add them only in a private fork if you still need them.
 __pycache__/
-android/app/phaze-release.keystore
+
+# Private AI/tooling files — not for the public repo
+AGENTS.md
+CLAUDE.md
+docs/AI_OPS.md
+PHAZE_ENGINEERING_GUIDELINE.md
