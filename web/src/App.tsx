@@ -421,7 +421,11 @@ export default function App() {
     })
   }
   const inviteCode = useMemo(() => new URLSearchParams(window.location.search).get('invite'), [])
-  const [mode, setMode] = useState<'login' | 'register' | 'link' | 'forgot'>(() => (new URLSearchParams(window.location.search).get('invite') ? 'register' : 'login'))
+  const refBy = useMemo(() => new URLSearchParams(window.location.search).get('ref'), [])
+  const [mode, setMode] = useState<'login' | 'register' | 'link' | 'forgot'>(() => {
+    const p = new URLSearchParams(window.location.search)
+    return (p.get('invite') || p.get('ref')) ? 'register' : 'login'
+  })
   const [forgotEmail, setForgotEmail] = useState('')
   const [linkInput, setLinkInput] = useState('')
   const [linkBusy, setLinkBusy] = useState(false)
@@ -1726,7 +1730,7 @@ export default function App() {
     if (regUser.length < 3 || regUser.length > 32) { setErr('Username must be 3–32 characters'); return }
     if (regPass.length < 8) { setErr('Password must be at least 8 characters'); return }
     if (!regEmail.includes('@')) { setErr('Enter a valid email'); return }
-    send({ type: 'register', sender: regUser, body: regPass, email: regEmail, token: inviteCode ?? undefined })
+    send({ type: 'register', sender: regUser, body: regPass, email: regEmail, token: inviteCode ?? undefined, ref_by: refBy ?? undefined })
   }
 
   const doVerify = () => {
@@ -2275,6 +2279,7 @@ export default function App() {
                   </div>
                 ) : regStep === 'form' ? (
                   <form className="form" onSubmit={(e) => { e.preventDefault(); doRegister() }}>
+                    {refBy && <p className="invite-banner">👋 <strong>{refBy}</strong> invited you to Phaze!</p>}
                     <input placeholder="Choose a username (3–32 chars)" value={regUser} onChange={(e) => setRegUser(e.target.value)} autoComplete="username" />
                     <input type="email" placeholder="Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} autoComplete="email" required />
                     <input type="password" placeholder="Password (8+ chars)" value={regPass} onChange={(e) => setRegPass(e.target.value)} autoComplete="new-password" />

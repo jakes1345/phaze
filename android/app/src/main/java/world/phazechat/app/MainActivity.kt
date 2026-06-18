@@ -86,6 +86,8 @@ class MainActivity : ComponentActivity() {
 fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val me by vm.me.collectAsState()
     val authError by vm.authError.collectAsState()
+    val pendingVerification by vm.pendingVerification.collectAsState()
+    val pendingVerifyUsername by vm.pendingVerifyUsername.collectAsState()
     val friends by vm.friends.collectAsState()
     val pending by vm.pending.collectAsState()
     val unread by vm.unread.collectAsState()
@@ -341,6 +343,10 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             error = authError,
             onLogin = { u, p -> vm.login(u, p) },
             onRegister = { u, e, p -> vm.register(u, e, p) },
+            onVerifyEmail = { code -> vm.verifyEmail(code) },
+            onResendVerification = { email -> vm.resendVerification(email) },
+            onCancelVerification = { vm.cancelVerification() },
+            pendingVerification = pendingVerification,
             onLoginWithLinkCode = { vm.loginWithLinkCode(it) },
             onCancelLinkLogin = { vm.cancelLinkLogin() },
             scannedLinkCode = scannedLinkCode,
@@ -495,6 +501,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                         onLoadSkypeContacts = { vm.loadSkypeContacts() },
                         onAddFriendFromSkype = { username -> vm.sendFriendRequest(username) },
                         onClearSkypeStatus = { vm.clearSkypeImportStatus() },
+                        referralCount = vm.referralCount.collectAsState().value,
+                        referredUsers = vm.referredUsers.collectAsState().value,
+                        onGetReferralStats = { vm.getReferralStats() },
                     )
                 }
             }
