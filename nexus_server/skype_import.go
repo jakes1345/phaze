@@ -27,6 +27,7 @@ type skypeMessage struct {
 	MessageType         string `json:"messagetype"`
 	Content             string `json:"content"`
 	DisplayName         string `json:"displayName"`
+	From                string `json:"from"` // e.g. "8:username" — skype ID of sender
 }
 
 var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
@@ -39,14 +40,6 @@ func stripHTML(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func skypeBearer(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimPrefix(h, "Bearer ")
-	}
-	return ""
-}
-
 // skypeImportHandler: POST /api/v1/import/skype
 // Accepts multipart form with a "file" field (Skype export ZIP).
 func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +47,7 @@ func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	username := s.sessionUsername(skypeBearer(r))
+	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
 		http.Error(w, "auth required", http.StatusUnauthorized)
 		return
@@ -120,23 +113,40 @@ func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request)
 				if body == "" || len(body) > 4000 {
 					continue
 				}
-				s.DB.Exec(`INSERT OR IGNORE INTO skype_import_messages
+				res, err := s.DB.Exec(`INSERT OR IGNORE INTO skype_import_messages
 					(username, conversation_id, conversation_display, sender_display, body, sent_at)
 					VALUES (?, ?, ?, ?, ?, ?)`,
 					username, convo.ID, convo.DisplayName, msg.DisplayName, body, msg.OriginalArrivalTime)
-				result.MessagesImported++
+				if err == nil {
+					if n, _ := res.RowsAffected(); n > 0 {
+						result.MessagesImported++
+					}
+				}
 			}
 
-			// Collect unique conversation partners
+			// Collect unique 1:1 conversation partners only.
+			// Group conversations have IDs like "19:xxx@thread.skype" — skip them.
 			if seen[convo.ID] || convo.DisplayName == "" {
+				continue
+			}
+			if strings.Contains(convo.ID, "@thread") {
 				continue
 			}
 			seen[convo.ID] = true
 
+			// Try to match by display_name first, then by username as fallback.
 			var phazeUser string
-			s.DB.QueryRow(`SELECT username FROM users WHERE LOWER(username)=LOWER(?)`, convo.DisplayName).Scan(&phazeUser)
+			s.DB.QueryRow(`SELECT username FROM users WHERE LOWER(display_name)=LOWER(?) LIMIT 1`, convo.DisplayName).Scan(&phazeUser)
+			if phazeUser == "" {
+				s.DB.QueryRow(`SELECT username FROM users WHERE LOWER(username)=LOWER(?) LIMIT 1`, convo.DisplayName).Scan(&phazeUser)
+			}
+
+			var phazeUserNullable *string
+			if phazeUser != "" {
+				phazeUserNullable = &phazeUser
+			}
 			s.DB.Exec(`INSERT OR IGNORE INTO skype_import_contacts (username, skype_id, display_name, phaze_username)
-				VALUES (?, ?, ?, NULLIF(?,'''))`, username, convo.ID, convo.DisplayName, phazeUser)
+				VALUES (?, ?, ?, ?)`, username, convo.ID, convo.DisplayName, phazeUserNullable)
 
 			result.Contacts = append(result.Contacts, contactOut{
 				DisplayName:   convo.DisplayName,
@@ -152,7 +162,7 @@ func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request)
 
 // skypeContactsHandler: GET /api/v1/import/skype/contacts
 func (s *NexusServer) skypeContactsHandler(w http.ResponseWriter, r *http.Request) {
-	username := s.sessionUsername(skypeBearer(r))
+	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
 		http.Error(w, "auth required", http.StatusUnauthorized)
 		return
@@ -186,46 +196,54 @@ func (s *NexusServer) skypeContactsHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
-// skypeInviteHandler: POST /api/v1/import/skype/invite
-// Body: {"display_names": ["Alice", "Bob"]}
-func (s *NexusServer) skypeInviteHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	username := s.sessionUsername(skypeBearer(r))
+// skypeMessagesHandler: GET /api/v1/import/skype/messages?contact=DisplayName
+// Returns up to 200 imported Skype messages for a given conversation partner.
+func (s *NexusServer) skypeMessagesHandler(w http.ResponseWriter, r *http.Request) {
+	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
 		http.Error(w, "auth required", http.StatusUnauthorized)
 		return
 	}
-
-	var body struct {
-		DisplayNames []string `json:"display_names"`
-	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.DisplayNames) == 0 {
-		http.Error(w, "display_names required", http.StatusBadRequest)
+	contact := r.URL.Query().Get("contact")
+	if contact == "" {
+		http.Error(w, "contact required", http.StatusBadRequest)
 		return
 	}
-
-	sent := 0
-	for _, name := range body.DisplayNames {
-		if sent >= 20 {
-			break
-		}
-		var email string
-		s.DB.QueryRow(`SELECT COALESCE(email,'') FROM skype_import_contacts
-			WHERE username=? AND display_name=?`, username, name).Scan(&email)
-		if email == "" {
-			continue
-		}
-		go s.sendEmailLogged(email,
-			username+" invited you to Phaze",
-			emailInvite(username, "https://phazechat.world"),
-		)
-		s.DB.Exec(`UPDATE skype_import_contacts SET invite_sent=1 WHERE username=? AND display_name=?`, username, name)
-		sent++
+	rows, err := s.DB.Query(`SELECT sender_display, body, sent_at
+		FROM skype_import_messages
+		WHERE username=? AND conversation_display=?
+		ORDER BY sent_at ASC LIMIT 200`, username, contact)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
 	}
-
+	defer rows.Close()
+	type msg struct {
+		Sender string `json:"sender"`
+		Body   string `json:"body"`
+		SentAt string `json:"sent_at"`
+	}
+	out := []msg{}
+	for rows.Next() {
+		var m msg
+		rows.Scan(&m.Sender, &m.Body, &m.SentAt)
+		out = append(out, m)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"sent": sent})
+	json.NewEncoder(w).Encode(out)
+}
+
+// skypeInviteHandler: GET /api/v1/import/skype/invite-link
+// Returns a shareable invite link with the user's referral code.
+// Skype exports contain no email addresses so email-based invites are not possible;
+// instead the user copies/shares this link themselves.
+func (s *NexusServer) skypeInviteHandler(w http.ResponseWriter, r *http.Request) {
+	username := s.sessionUsername(tokenFromRequest(r))
+	if username == "" {
+		http.Error(w, "auth required", http.StatusUnauthorized)
+		return
+	}
+	link := "https://phazechat.world/?ref=" + username
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"invite_link": link})
 }

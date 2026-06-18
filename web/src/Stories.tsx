@@ -32,7 +32,7 @@ export default function Stories({ me, sessionToken }: Props) {
 
   const refresh = useMemo(() => async () => {
     if (!sessionToken) return
-    const r = await fetch('/api/v1/stories', { headers: { Authorization: `Bearer ${sessionToken}` } })
+    const r = await fetch('/api/v1/stories', { credentials: 'include' })
     if (!r.ok) return
     const data = await r.json()
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -65,7 +65,7 @@ export default function Stories({ me, sessionToken }: Props) {
       fd.append('file', file)
       const up = await fetch('/api/v1/upload', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
         body: fd,
       })
       if (!up.ok) throw new Error(`upload ${up.status}`)
@@ -73,7 +73,8 @@ export default function Stories({ me, sessionToken }: Props) {
       const kind: 'image' | 'video' = att.mime.startsWith('video/') ? 'video' : 'image'
       const post = await fetch('/api/v1/stories', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ media_url: att.url, media_kind: kind }),
       })
       if (!post.ok) throw new Error(`post ${post.status}`)
@@ -91,7 +92,7 @@ export default function Stories({ me, sessionToken }: Props) {
     setViewing(author)
     setOpenIndex(0)
     void fetch(`/api/v1/stories/${list[0].id}/view`, {
-      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
+      method: 'POST', credentials: 'include',
     })
   }
 
@@ -105,7 +106,7 @@ export default function Stories({ me, sessionToken }: Props) {
     }
     setOpenIndex(next)
     void fetch(`/api/v1/stories/${list[next].id}/view`, {
-      method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
+      method: 'POST', credentials: 'include',
     })
   }
 
@@ -180,7 +181,8 @@ export default function Stories({ me, sessionToken }: Props) {
                   if (!text) return
                   await fetch(`/api/v1/stories/${s.id}/reply`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify({ body: text }),
                   })
                   setReplyDraft('')

@@ -4112,7 +4112,12 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 	// Skype data import — upload ZIP, list contacts, send invites
 	http.HandleFunc("/api/v1/import/skype", rateLimit(server.skypeImportHandler))
 	http.HandleFunc("/api/v1/import/skype/contacts", rateLimit(server.skypeContactsHandler))
-	http.HandleFunc("/api/v1/import/skype/invite", rateLimit(server.skypeInviteHandler))
+	http.HandleFunc("/api/v1/import/skype/messages", rateLimit(server.skypeMessagesHandler))
+	http.HandleFunc("/api/v1/import/skype/invite-link", rateLimit(server.skypeInviteHandler))
+
+	http.HandleFunc("/api/v1/auth/login", rateLimit(server.httpLoginHandler))
+	http.HandleFunc("/api/v1/auth/logout", rateLimit(server.httpLogoutHandler))
+	http.HandleFunc("/api/v1/auth/me", rateLimit(server.httpMeHandler))
 
 	http.HandleFunc("/api/v1/stats", rateLimit(server.statsHandler))
 	http.HandleFunc("/api/v1/export", rateLimit(server.exportHandler))
@@ -4256,15 +4261,9 @@ func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	authH := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authH, "Bearer ") {
-		http.Error(w, "auth required", http.StatusUnauthorized)
-		return
-	}
-	tok := strings.TrimSpace(strings.TrimPrefix(authH, "Bearer "))
-	uploader := s.sessionUsername(tok)
+	uploader := s.sessionUsername(tokenFromRequest(r))
 	if uploader == "" {
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+		http.Error(w, "auth required", http.StatusUnauthorized)
 		return
 	}
 	if banned, _ := s.userBanInfo(uploader); banned {

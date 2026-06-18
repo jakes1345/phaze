@@ -341,6 +341,9 @@
       .stats { gap: 32px; }
       .section { padding: 64px 20px; }
     }
+    @media (max-width: 640px) {
+      .skype-migration-grid { grid-template-columns: 1fr !important; }
+    }
   </style>
 </head>
 <body>
@@ -465,8 +468,13 @@
     </div>
     <div class="feature-card">
       <div class="feature-icon">📥</div>
-      <div class="feature-title">Skype Data Import</div>
-      <div class="feature-desc">Leaving Skype? Import your old messages and contacts in one click. Your history comes with you.</div>
+      <div class="feature-title">Skype Import &amp; Migration</div>
+      <div class="feature-desc">Import your Skype message history and contacts in one click. Skype conversations appear right inside your Phaze DMs — old friends, new platform.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🍪</div>
+      <div class="feature-title">XSS-Proof Sessions</div>
+      <div class="feature-desc">Session tokens live in HttpOnly cookies — JavaScript can't touch them. No localStorage token theft, even if an attacker injects a script.</div>
     </div>
   </div>
 </section>
@@ -499,6 +507,10 @@
           <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
           <span>GDPR compliant — export or delete your data anytime</span>
         </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:0.95rem;">
+          <span style="color:var(--success);font-weight:700;margin-top:2px;">✓</span>
+          <span>HttpOnly cookie sessions — XSS can't steal your login token</span>
+        </li>
       </ul>
     </div>
     <div class="privacy-visual reveal">
@@ -509,6 +521,45 @@
       <div class="p-row"><span class="p-row-icon">🔑</span><span class="p-row-label">2FA support</span><span class="p-row-val">TOTP</span></div>
       <div class="p-row"><span class="p-row-icon">📜</span><span class="p-row-label">Data export (GDPR Art.20)</span><span class="p-row-val">YES</span></div>
       <div class="p-row"><span class="p-row-icon">⚙️</span><span class="p-row-label">Open source</span><span class="p-row-val">YES</span></div>
+      <div class="p-row"><span class="p-row-icon">🍪</span><span class="p-row-label">Session token in localStorage</span><span class="p-row-val bad">NEVER</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- SKYPE TRANSITION -->
+<section style="padding: 0 24px 96px; max-width: 1200px; margin: 0 auto;">
+  <div class="reveal skype-migration-grid" style="background:var(--bg2);border:1px solid var(--border);border-radius:24px;padding:56px;display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;">
+    <div>
+      <span class="section-tag">Skype is shutting down</span>
+      <h2 class="section-title" style="font-size:clamp(1.6rem,3.5vw,2.4rem);">Your Skype history<br/>isn't going anywhere.</h2>
+      <p style="color:var(--muted);font-size:1rem;margin-bottom:28px;line-height:1.7;">Microsoft killed Skype. Phaze is the natural next step — familiar conversations, real encryption, no corporate strings. Import your entire Skype history and pick up exactly where you left off.</p>
+      <ol style="list-style:none;display:flex;flex-direction:column;gap:14px;">
+        <li style="display:flex;gap:14px;align-items:flex-start;">
+          <span style="background:var(--brand);color:#fff;font-weight:800;font-size:0.8rem;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">1</span>
+          <span style="font-size:0.95rem;">Export your data at <strong>go.skype.com/export</strong> (takes a few minutes)</span>
+        </li>
+        <li style="display:flex;gap:14px;align-items:flex-start;">
+          <span style="background:var(--brand);color:#fff;font-weight:800;font-size:0.8rem;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">2</span>
+          <span style="font-size:0.95rem;">Create your free Phaze account — no phone number needed</span>
+        </li>
+        <li style="display:flex;gap:14px;align-items:flex-start;">
+          <span style="background:var(--brand);color:#fff;font-weight:800;font-size:0.8rem;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">3</span>
+          <span style="font-size:0.95rem;">Upload the zip in Settings → Skype Import — your messages appear instantly</span>
+        </li>
+        <li style="display:flex;gap:14px;align-items:flex-start;">
+          <span style="background:var(--brand);color:#fff;font-weight:800;font-size:0.8rem;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">4</span>
+          <span style="font-size:0.95rem;">See which contacts are already on Phaze and invite the rest with one link</span>
+        </li>
+      </ol>
+      <a class="btn btn-primary" href="/web" style="margin-top:32px;display:inline-flex;">Switch to Phaze free →</a>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">💬</span><span class="p-row-label">Message history</span><span class="p-row-val">Imported</span></div>
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">👥</span><span class="p-row-label">Contacts &amp; friends</span><span class="p-row-val">Bridged</span></div>
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">📞</span><span class="p-row-label">Voice &amp; video calls</span><span class="p-row-val">Better</span></div>
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">🔒</span><span class="p-row-label">Encryption</span><span class="p-row-val">Real E2EE</span></div>
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">💰</span><span class="p-row-label">Price</span><span class="p-row-val">Free forever</span></div>
+      <div class="p-row" style="border-color:rgba(134,59,255,0.3);"><span class="p-row-icon">📱</span><span class="p-row-label">Platforms</span><span class="p-row-val">Web/Desktop/Android</span></div>
     </div>
   </div>
 </section>
@@ -526,6 +577,7 @@
         <tr>
           <th>Feature</th>
           <th style="color:var(--brand-light)">Phaze</th>
+          <th>Skype / Teams</th>
           <th>WhatsApp</th>
           <th>Discord</th>
           <th>Telegram</th>
@@ -533,15 +585,16 @@
         </tr>
       </thead>
       <tbody>
-        <tr><td>E2EE by default</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
-        <tr><td>No ads ever</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="check">✓</td><td class="check">✓</td></tr>
-        <tr><td>Group Spaces / Servers</td><td class="phaze-col check">✓</td><td class="partial">~</td><td class="check">✓</td><td class="check">✓</td><td class="cross">✗</td></tr>
-        <tr><td>Voice &amp; Video calls</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
-        <tr><td>Stories</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td></tr>
-        <tr><td>Phone number NOT required</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td><td class="cross">✗</td></tr>
-        <tr><td>Open source</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
-        <tr><td>Web + Desktop + Android</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
-        <tr><td>Owned by Meta/Microsoft</td><td class="phaze-col" style="color:var(--success);font-weight:700;">No</td><td class="cross">Yes (Meta)</td><td class="cross">Yes (VC)</td><td class="check">No</td><td class="check">No</td></tr>
+        <tr><td>E2EE by default</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
+        <tr><td>No ads ever</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Group Spaces / Servers</td><td class="phaze-col check">✓</td><td class="partial">~</td><td class="partial">~</td><td class="check">✓</td><td class="check">✓</td><td class="cross">✗</td></tr>
+        <tr><td>Voice &amp; Video calls</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Stories</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td></tr>
+        <tr><td>Phone number NOT required</td><td class="phaze-col check">✓</td><td class="check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td><td class="cross">✗</td></tr>
+        <tr><td>Import Skype history</td><td class="phaze-col check">✓</td><td class="cross">N/A</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td></tr>
+        <tr><td>Open source</td><td class="phaze-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td><td class="partial">~</td><td class="check">✓</td></tr>
+        <tr><td>Still alive &amp; maintained</td><td class="phaze-col check">✓</td><td class="cross" style="color:#ef4444;font-weight:700;">Dead (May 2025)</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+        <tr><td>Owned by Meta/Microsoft</td><td class="phaze-col" style="color:var(--success);font-weight:700;">No</td><td class="cross">Yes (Microsoft)</td><td class="cross">Yes (Meta)</td><td class="cross">Yes (VC)</td><td class="check">No</td><td class="check">No</td></tr>
       </tbody>
     </table>
   </div>

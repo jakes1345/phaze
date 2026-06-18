@@ -230,7 +230,6 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   }
 
   const importSkype = async (file: File) => {
-    if (!sessionToken) return
     setImportBusy(true)
     setImportMsg('Uploading…')
     try {
@@ -238,7 +237,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
       form.append('file', file)
       const res = await fetch('/api/v1/import/skype', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
         body: form,
       })
       if (!res.ok) { setImportMsg('Upload failed — make sure this is the .zip from go.skype.com/export'); return }
@@ -255,11 +254,9 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   }
 
   const loadSkypeContacts = async () => {
-    if (!sessionToken || contactsLoaded) return
+    if (contactsLoaded) return
     try {
-      const res = await fetch('/api/v1/import/skype/contacts', {
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      })
+      const res = await fetch('/api/v1/import/skype/contacts', { credentials: 'include' })
       if (res.ok) {
         const data = await res.json()
         setSkypeContacts(data ?? [])
@@ -853,7 +850,7 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
                           </button>
                         ) : (
                           <button className="settings-btn" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', opacity: 0.7 }}
-                            onClick={() => navigator.clipboard.writeText('https://phazechat.world')}>
+                            onClick={() => navigator.clipboard.writeText(`https://phazechat.world/web?ref=${me}`)}>
                             Copy invite link
                           </button>
                         )}
