@@ -12,7 +12,7 @@ import {
 } from './e2ee'
 import { loadPins, savePins } from './keyPins'
 import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup } from './keyBackup'
-import { playPhazeSound } from './phazeSounds'
+import { playPhazeSound, phazeSoundUrl } from './phazeSounds'
 const Spaces = lazy(() => import('./Spaces'))
 const LivePage = lazy(() => import('./LivePage'))
 const VoiceRoom = lazy(() => import('./VoiceRoom'))
@@ -664,6 +664,7 @@ export default function App() {
 
   // WebRTC refs
   const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const ringingAudioRef = useRef<HTMLAudioElement | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const incomingCallSdpRef = useRef<string | null>(null)
@@ -781,7 +782,28 @@ export default function App() {
 
   const [sharingScreen, setSharingScreen] = useState(false)
 
+  const stopRinger = useCallback(() => {
+    if (ringingAudioRef.current) {
+      ringingAudioRef.current.pause()
+      ringingAudioRef.current.currentTime = 0
+      ringingAudioRef.current = null
+    }
+  }, [])
+
+  const startRinger = useCallback((filename: string) => {
+    stopRinger()
+    try {
+      const a = new Audio(phazeSoundUrl(filename))
+      a.loop = true
+      a.volume = 0.8
+      ringingAudioRef.current = a
+      void a.play().catch(() => {})
+    } catch { /* ignore */ }
+  }, [stopRinger])
+
   const tearDownCall = useCallback(() => {
+    stopRinger()
+    if (callStateRef.current) playPhazeSound('CallEnd.wav')
     if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
     if (callTimerRef.current) { clearInterval(callTimerRef.current); callTimerRef.current = null }
     pcRef.current?.close()
@@ -796,7 +818,7 @@ export default function App() {
     setCallSeconds(0)
     setCallMuted(false)
     setCallState(null)
-  }, [])
+  }, [stopRinger])
 
   const toggleScreenShareRef = useRef<() => void>(() => {})
   const toggleScreenShare = useCallback(async () => {
@@ -907,6 +929,7 @@ export default function App() {
     await pc.setLocalDescription(offer)
     sendRef.current({ type: 'call_offer', recipient, sdp: offer.sdp, body: type })
     setCallState({ peer: recipient, type, status: 'ringing', direction: 'outgoing' })
+    startRinger('CallOutgoing.wav')
     // Ring timeout — auto-hangup after 60 seconds if unanswered
     ringTimerRef.current = setTimeout(() => {
       if (callStateRef.current?.status === 'ringing') {
@@ -914,12 +937,13 @@ export default function App() {
         setErr('No answer')
       }
     }, 60000)
-  }, [makePC, hangUp])
+  }, [makePC, hangUp, startRinger])
 
   const acceptCall = useCallback(async () => {
     const cs = callStateRef.current
     const sdp = incomingCallSdpRef.current
     if (!cs || !sdp) return
+    stopRinger()
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: cs.type === 'video' })
@@ -954,7 +978,7 @@ export default function App() {
     setCallState({ ...cs, status: 'active' })
     setCallSeconds(0)
     callTimerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000)
-  }, [makePC, hangUp])
+  }, [makePC, hangUp, stopRinger])
 
   const onMessageRef = useRef<(raw: NexusMessage) => void>(() => {})
 
@@ -1108,10 +1132,14 @@ export default function App() {
             const senderIsMuted = msg.sender ? isPeerMuted(msg.sender) : false
             if (msg.sender !== my && !senderIsMuted) {
               playPhazeSound('MessageReceived.wav')
-              if (wails && document.hidden) {
+              if (document.hidden) {
                 const preview = (msg.body || '').startsWith('phaze-file')
                   ? '📎 Attachment' : (msg.body || '').slice(0, 60)
-                wails.Notify(msg.sender, preview)
+                if (wails) {
+                  wails.Notify(msg.sender, preview)
+                } else if (Notification.permission === 'granted') {
+                  new Notification(msg.sender!, { body: preview, icon: '/web/favicon.svg', tag: `dm-${msg.sender}` })
+                }
               }
             }
           }
@@ -1224,11 +1252,13 @@ export default function App() {
           if (msg.sender && msg.sdp) {
             incomingCallSdpRef.current = msg.sdp
             setCallState({ peer: msg.sender, type: (msg.body as 'audio' | 'video') || 'audio', status: 'ringing', direction: 'incoming' })
+            startRinger('CallIncoming.wav')
           }
           break
 
         case 'call_answer':
           if (msg.sdp && pcRef.current) {
+            stopRinger()
             if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
             pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch((e: unknown) => setErr('Call setup failed: ' + String(e)))
             setCallState((prev) => prev ? { ...prev, status: 'active' } : null)
