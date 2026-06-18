@@ -326,47 +326,39 @@ func (s *NexusServer) sweepRemoteCodes() {
 var (
 	TurnSecret    = os.Getenv("PHAZE_TURN_SECRET")
 	TurnURL       = os.Getenv("PHAZE_TURN_URL")
+	TurnUsername  = os.Getenv("PHAZE_TURN_USERNAME")
+	TurnPassword  = os.Getenv("PHAZE_TURN_PASSWORD")
 	TurnShortTerm = os.Getenv("PHAZE_TURN_SHORT_TERM") == "true"
 )
 
-// openRelayTURN is a free public TURN/STUN cluster from metered.ca. We use
-// it as the automatic fallback when no self-hosted TURN is configured, so
-// voice/video calls work for users behind symmetric NAT out of the box.
-// For production traffic, set PHAZE_TURN_URL + PHAZE_TURN_SECRET to point
-// at a self-hosted coturn instance — open relay has bandwidth limits.
-var openRelayTURN = &TurnConfig{
-	URL:      "turn:global.relay.metered.ca:80",
-	Username: "openrelayproject",
-	Password: "openrelayproject",
-}
-
 func (s *NexusServer) generateMediaToken(username string) *TurnConfig {
-	if TurnSecret == "" || TurnURL == "" {
-		log.Printf("[TURN] No self-hosted TURN configured — falling back to openrelay.metered.ca public TURN for %s", username)
-		return openRelayTURN
+	// Static credentials mode — for Cloudflare Calls, Metered.ca, Xirsys, etc.
+	// Set PHAZE_TURN_URL + PHAZE_TURN_USERNAME + PHAZE_TURN_PASSWORD.
+	if TurnURL != "" && TurnUsername != "" && TurnPassword != "" {
+		return &TurnConfig{URL: TurnURL, Username: TurnUsername, Password: TurnPassword}
 	}
 
-	var expiresIn time.Duration
-	if TurnShortTerm {
-		expiresIn = 10 * time.Minute
-	} else {
-		expiresIn = 24 * time.Hour
+	// HMAC short-term credentials — for self-hosted coturn with use-auth-secret.
+	// Set PHAZE_TURN_URL + PHAZE_TURN_SECRET.
+	if TurnSecret != "" && TurnURL != "" {
+		var expiresIn time.Duration
+		if TurnShortTerm {
+			expiresIn = 10 * time.Minute
+		} else {
+			expiresIn = 24 * time.Hour
+		}
+		timestamp := time.Now().Add(expiresIn).Unix()
+		user := fmt.Sprintf("%d:%s", timestamp, username)
+		mac := hmac.New(sha1.New, []byte(TurnSecret))
+		mac.Write([]byte(user))
+		password := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+		log.Printf("[TURN] Generated token for %s (expires in %v)", username, expiresIn)
+		return &TurnConfig{URL: TurnURL, Username: user, Password: password}
 	}
 
-	timestamp := time.Now().Add(expiresIn).Unix()
-	user := fmt.Sprintf("%d:%s", timestamp, username)
-
-	mac := hmac.New(sha1.New, []byte(TurnSecret))
-	mac.Write([]byte(user))
-	password := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-
-	log.Printf("[TURN] Generated token for %s (expires in %v)", username, expiresIn)
-
-	return &TurnConfig{
-		URL:      TurnURL,
-		Username: user,
-		Password: password,
-	}
+	// No TURN configured — calls may fail between users on different NATs.
+	log.Printf("[TURN] No TURN server configured for %s — set PHAZE_TURN_URL + credentials", username)
+	return nil
 }
 
 func (s *NexusServer) initDB() {
