@@ -323,8 +323,6 @@ func (s *NexusServer) sweepRemoteCodes() {
 	}
 }
 
-// ---------- Sovereign Media Configuration ----------
-
 var (
 	TurnSecret    = os.Getenv("PHAZE_TURN_SECRET")
 	TurnURL       = os.Getenv("PHAZE_TURN_URL")
@@ -704,8 +702,6 @@ func (s *NexusServer) initDB() {
 	}
 }
 
-// ---------- Roles ----------
-
 // Role hierarchy from lowest to highest. roleRank(r) returns the numeric
 // position; higher rank means more power. Use roleAtLeast(actor, target)
 // to gate endpoints.
@@ -740,8 +736,6 @@ func (s *NexusServer) roleAtLeast(username, minRole string) bool {
 	return roleRank(s.userRole(username)) >= roleRank(minRole)
 }
 
-// ---------- Account Management (bcrypt) ----------
-
 func (s *NexusServer) registerUser(username, email, mood, password string) (string, error) {
 	if !validUsername(username) {
 		return "", errBadUsername
@@ -771,8 +765,6 @@ func (s *NexusServer) registerUser(username, email, mood, password string) (stri
 		username, email, mood, string(hash), code)
 	return code, err
 }
-
-// ---------- Auth MVP helpers (OTP, email, username, session, TOTP, reset) ----------
 
 var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]{3,32}$`)
 
@@ -1031,8 +1023,6 @@ func (s *NexusServer) userIsAdmin(username string) bool {
 	return n == 1
 }
 
-// ---------- Servers + Channels (Discord-style "Spaces") ----------
-
 var validServerName = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N} _\-\.']{1,63}$`)
 var validChannelName = regexp.MustCompile(`^[a-z0-9][a-z0-9\-_]{1,31}$`)
 
@@ -1270,8 +1260,6 @@ type strErr struct{ msg string }
 
 func (e *strErr) Error() string { return e.msg }
 
-// ---------- Friend Management ----------
-
 func (s *NexusServer) getFriends(username string) []string {
 	rows, err := s.DB.Query(`
 		SELECT CASE WHEN user_a = ? THEN user_b ELSE user_a END as friend
@@ -1339,8 +1327,6 @@ func (s *NexusServer) removeFriend(a, b string) error {
 		a, b, b, a)
 	return err
 }
-
-// ---------- Group Chat ----------
 
 func (s *NexusServer) createConversation(id, name, creator string, members []string) error {
 	tx, err := s.DB.Begin()
@@ -1423,8 +1409,6 @@ func (s *NexusServer) getPendingRequests(username string) []string {
 	}
 	return pending
 }
-
-// ---------- Offline Messages ----------
 
 // persistDM stores a delivered (or queued) direct message in dm_messages.
 // Idempotent on msg_id so retries and offline-redelivery don't duplicate.
@@ -1710,8 +1694,6 @@ func (s *NexusServer) deliverOfflineMessages(username string) {
 	}
 }
 
-// ---------- Presence ----------
-
 func (s *NexusServer) broadcastPresence(username, status string) {
 	friends := s.getFriends(username)
 	supporter := s.isSupporter(username)
@@ -1736,8 +1718,6 @@ func (s *NexusServer) isSupporter(username string) bool {
 	err := s.DB.QueryRow("SELECT COALESCE(supporter, 0) FROM users WHERE username = ?", username).Scan(&n)
 	return err == nil && n == 1
 }
-
-// ---------- Trust & Safety: blocks + abuse reports ----------
 
 // isBlocked reports whether `blocker` has blocked `blocked`. Either direction
 // being blocked should suppress message delivery (checked at the call site).
@@ -1794,8 +1774,6 @@ func (s *NexusServer) recordAbuseReport(reporter, subject, reason, body string) 
 	return err
 }
 
-// ---------- Search ----------
-
 func (s *NexusServer) searchUsers(query, excludeUser string) []string {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -1821,10 +1799,6 @@ func (s *NexusServer) searchUsers(query, excludeUser string) []string {
 	}
 	return results
 }
-
-// ---------- WebSocket Handler ----------
-
-// ---------- Livestreams ----------
 
 type liveStream struct {
 	Title   string
@@ -1956,8 +1930,6 @@ func (s *NexusServer) streamEvictUser(username string) {
 	}
 }
 
-// ---------- Global hub ----------
-
 // globalSpaceID is the fixed identifier for the Phaze-wide "Hub" space that
 // every user is automatically a member of. Lets new signups land in a chat
 // where the whole community is reachable without needing an invite code.
@@ -2036,8 +2008,6 @@ func (s *NexusServer) autoJoinPublicSpaces(botUsername string) {
 	}
 	log.Printf("[bot] %s joined %d public spaces", botUsername, count)
 }
-
-// ---------- Voice rooms ----------
 
 func (s *NexusServer) voiceRoomJoin(channelID, username string) {
 	s.VoiceRoomsMu.Lock()
@@ -2130,8 +2100,6 @@ func (s *NexusServer) isServerMember(serverID, username string) bool {
 	return err == nil
 }
 
-// ---------- Health Check ----------
-
 func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -2183,8 +2151,6 @@ func (s *NexusServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"connected_clients":     clients,
 	})
 }
-
-// ---------- Metrics (Prometheus text format) ----------
 
 var metricsStart = time.Now()
 
@@ -2302,7 +2268,7 @@ const rootHTML = `<!doctype html>
 		</div>
 		<div class="stat-item">
 			<span class="stat-val" id="member-count">...</span>
-			<span class="stat-label">Sovereign Members</span>
+			<span class="stat-label">Members</span>
 		</div>
 		<div class="stat-item">
 			<span class="stat-val">E2EE</span>
@@ -2312,7 +2278,7 @@ const rootHTML = `<!doctype html>
 	<section class="hero">
 		<div class="container">
 			<h1>Stay in touch with the people who <strong>matter most</strong></h1>
-			<p>Sovereign chat Phaze keeps the world talking. Free video calls, voice calls and instant messaging on any device. calls. End-to-end encrypted. Yours, not theirs.</p>
+			<p>Free video calls, voice calls, and instant messaging on any device. End-to-end encrypted.</p>
 			<a href="/download" class="btn">Download Phaze</a>
 		</div>
 	</section>
@@ -2421,8 +2387,6 @@ func (s *NexusServer) resetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, `<!doctype html><html><head><meta charset=utf-8><title>Reset Phaze password</title><style>body{font-family:system-ui;max-width:520px;margin:80px auto;padding:20px}input{width:100%%;padding:10px;margin:8px 0;font-size:1rem}button{background:#00AFF0;color:#fff;border:0;padding:12px 24px;border-radius:6px;font-size:1rem;cursor:pointer}</style></head><body><h1>Reset your Phaze password</h1><form method="POST"><input type="hidden" name="token" value="%s"><label>New password (min. 8 chars)<input type="password" name="password" minlength="8" required></label><button type="submit">Set new password</button></form></body></html>`, token)
 }
-
-// ---------- Admin moderation API ----------
 
 // adminFromRequest authenticates an admin caller. Expects phaze_admin_token cookie
 // or Authorization: Bearer <session_token>. Returns "" + status code on failure
@@ -3417,8 +3381,6 @@ func (s *NexusServer) adminBannedUsersHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(out)
 }
 
-// ---------- Update manifest (GitHub Releases) ----------
-
 // PlatformAsset is one downloadable artifact for the auto-update flow.
 // SHA256 is the canonical integrity check; the client MUST verify before
 // running the new binary. Empty SHA256 means checksums.txt was unavailable
@@ -3758,8 +3720,6 @@ func (s *NexusServer) exportHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="phaze-data-export.json"`)
 	json.NewEncoder(w).Encode(data)
 }
-
-// ---------- Main ----------
 
 // resolveWorkingDir sets the process working directory so relative paths
 // templates/, public/, and the default SQLite file resolve correctly when
@@ -4398,11 +4358,11 @@ func (s *NexusServer) handleBotMessage(client *Client, msg NexusMessage) {
 		s.Mu.RLock()
 		count := len(s.Clients)
 		s.Mu.RUnlock()
-		reply.Body = fmt.Sprintf("The Phaze Mesh currently has %d active sovereign peers.", count)
+		reply.Body = fmt.Sprintf("Phaze currently has %d users connected.", count)
 	case cmd == "/webrtc":
 		reply.Body = "Phaze voice/video uses WebRTC (Pion on desktop, browser APIs on web). Signaling goes over Nexus; media is peer-to-peer when possible, with TURN from your relay when NAT blocks direct paths."
 	case cmd == "/version":
-		reply.Body = "Nexus Server v1.0.0-Phaze | Build: Enterprise-Mesh"
+		reply.Body = "Nexus Server v1.0.0-Phaze"
 	case cmd == "/pstn":
 		if pstnBridgeEnabled() {
 			reply.Body = "PSTN bridge is ON for this relay (Twilio). Link your phone in Settings for verified outbound. Otherwise use WebRTC calls in chat."

@@ -12,8 +12,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// ---------- CORS / Rate limiting ----------
-
 var allowedOrigins = func() map[string]bool {
 	raw := os.Getenv("Phaze_ALLOWED_ORIGINS")
 	if raw == "" {
