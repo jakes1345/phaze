@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// Skype data export format (from go.skype.com/export)
 type skypeExport struct {
 	UserID        string              `json:"userId"`
 	Conversations []skypeConversation `json:"conversations"`
@@ -40,8 +39,6 @@ func stripHTML(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// skypeImportHandler: POST /api/v1/import/skype
-// Accepts multipart form with a "file" field (Skype export ZIP).
 func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -160,7 +157,6 @@ func (s *NexusServer) skypeImportHandler(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(result)
 }
 
-// skypeContactsHandler: GET /api/v1/import/skype/contacts
 func (s *NexusServer) skypeContactsHandler(w http.ResponseWriter, r *http.Request) {
 	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
@@ -196,8 +192,6 @@ func (s *NexusServer) skypeContactsHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
-// skypeMessagesHandler: GET /api/v1/import/skype/messages?contact=DisplayName
-// Returns up to 200 imported Skype messages for a given conversation partner.
 func (s *NexusServer) skypeMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
@@ -233,10 +227,6 @@ func (s *NexusServer) skypeMessagesHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
-// skypeInviteHandler: GET /api/v1/import/skype/invite-link
-// Returns a shareable invite link with the user's referral code.
-// Skype exports contain no email addresses so email-based invites are not possible;
-// instead the user copies/shares this link themselves.
 func (s *NexusServer) skypeInviteHandler(w http.ResponseWriter, r *http.Request) {
 	username := s.sessionUsername(tokenFromRequest(r))
 	if username == "" {
