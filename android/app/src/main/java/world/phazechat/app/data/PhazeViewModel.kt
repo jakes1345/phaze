@@ -1143,6 +1143,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                         _pendingVerification.value = true
                         _authError.value = "Check your email for a 6-digit code."
                     }
+                    "code_resent" -> {
+                        _authError.value = "Verification code resent. Check your email."
+                    }
                     else -> {
                         _authError.value = msg.error ?: "Registration failed"
                     }
