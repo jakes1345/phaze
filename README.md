@@ -1,142 +1,78 @@
 # Phaze
 
-A sovereign Skype-style chat/voice/video client and relay, written in Go.
+Chat app built as a Skype replacement. DMs, group spaces, voice/video calls, screen share, end-to-end encryption. Free.
 
-Live at **[phazechat.world](https://phazechat.world)**.
-
-> **Status: pre-1.0, unverified in the field.** Builds run end-to-end on the maintainer's box, but third-party real-device testing has not happened yet. If you try it and something breaks, open an issue — that's the whole point of where we are right now.
-
-**Public beta gate checklist:** [docs/BETA.md](docs/BETA.md) (CI deps, tag naming, smoke matrix, known limitations).
-
-**Pre-beta finalization:** [docs/PRE_BETA_CHECKLIST.md](docs/PRE_BETA_CHECKLIST.md) (security, matrix testing, ops, doc truth).
-
-**Security disclosures:** [SECURITY.md](SECURITY.md).
+**Live at [phazechat.world](https://phazechat.world)**
 
 ---
 
-## What actually works today
+## What's in the repo
 
-| Area | State |
+| Directory | What it is |
 |---|---|
-| **Accounts** | Email OTP registration, password reset, TOTP 2FA enrol/disable, 30-day session tokens, cross-device QR sign-in |
-| **Messaging 1:1** | Pairwise E2EE via NaCl box (Curve25519 + XSalsa20 + Poly1305) with TOFU key pinning; offline delivery |
-| **Group chats** | Per-member envelope fan-out (MLS-lite): client encrypts body once per recipient, server never sees plaintext |
-| **Voice calls** | PCMU (G.711 µ-law) over RTP via Pion WebRTC. Pure Go, no CGO for audio |
-| **Video calls** | VP8 over RTP on desktop (Linux/macOS) via `pion/mediadevices` + libvpx. Android still falls back to JPEG-over-DataChannel |
-| **Local DB** | SQLite encrypted at rest with AES-256-GCM; key lives in the OS keyring, not on disk |
-| **Relay discovery** | Three layers: Phaze Nexus websocket relay → libp2p Kademlia DHT → mDNS LAN mesh |
-| **TURN** | CoTURN with per-call HMAC-SHA1 short-term creds |
-| **File transfer** | WebRTC DataChannel, peer-to-peer |
-| **UI** | Fyne native desktop (OpenGL/Metal). Android APK / iOS via **`fyne package`** (see `docs/MOBILE_BUILDS.md`). **Web beta** (`web/`) — auth, friends, 1:1 chat, NaCl E2EE + key handoff via Nexus |
+| `nexus_server/` | Go WebSocket relay — handles auth, messaging, calls, file uploads, spaces |
+| `web/` | React/TypeScript web app (Vite) — the main client most people use |
+| `desktop/` | Wails desktop app (Go + the same web frontend) — Windows, macOS, Linux |
+| `android/` | Android app — Kotlin + Jetpack Compose |
 
-## What does not work yet
+## Features
 
-- **Opus audio** — still PCMU; desktop quality is phone-era, not Skype-era
-- **No federation** — single-relay topology; `phazechat.world` is the only signaling host in prod
-- **Asset vault key is in source** — the master key for `assets.vault` is compiled in; symbolic protection only
-- **No production installers** — no MSI, no pkg, no AppImage, no auto-update channel
-- **Windows VP8** — mingw cross-build can't link libvpx without building it from source first; Windows client still uses JPEG video
-- **Mobile interop with new group E2EE** is untested on a real device (S23 ↔ desktop verification is the next gate)
-- **Observability** — `/health` (JSON with `database_ok`, `turn_configured`, `connected_clients`), `/metrics` (Prometheus text format with auth / key-request / PSTN / convo counters, optional bearer-auth), and `/api/v1/stats`. Still no structured logging or hosted dashboards.
+- End-to-end encrypted DMs (NaCl box)
+- Voice and video calls with screen share (WebRTC)
+- Group Spaces — text channels + voice rooms
+- Stories (24h expiry)
+- Push notifications (Android + web)
+- TOTP 2FA
+- Skype history import — upload your Skype export zip and messages appear in your DMs
+- Cross-device sign-in via QR code or recovery PIN
+- HttpOnly cookie sessions (tokens never in localStorage)
 
----
+## Running locally
 
-## Build
-
-**Full local build (tests + relay + desktop + web + Android APK):**
-```bash
-make build-all    # tests, then bin/phaze-nexus, bin/Phaze, bin/Phaze-android-arm64.apk, and web/dist/
-make test         # Go tests in nexus_server + native_client only
-```
-
-Pushes to **GitHub** also run **Actions** (Linux + macOS) — see **[GitHub (source of truth)](#github-source-of-truth)** below.
-
-**Relay (Phaze Nexus):**
+**Server:**
 ```bash
 cd nexus_server
 go build -o phaze-nexus .
 ./phaze-nexus
 ```
 
-From the repo root you can also run `make nexus` and then `./bin/phaze-nexus`. The server calls `resolveWorkingDir()` at startup so `templates/` and `public/` are found when the binary sits in `bin/` next to `nexus_server/`. For unusual layouts, set **`PHAZE_ASSET_ROOT`** to the directory that contains those folders.
-
-**Desktop client:**
+**Web client (dev):**
 ```bash
-cd native_client
-# Linux/macOS: libvpx-dev required for VP8 video
-go build -o phaze .
-./phaze
+cd web
+cp .env.example .env.local   # set VITE_NEXUS_WS=ws://localhost:8080/ws
+npm install
+npm run dev
 ```
 
-**Web client (beta):**
+**Desktop app:**
 ```bash
-cd nexus_server && go build -o phaze-nexus . && ./phaze-nexus
-# other terminal:
-cd web && cp .env.example .env.local && npm install && npm run dev
-```
-Set `VITE_NEXUS_WS` in `.env.local` to your relay (for example `ws://127.0.0.1:8080/ws`). In production, add your HTTPS origin to `Phaze_ALLOWED_ORIGINS` on Nexus so browser WebSockets pass the origin check.
-
-Wire protocol: `docs/WS_PROTOCOL.md`. Roadmap: `PHAZE_ENGINEERING_GUIDELINE.md`. **Web + desktop + Android together:** `docs/CLIENT_INTEROP.md` (same Nexus; chat/E2EE aligned; calls need web WebRTC + codec work).
-
-**Self-host on phazechat.world (no Fly.io):** see **`docs/DEPLOY_SELF_HOSTED.md`** and `nexus_server/docker-compose.yml` — DNS to your VPS, TLS on Caddy/nginx, Nexus behind reverse proxy.
-
-**Mobile (Android / iOS / macOS):** **`docs/MOBILE_BUILDS.md`** — the **IDE** (e.g. Linux `.tar.gz` under `…/android-studio`) is **not** `ANDROID_HOME`; the **SDK** usually lives under **`$HOME/Android/Sdk`**. Copy **`local.mk.example`** → **`local.mk`** to pin paths; install **NDK** in SDK Manager, then `make android` → `bin/Phaze-android-arm64.apk`. iOS: **`make ios`** / **`make iossim`** on **macOS + Xcode** only.
-
-```bash
-export ANDROID_HOME="$HOME/Android/Sdk"
-make android
+cd desktop
+wails dev
 ```
 
-## CI-built client bundles (all platforms)
+**Android:**  
+Open `android/` in Android Studio and run on a device or emulator.
 
-The workflow **[Build Client Packages](.github/workflows/build-clients.yml)** runs when `native_client/` or that workflow changes, on a **weekly** schedule, and via **Actions → Build Client Packages → Run workflow**. It uploads **fyne-cross** artifacts: Linux (amd64, arm64), Windows (amd64), Android (arm64 APK), macOS (amd64, arm64); **FreeBSD**, **Web/WASM**, and **iOS** steps are best-effort on hosted runners (toolchain/signing). Open the latest successful run and download the **Artifacts** zip(s).
+## Self-hosting
 
-## TURN
+See `docs/DEPLOY_SELF_HOSTED.md`. Short version: run `phaze-nexus` behind nginx/Caddy with TLS, point your domain at it. A `docker-compose.yml` is in `nexus_server/` if you prefer containers.
 
-Drop `scripts/phaze_turnserver.conf` into your coturn install, then set on the relay:
+TURN server config is in `scripts/phaze_turnserver.conf`. Set `PHAZE_TURN_URL` and `PHAZE_TURN_SECRET` on the relay to use your own coturn instance — if you don't, it falls back to a free public relay which has bandwidth limits.
 
-```
-PHAZE_TURN_SECRET=<openssl rand -hex 32>
-PHAZE_TURN_URL=turn:turn.phazechat.world:3478
-PHAZE_TURN_SHORT_TERM=true
-```
+## Deployment
 
-Secret must match the CoTURN `static-auth-secret`.
+The hosted instance deploys automatically to Fly.io on push to master via GitHub Actions.
 
-## PSTN (optional phone bridge)
+## Security
 
-By default **PSTN is off** on Nexus — voice/video is **WebRTC between Phaze users** only (no Twilio call charges). See **`docs/WEBRTC_AND_PSTN.md`**.
+DMs are encrypted on the client before they're sent — the server never sees plaintext. If you find a vulnerability, open a private issue or email through the contact on phazechat.world.
 
-- **`PHAZE_ENABLE_PSTN=true`** on Nexus: allow `pstn_call` through to Twilio when `TWILIO_*` and `Phaze_APP_URL` are set.
-- **`PHAZE_ENABLE_PSTN=true`** on the desktop client: show the numeric **Dial** tab again.
-
----
-
-## Threat model (short version)
-
-- The relay is honest-but-curious. Server operators cannot read message bodies, call SDP, or ICE candidates — all E2EE wrapped before hitting the wire.
-- TOFU key pinning means the **first** handshake with an unknown peer is vulnerable to an active MITM at the relay. Subsequent sessions are pinned.
-- At-rest DB encryption protects a stolen laptop from casual inspection. It does **not** protect against malware running as your user.
-- No forward secrecy on group messages yet — compromising a long-term key lets an attacker decrypt historical envelopes.
-
-If any of those assumptions are dealbreakers, Phaze is not the right tool for your threat model yet.
-
----
-
-## GitHub (source of truth)
-
-- **Repository:** [github.com/jakes1345/skype7-reborn](https://github.com/jakes1345/skype7-reborn) — issues, PRs, and history all live here.
-- **CI:** [Actions](https://github.com/jakes1345/skype7-reborn/actions) on **`main` / `master`**  
-  - **Phaze CI** (Ubuntu): `go build` native + Nexus, Go tests, `npm ci` + web production build.  
-  - **Sovereign Apple Verification** (macOS): desktop binary + **iOS Simulator** Fyne package — this is the “we don’t have a physical Mac” path for **automated** Apple-side compile checks.  
-- **Local vs CI:** `make build-all` on your machine also produces the **Android APK**; CI today does **not** run the full Android NDK pipeline (that stays local unless we add a dedicated job).
-
----
+See `SECURITY.md` for the full disclosure policy.
 
 ## Contributing
 
-Bug reports and real-device test reports are more valuable than code right now. If you got through registration → contact add → call → group chat and something broke, that's the issue we want.
+Bug reports are the most useful thing right now, especially from real devices. If something broke during registration, adding a contact, or making a call — open an issue with what happened.
 
 ---
 
-*Phaze is an independent project. Not affiliated with Microsoft Corporation or the Skype brand.*
+*Not affiliated with Microsoft or Skype.*
