@@ -8,10 +8,11 @@ import (
 // authFailTracker tracks per-IP and per-user consecutive failed auth attempts.
 // When thresholds are breached, connections are throttled or blocked entirely.
 type authFailTracker struct {
-	mu        sync.Mutex
-	ipFails   map[string]*authFail // keyed by IP
-	userFails map[string]*authFail // keyed by username
-	totpFails map[string]*authFail // keyed by username — TOTP code attempts
+	mu          sync.Mutex
+	ipFails     map[string]*authFail // keyed by IP
+	userFails   map[string]*authFail // keyed by username
+	totpFails   map[string]*authFail // keyed by username — TOTP code attempts
+	signupCounts map[string]*authFail // keyed by IP — successful registrations
 }
 
 type authFail struct {
@@ -21,9 +22,10 @@ type authFail struct {
 }
 
 var authTracker = &authFailTracker{
-	ipFails:   make(map[string]*authFail),
-	userFails: make(map[string]*authFail),
-	totpFails: make(map[string]*authFail),
+	ipFails:      make(map[string]*authFail),
+	userFails:    make(map[string]*authFail),
+	totpFails:    make(map[string]*authFail),
+	signupCounts: make(map[string]*authFail),
 }
 
 const (
@@ -37,6 +39,9 @@ const (
 	// TOTP: max 5 attempts per 10 min.
 	totpMaxAttempts = 5
 	totpWindow      = 10 * time.Minute
+	// Per-IP signup: max 3 successful registrations per IP per 24 hours.
+	signupIPMax    = 3
+	signupIPWindow = 24 * time.Hour
 )
 
 func (t *authFailTracker) recordFail(ip, username string) {
@@ -160,6 +165,39 @@ func (t *authFailTracker) recordTOTPSuccess(username string) {
 	delete(t.totpFails, username)
 }
 
+// recordSignup counts a successful registration for the given IP.
+func (t *authFailTracker) recordSignup(ip string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	if f, ok := t.signupCounts[ip]; ok {
+		if now.Sub(f.firstAt) > signupIPWindow {
+			*f = authFail{count: 1, firstAt: now, lastAt: now}
+		} else {
+			f.count++
+			f.lastAt = now
+		}
+	} else {
+		t.signupCounts[ip] = &authFail{count: 1, firstAt: now, lastAt: now}
+	}
+}
+
+// isSignupThrottled returns true if this IP has registered too many accounts
+// in the signup window.
+func (t *authFailTracker) isSignupThrottled(ip string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f, ok := t.signupCounts[ip]
+	if !ok {
+		return false
+	}
+	if time.Since(f.firstAt) > signupIPWindow {
+		delete(t.signupCounts, ip)
+		return false
+	}
+	return f.count >= signupIPMax
+}
+
 // sweepAuthTracker cleans stale entries every 5 minutes.
 func sweepAuthTracker() {
 	tk := time.NewTicker(5 * time.Minute)
@@ -181,6 +219,11 @@ func sweepAuthTracker() {
 		for u, f := range authTracker.totpFails {
 			if now.Sub(f.lastAt) > totpWindow {
 				delete(authTracker.totpFails, u)
+			}
+		}
+		for ip, f := range authTracker.signupCounts {
+			if now.Sub(f.lastAt) > signupIPWindow {
+				delete(authTracker.signupCounts, ip)
 			}
 		}
 		authTracker.mu.Unlock()

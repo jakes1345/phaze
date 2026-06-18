@@ -4019,6 +4019,16 @@ h1{color:#fca5a5;margin:0 0 12px}p{color:#a1a1aa}</style></head>
 			"version":       "1.0.0-Phaze",
 		})
 	}))
+	// Warn loudly if we're not configured to trust the real-client-IP header.
+	// Without it every stored IP is the edge proxy's (useless for moderation),
+	// and a PHAZE_ADMIN_IPS allowlist would compare against the edge IP and
+	// lock EVERYONE out of the admin portal with a 404.
+	if trustedProxyHeader == "" {
+		log.Printf("[WARN] PHAZE_TRUST_PROXY_HEADER is unset — all stored IPs will be the edge proxy IP, not real clients. On Fly.io set PHAZE_TRUST_PROXY_HEADER=Fly-Client-IP.")
+		if strings.TrimSpace(os.Getenv("PHAZE_ADMIN_IPS")) != "" {
+			log.Printf("[WARN] PHAZE_ADMIN_IPS is set but PHAZE_TRUST_PROXY_HEADER is not — the admin IP allowlist compares against the edge IP and will 404 EVERYONE, including you. Set PHAZE_TRUST_PROXY_HEADER=Fly-Client-IP.")
+		}
+	}
 	// Admin portal — hidden path, not /admin. Set PHAZE_ADMIN_PATH env var
 	// to customize (default: /nexus-cmd). Bots scanning /admin get nothing.
 	adminPath := strings.TrimSpace(os.Getenv("PHAZE_ADMIN_PATH"))
@@ -4239,13 +4249,20 @@ func (s *NexusServer) uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-user upload rate limit: max 20 uploads per hour.
+	if !uploadLimiter.allow(uploader) {
+		http.Error(w, "upload rate limit exceeded — try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
-	// Allow only a known-safe set of extensions; reject obvious executable types.
+	// Allow only a known-safe set of extensions. Archives (.zip/.tar/.gz/.7z)
+	// are intentionally excluded: they can't be content-validated and are the
+	// primary vector for disguised malware drops in chat.
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic",
 		".mp4", ".mov", ".webm", ".m4a", ".mp3", ".ogg", ".wav",
-		".pdf", ".txt", ".md", ".log", ".csv", ".json",
-		".zip", ".7z", ".tar", ".gz":
+		".pdf", ".txt", ".md", ".log", ".csv", ".json":
 		// ok
 	default:
 		http.Error(w, "file type not allowed", http.StatusUnsupportedMediaType)
