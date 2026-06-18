@@ -11,7 +11,7 @@ import {
   generateKeyPair,
 } from './e2ee'
 import { loadPins, savePins } from './keyPins'
-import { decryptKeypair as decryptKeyBackup, encryptKeypair as encryptKeyBackup } from './keyBackup'
+import { encryptKeypair as encryptKeyBackup } from './keyBackup'
 import { playPhazeSound, phazeSoundUrl } from './phazeSounds'
 const Spaces = lazy(() => import('./Spaces'))
 const LivePage = lazy(() => import('./LivePage'))
@@ -571,9 +571,6 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const draftInputRef = useRef<HTMLInputElement>(null)
-  const [restoreBackup, setRestoreBackup] = useState<import('./nexusTypes').KeyBackup | null>(null)
-  const [restorePin, setRestorePin] = useState('')
-  const [restoreBusy, setRestoreBusy] = useState(false)
   const restoreCheckedRef = useRef(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState('')
@@ -1162,9 +1159,8 @@ export default function App() {
 
         case 'key_backup_result':
           if (msg.status === 'ok' && msg.key_backup) {
-            // Server returned a backup blob. Prompt restore only if the current
-            // device doesn't already have the same public key (i.e. fresh session).
-            setRestoreBackup(msg.key_backup)
+            // Silently keep the backup available but don't auto-prompt restore.
+            // Users can restore from Settings → Backup & Devices if needed.
           } else if (msg.status === 'stored') {
             setErr('✓ Recovery PIN saved')
           } else if (msg.status === 'deleted') {
@@ -1827,38 +1823,6 @@ export default function App() {
     send({ type: 'verify_email', sender: regUser, body: regCode.trim() })
   }
 
-  const doRestore = useCallback(async () => {
-    if (!restoreBackup || !restorePin) return
-    setRestoreBusy(true)
-    try {
-      const { publicKey, secretKey } = await decryptKeyBackup(restoreBackup, restorePin)
-      keysRef.current = { publicKey, secretKey }
-      localStorage.setItem(
-        KEYS_KEY,
-        JSON.stringify({
-          pub: btoa(String.fromCharCode(...publicKey)),
-          sec: btoa(String.fromCharCode(...secretKey)),
-        }),
-      )
-      const my = meRef.current
-      if (my) {
-        sendRef.current({
-          type: 'presence',
-          sender: my,
-          status: 'Online',
-          public_key: encodePublicKeyB64(publicKey),
-        })
-      }
-      setRestoreBackup(null)
-      setRestorePin('')
-      setErr('✓ Keys restored from backup')
-    } catch (e) {
-      setErr((e as Error).message || 'Restore failed')
-    } finally {
-      setRestoreBusy(false)
-    }
-  }, [restoreBackup, restorePin])
-
   const totalUnread = useMemo(() => Object.values(unread).reduce((a, b) => a + b, 0), [unread])
   useEffect(() => {
     const base = 'Phaze'
@@ -1930,23 +1894,6 @@ export default function App() {
 
       {err && <div className="banner">{err}</div>}
 
-      {restoreBackup && (
-        <div className="banner" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: 'var(--panel)', border: '1px solid var(--brand)', borderRadius: 10, padding: '10px 16px', margin: '8px 16px' }}>
-          <span style={{ fontSize: '0.85rem' }}>🔑 Recovery backup found.</span>
-          <input
-            type="password"
-            placeholder="PIN"
-            value={restorePin}
-            onChange={(e) => setRestorePin(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void doRestore() }}
-            style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--text)', fontSize: '0.85rem' }}
-          />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => void doRestore()} disabled={restoreBusy} style={{ padding: '4px 12px', borderRadius: 6, background: 'var(--brand)', color: '#fff', border: 'none', fontSize: '0.8rem', cursor: 'pointer' }}>{restoreBusy ? '...' : 'Restore'}</button>
-            <button type="button" onClick={() => { setRestoreBackup(null); setRestorePin('') }} style={{ padding: '4px 12px', borderRadius: 6, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--input-border)', fontSize: '0.8rem', cursor: 'pointer' }}>Skip</button>
-          </div>
-        </div>
-      )}
 
       {settingsOpen && me && (
         <Settings
