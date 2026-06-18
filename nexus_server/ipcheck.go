@@ -2,9 +2,12 @@ package main
 
 // ipcheck.go — VPN / proxy / datacenter detection at registration time.
 //
-// Uses ip-api.com's free JSON endpoint (no key, 45 req/min).
+// Primary: proxycheck.io free tier (returns real proxy/VPN flags, 1000 req/day free).
+//          Set PROXYCHECK_KEY to a free API key for 1000 req/day → 1M req/day.
+// Secondary: ip-api.com (ISP/org keyword fallback + pro proxy/hosting fields
+//          when IPAPI_KEY is set).
 // Enabled only when PHAZE_BLOCK_VPN=1 is set in environment.
-// Fails open: if the check times out or errors, registration proceeds.
+// Fails open: if both checks time out or error, registration proceeds.
 
 import (
 	"encoding/json"
@@ -19,7 +22,7 @@ import (
 
 var ipCheckClient = &http.Client{Timeout: 3 * time.Second}
 
-// ipCheckCache avoids hitting ip-api.com multiple times for the same IP
+// ipCheckCache avoids hitting external APIs multiple times for the same IP
 // within a single server lifetime (e.g. retry storms).
 var ipCheckCache sync.Map // map[string]bool  true = datacenter/VPN
 
@@ -37,25 +40,87 @@ func isVPNOrDatacenter(ip string) bool {
 		return v.(bool)
 	}
 
-	result := checkIPAPI(ip)
+	// proxycheck.io is the primary: free tier returns real proxy/VPN flags.
+	result := checkProxycheck(ip)
+	// Fall back to ip-api if proxycheck didn't flag it.
+	if !result {
+		result = checkIPAPI(ip)
+	}
+
 	ipCheckCache.Store(ip, result)
 	return result
 }
 
+// checkProxycheck queries proxycheck.io. Free tier: 1000/day unkeyed,
+// more with a free PROXYCHECK_KEY. Returns true if flagged as proxy/VPN.
+func checkProxycheck(ip string) bool {
+	key := strings.TrimSpace(os.Getenv("PROXYCHECK_KEY"))
+	url := "https://proxycheck.io/v2/" + ip + "?vpn=1&asn=1"
+	if key != "" {
+		url += "&key=" + key
+	}
+	resp, err := ipCheckClient.Get(url)
+	if err != nil {
+		log.Printf("[ipcheck/proxycheck] lookup failed for %s: %v — skipping", ip, err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Response: {"status":"ok", "<ip>": {"proxy":"yes","type":"VPN",...}}
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return false
+	}
+	statusRaw, ok := raw["status"]
+	if !ok {
+		return false
+	}
+	var status string
+	if err := json.Unmarshal(statusRaw, &status); err != nil || (status != "ok" && status != "warning") {
+		return false
+	}
+	ipRaw, ok := raw[ip]
+	if !ok {
+		return false
+	}
+	var entry struct {
+		Proxy string `json:"proxy"`
+		Type  string `json:"type"`
+	}
+	if err := json.Unmarshal(ipRaw, &entry); err != nil {
+		return false
+	}
+	if entry.Proxy == "yes" {
+		log.Printf("[ipcheck/proxycheck] %s flagged: type=%q", ip, entry.Type)
+		return true
+	}
+	return false
+}
+
 type ipAPIResponse struct {
 	Status  string `json:"status"`
-	Proxy   bool   `json:"proxy"`   // pro field — present when available
-	Hosting bool   `json:"hosting"` // pro field — present when available
+	Proxy   bool   `json:"proxy"`   // pro field
+	Hosting bool   `json:"hosting"` // pro field
 	ISP     string `json:"isp"`
 	Org     string `json:"org"`
 	AS      string `json:"as"`
 }
 
+// checkIPAPI queries ip-api.com. Uses the pro endpoint when IPAPI_KEY is set
+// (enables real proxy/hosting boolean fields). Otherwise falls back to
+// ISP/org/AS keyword matching.
 func checkIPAPI(ip string) bool {
-	url := "http://ip-api.com/json/" + ip + "?fields=status,proxy,hosting,isp,org,as"
+	key := strings.TrimSpace(os.Getenv("IPAPI_KEY"))
+	var url string
+	if key != "" {
+		url = "https://pro.ip-api.com/json/" + ip + "?fields=status,proxy,hosting,isp,org,as&key=" + key
+	} else {
+		url = "http://ip-api.com/json/" + ip + "?fields=status,isp,org,as"
+	}
+
 	resp, err := ipCheckClient.Get(url)
 	if err != nil {
-		log.Printf("[ipcheck] lookup failed for %s: %v — allowing", ip, err)
+		log.Printf("[ipcheck/ipapi] lookup failed for %s: %v — allowing", ip, err)
 		return false
 	}
 	defer resp.Body.Close()
@@ -67,7 +132,7 @@ func checkIPAPI(ip string) bool {
 
 	// Pro fields: use directly when available.
 	if r.Proxy || r.Hosting {
-		log.Printf("[ipcheck] %s flagged: proxy=%v hosting=%v isp=%q", ip, r.Proxy, r.Hosting, r.ISP)
+		log.Printf("[ipcheck/ipapi] %s flagged: proxy=%v hosting=%v isp=%q", ip, r.Proxy, r.Hosting, r.ISP)
 		return true
 	}
 
@@ -76,7 +141,7 @@ func checkIPAPI(ip string) bool {
 	combined := strings.ToLower(r.ISP + " " + r.Org + " " + r.AS)
 	for _, kw := range datacenterKeywords {
 		if strings.Contains(combined, kw) {
-			log.Printf("[ipcheck] %s flagged by keyword %q: isp=%q org=%q", ip, kw, r.ISP, r.Org)
+			log.Printf("[ipcheck/ipapi] %s flagged by keyword %q: isp=%q org=%q", ip, kw, r.ISP, r.Org)
 			return true
 		}
 	}
@@ -97,6 +162,7 @@ var datacenterKeywords = []string{
 	"protonvpn", "cyberghost", "surfshark", "ipvanish", "purevpn",
 	"hidemyass", "tunnelbear", "windscribe", "vpn unlimited",
 	"perfect privacy", "ivacy", "torguard", "anonine",
+	"lightspeed networks", // the specific one that slipped through
 	// Generic VPN / proxy indicators
 	"vpn", "proxy", "tor exit", "anonymizer", "datacenter",
 	"data center", "hosting", "colocation", "colo ",

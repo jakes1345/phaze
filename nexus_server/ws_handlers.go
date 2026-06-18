@@ -168,7 +168,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 
-			log.Printf("[PSTN-SECURE] User %s initiating call to %s", msg.Sender, number)
+			log.Printf("[PSTN-SECURE] User %s initiating call to %s", username, number)
 			err = s.initiateTwilioCall(number)
 			if err != nil {
 				client.Send(NexusMessage{Type: "pstn_status", Error: "Telephony error: " + err.Error()})
@@ -187,9 +187,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				time.Sleep(2 * time.Second)
 				continue
 			}
+			if authTracker.isSignupThrottled(client.IP) {
+				log.Printf("[security] signup rate-limit hit for IP %s", client.IP)
+				client.Send(NexusMessage{Type: "register_result", Error: "Too many accounts created from this network. Try again later."})
+				continue
+			}
 			if isVPNOrDatacenter(client.IP) {
 				log.Printf("[security] registration blocked from VPN/datacenter IP %s", client.IP)
 				client.Send(NexusMessage{Type: "register_result", Error: "Registration is not available from VPN or proxy connections. Please disable your VPN and try again."})
+				continue
+			}
+			if reason, blocked := isDisposableEmail(msg.Email); blocked {
+				log.Printf("[security] registration blocked for disposable email %q (%s) from %s", msg.Email, reason, client.IP)
+				client.Send(NexusMessage{Type: "register_result", Error: "Please use a real email address. Disposable or temporary addresses are not allowed."})
 				continue
 			}
 			code, err := s.registerUser(msg.Sender, msg.Email, msg.Mood, msg.Body)
@@ -209,6 +219,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				}
 				client.Send(NexusMessage{Type: "register_result", Error: regErr})
 			} else {
+				authTracker.recordSignup(client.IP)
 				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
 				if ref := strings.TrimSpace(msg.RefBy); ref != "" && ref != msg.Sender {
 					// Validate the referrer exists before storing.
@@ -522,6 +533,10 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			// H3: resend_verification previously used msg.Sender (client-supplied),
 			// allowing unauthenticated spam. Now: if authed, use server-side username;
 			// if not, use msg.Sender but only for unverified accounts (pre-auth flow).
+			if !resendLimiter.allow(client.IP) {
+				client.Send(NexusMessage{Type: "register_result", Status: "code_resent"})
+				continue
+			}
 			targetUser := msg.Sender
 			if username != "" {
 				targetUser = username
@@ -1369,6 +1384,13 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if username == "" {
 				continue
 			}
+			// Always authoritative — prevent caller impersonation via spoofed msg.Sender.
+			msg.Sender = username
+			// call_offer requires friendship: prevents ringing strangers as a harassment vector.
+			if msg.Type == "call_offer" && !s.areFriends(username, msg.Recipient) {
+				client.Send(NexusMessage{Type: "call_error", Error: "You can only call friends"})
+				continue
+			}
 			log.Printf("Signal [%s] from %s to %s", msg.Type, username, msg.Recipient)
 			s.Mu.Lock()
 			if msg.Type == "call_offer" {
@@ -1416,6 +1438,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 
 		case "call_invite":
 			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
+				continue
+			}
+			if !s.areFriends(username, msg.Recipient) {
 				continue
 			}
 			msg.Sender = username
@@ -2011,6 +2036,12 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if len(kv.Key) > 64 || len(kv.Value) > 64*1024 {
+				continue
+			}
+			// Cap total settings rows per user to prevent DB bloat attacks.
+			var settingsCount int
+			s.DB.QueryRow(`SELECT COUNT(*) FROM user_settings WHERE username = ?`, username).Scan(&settingsCount)
+			if settingsCount >= 100 {
 				continue
 			}
 			s.DB.Exec(
