@@ -12,12 +12,6 @@ import (
 	"time"
 )
 
-// Support chat proxy: forwards user messages to Anthropic's Claude API
-// (cheap Haiku model) with a Phaze-specific system prompt. Stateless on the
-// server — clients send the full conversation each turn. Optional auth: signed
-// in users get their username injected into the system prompt; anonymous
-// landing-page visitors can still chat.
-
 const supportSystemPrompt = `You are Phaze Helper, the in-app support bot for Phaze (https://phazechat.world) — a real-time chat platform with DMs, group spaces, voice/video calls, livestreams, and end-to-end encryption.
 
 Your job:
@@ -80,9 +74,6 @@ type anthropicMessageResp struct {
 	} `json:"error,omitempty"`
 }
 
-// supportChatHandler proxies a chat request to whichever LLM provider has a
-// key configured. Order is Gemini (free tier) → Anthropic. Returns 503 if
-// neither is set.
 func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -148,9 +139,6 @@ func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]string{"reply": reply})
 }
 
-// callGemini sends the conversation to Google's Gemini API (free tier
-// 2.0 Flash). Translates our generic message shape into Gemini's
-// "contents" + "system_instruction" structure.
 func callGemini(apiKey, system string, msgs []supportMessage) (string, error) {
 	type part struct {
 		Text string `json:"text"`
@@ -223,8 +211,6 @@ func callGemini(apiKey, system string, msgs []supportMessage) (string, error) {
 	return out.String(), nil
 }
 
-// callAnthropic posts to the Anthropic Claude API. Used as the fallback
-// when Gemini isn't configured or fails.
 func callAnthropic(apiKey, system string, msgs []supportMessage) (string, error) {
 	payload := anthropicMessageReq{
 		Model:     "claude-haiku-4-5-20251001",
@@ -263,9 +249,6 @@ func callAnthropic(apiKey, system string, msgs []supportMessage) (string, error)
 	return out.String(), nil
 }
 
-// supportEscalateHandler is the "Talk to a human" entrypoint. Counts how many
-// helper-or-higher users are currently connected and (if any) sends each a
-// system DM telling them a user wants help.
 func (s *NexusServer) supportEscalateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -317,9 +300,6 @@ func (s *NexusServer) supportEscalateHandler(w http.ResponseWriter, r *http.Requ
 	log.Printf("[support] %s escalated to human; %d staff online", body.Username, len(staffOnline))
 }
 
-// init wires routes. Called from main.go after the rest of the routes.
-// Both endpoints go through the IP rate limiter — the chat endpoint hits
-// a paid LLM API on every call, so we cannot leave it bare.
 func (s *NexusServer) initSupportRoutes() {
 	http.HandleFunc("/api/v1/support/chat", rateLimit(s.supportChatHandler))
 	http.HandleFunc("/api/v1/support/escalate", rateLimit(s.supportEscalateHandler))
