@@ -82,6 +82,10 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     val sessionToken = _sessionToken.asStateFlow()
     private val _authError = MutableStateFlow<String?>(null)
     val authError = _authError.asStateFlow()
+    private val _pendingVerification = MutableStateFlow(false)
+    val pendingVerification = _pendingVerification.asStateFlow()
+    private val _pendingVerifyUsername = MutableStateFlow("")
+    val pendingVerifyUsername = _pendingVerifyUsername.asStateFlow()
 
     // Profile
     private val _myDisplayName = MutableStateFlow(prefs.getString("display_name", "") ?: "")
@@ -162,6 +166,17 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     private val _skypeContacts = MutableStateFlow<List<SkypeContact>>(emptyList())
     val skypeContacts = _skypeContacts.asStateFlow()
     fun clearSkypeImportStatus() { _skypeImportStatus.value = null }
+
+    // Referral stats
+    private val _referralCount = MutableStateFlow(0)
+    val referralCount = _referralCount.asStateFlow()
+    private val _referredUsers = MutableStateFlow<List<String>>(emptyList())
+    val referredUsers = _referredUsers.asStateFlow()
+
+    fun getReferralStats() {
+        val u = _me.value ?: return
+        nexus.send(NexusMessage(type = "get_referral_stats", sender = u))
+    }
 
     fun importSkype(uri: android.net.Uri) {
         val token = _sessionToken.value ?: return
@@ -450,7 +465,28 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun register(username: String, email: String, password: String) {
         _authError.value = null
+        _pendingVerifyUsername.value = username
         nexus.send(NexusMessage(type = "register", sender = username, body = password, email = email))
+    }
+
+    fun verifyEmail(code: String) {
+        val username = _pendingVerifyUsername.value
+        if (username.isBlank()) return
+        _authError.value = null
+        nexus.send(NexusMessage(type = "verify_email", sender = username, body = code.trim()))
+    }
+
+    fun resendVerification(email: String) {
+        val username = _pendingVerifyUsername.value
+        if (username.isBlank()) return
+        nexus.send(NexusMessage(type = "resend_verification", sender = username, email = email))
+        _authError.value = "Verification code resent. Check your email."
+    }
+
+    fun cancelVerification() {
+        _pendingVerification.value = false
+        _pendingVerifyUsername.value = ""
+        _authError.value = null
     }
 
     fun selectChat(peer: String) {
@@ -1098,11 +1134,34 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             "register_result" -> {
-                _authError.value = when (msg.status) {
-                    "ok" -> "Account created. Sign in."
-                    "pending_verification" -> "Check email for verification code."
-                    else -> msg.error ?: "Registration failed"
+                when (msg.status) {
+                    "ok" -> {
+                        _pendingVerification.value = false
+                        _authError.value = "Account created. Sign in."
+                    }
+                    "pending_verification", "verification_sent" -> {
+                        _pendingVerification.value = true
+                        _authError.value = "Check your email for a 6-digit code."
+                    }
+                    else -> {
+                        _authError.value = msg.error ?: "Registration failed"
+                    }
                 }
+            }
+
+            "verify_result" -> {
+                if (msg.status == "ok") {
+                    _pendingVerification.value = false
+                    _pendingVerifyUsername.value = ""
+                    _authError.value = "Email verified. Sign in."
+                } else {
+                    _authError.value = msg.error ?: "Invalid verification code"
+                }
+            }
+
+            "referral_stats" -> {
+                _referralCount.value = msg.token?.toIntOrNull() ?: 0
+                _referredUsers.value = msg.results ?: emptyList()
             }
 
             "update_result" -> {

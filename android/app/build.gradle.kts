@@ -18,12 +18,12 @@ fun localProp(key: String, fallback: String = "") =
     (localProps[key] as? String)?.takeIf { it.isNotBlank() } ?: fallback
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-val appVersionCode = 22
-val appVersionName = "1.5.2"
+val appVersionCode = 28
+val appVersionName = "1.5.6"
 
 android {
     namespace = "world.phazechat.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "world.phazechat.app"
@@ -104,14 +104,14 @@ dependencies {
     implementation("org.json:json:20231013")
 
     // Crypto (NaCl via Lazysodium)
-    implementation("com.goterl:lazysodium-android:5.1.0@aar")
-    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("com.goterl:lazysodium-android:5.2.0@aar")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
 
     // Core (NotificationCompat for the screen-share foreground service)
     implementation("androidx.core:core-ktx:1.13.1")
 
     // WebRTC
-    implementation("io.getstream:stream-webrtc-android:1.2.2")
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
 
     // Firebase Cloud Messaging
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -22,6 +23,10 @@ fun AuthScreen(
     error: String?,
     onLogin: (String, String) -> Unit,
     onRegister: (String, String, String) -> Unit,
+    onVerifyEmail: (String) -> Unit,
+    onResendVerification: (String) -> Unit,
+    onCancelVerification: () -> Unit,
+    pendingVerification: Boolean = false,
     onLoginWithLinkCode: ((String) -> Unit)? = null,
     onCancelLinkLogin: (() -> Unit)? = null,
     scannedLinkCode: String = "",
@@ -33,6 +38,7 @@ fun AuthScreen(
     var password by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var linkCode by remember { mutableStateOf("") }
+    var verifyCode by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
 
     LaunchedEffect(scannedLinkCode) {
@@ -44,14 +50,30 @@ fun AuthScreen(
 
     val submit = {
         focus.clearFocus()
-        if (mode == "link") {
-            if (linkCode.isNotBlank()) {
-                onLoginWithLinkCode?.invoke(linkCode)
+        when {
+            pendingVerification -> {
+                if (verifyCode.length == 6) onVerifyEmail(verifyCode)
             }
-        } else if (username.isNotBlank() && password.isNotBlank()) {
-            if (mode == "login") onLogin(username, password) else onRegister(username, email, password)
+            mode == "link" -> {
+                if (linkCode.isNotBlank()) onLoginWithLinkCode?.invoke(linkCode)
+            }
+            mode == "register" -> {
+                if (username.isNotBlank() && password.isNotBlank() && email.isNotBlank()) {
+                    onRegister(username, email, password)
+                }
+            }
+            else -> {
+                if (username.isNotBlank() && password.isNotBlank()) onLogin(username, password)
+            }
         }
     }
+
+    val isSuccessMsg = error != null && (
+        error.contains("Waiting") ||
+        error.contains("verified") ||
+        error.contains("resent") ||
+        error.contains("Check your email")
+    )
 
     Column(
         modifier = Modifier
@@ -69,7 +91,58 @@ fun AuthScreen(
         Text("Encrypted chat for everyone", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         Spacer(Modifier.height(32.dp))
 
-        if (mode == "link") {
+        if (pendingVerification) {
+            // ── Email verification step ───────────────────────────────
+            Text(
+                "We sent a 6-digit code to your email. Enter it below to activate your account.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            OutlinedTextField(
+                value = verifyCode,
+                onValueChange = { if (it.length <= 6) verifyCode = it.filter { c -> c.isDigit() } },
+                label = { Text("6-digit code") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+            )
+            Spacer(Modifier.height(16.dp))
+
+            if (error != null) {
+                Text(
+                    error,
+                    color = if (isSuccessMsg) PhazeSuccess else MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Button(
+                onClick = { submit() },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = verifyCode.length == 6,
+            ) {
+                Text("Verify Email", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(12.dp))
+
+            TextButton(onClick = { onResendVerification(email) }) {
+                Text("Resend code")
+            }
+            TextButton(onClick = {
+                verifyCode = ""
+                onCancelVerification()
+            }) {
+                Text("Cancel")
+            }
+
+        } else if (mode == "link") {
+            // ── Link code login ───────────────────────────────────────
             Text(
                 "Open Phaze on a device you're already signed into → Settings → Link a new device. Enter the code below or scan a QR code.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -83,18 +156,12 @@ fun AuthScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (onScanQR != null) {
-                    Button(
-                        onClick = onScanQR,
-                        modifier = Modifier.weight(1f)
-                    ) {
+                    Button(onClick = onScanQR, modifier = Modifier.weight(1f)) {
                         Text("📸 Camera")
                     }
                 }
                 if (onScanGallery != null) {
-                    OutlinedButton(
-                        onClick = onScanGallery,
-                        modifier = Modifier.weight(1f)
-                    ) {
+                    OutlinedButton(onClick = onScanGallery, modifier = Modifier.weight(1f)) {
                         Text("📂 Gallery")
                     }
                 }
@@ -111,7 +178,34 @@ fun AuthScreen(
             )
             Spacer(Modifier.height(16.dp))
 
+            if (error != null) {
+                Text(
+                    error,
+                    color = if (isSuccessMsg) PhazeSuccess else MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Button(
+                onClick = { submit() },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = linkCode.isNotBlank(),
+            ) {
+                Text("Sign in with Code", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(12.dp))
+
+            TextButton(onClick = {
+                mode = "login"
+                onCancelLinkLogin?.invoke()
+            }) {
+                Text("Back to sign in")
+            }
+
         } else {
+            // ── Login / Register ──────────────────────────────────────
             OutlinedTextField(
                 value = username,
                 onValueChange = { username = it },
@@ -129,7 +223,7 @@ fun AuthScreen(
                     label = { Text("Email") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -145,38 +239,38 @@ fun AuthScreen(
                 keyboardActions = KeyboardActions(onGo = { submit() }),
             )
             Spacer(Modifier.height(16.dp))
-        }
 
-        if (error != null) {
-            Text(error, color = if (error.contains("Waiting")) PhazeSuccess else MaterialTheme.colorScheme.error, fontSize = 13.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(8.dp))
-        }
-
-        Button(
-            onClick = { submit() },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            enabled = if (mode == "link") linkCode.isNotBlank() else (username.isNotBlank() && password.isNotBlank()),
-        ) {
-            Text(
-                when (mode) {
-                    "link" -> "Sign in with Code"
-                    "login" -> "Sign In"
-                    else -> "Create Account"
-                },
-                fontWeight = FontWeight.Bold
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        if (mode == "link") {
-            TextButton(onClick = {
-                mode = "login"
-                onCancelLinkLogin?.invoke()
-            }) {
-                Text("Back to sign in")
+            if (error != null) {
+                Text(
+                    error,
+                    color = if (isSuccessMsg) PhazeSuccess else MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
             }
-        } else {
-            TextButton(onClick = { mode = if (mode == "login") "register" else "login" }) {
+
+            val buttonEnabled = when (mode) {
+                "register" -> username.isNotBlank() && password.isNotBlank() && email.contains("@")
+                else -> username.isNotBlank() && password.isNotBlank()
+            }
+
+            Button(
+                onClick = { submit() },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = buttonEnabled,
+            ) {
+                Text(
+                    when (mode) {
+                        "login" -> "Sign In"
+                        else -> "Create Account"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            TextButton(onClick = { mode = if (mode == "login") "register" else "login"; username = ""; password = ""; email = "" }) {
                 Text(if (mode == "login") "Create an account" else "Already have an account? Sign in")
             }
             if (mode == "login" && onLoginWithLinkCode != null) {

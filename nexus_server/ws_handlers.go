@@ -174,7 +174,14 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "register_result", Error: regErr})
 			} else {
 				s.DB.Exec("UPDATE users SET signup_ip = ?, last_ip = ? WHERE username = ?", client.IP, client.IP, msg.Sender)
-				log.Printf("New user registered: %s (%s) from %s", msg.Sender, msg.Email, client.IP)
+				if ref := strings.TrimSpace(msg.RefBy); ref != "" && ref != msg.Sender {
+					// Validate the referrer exists before storing.
+					var exists int
+					if s.DB.QueryRow("SELECT 1 FROM users WHERE username = ?", ref).Scan(&exists) == nil {
+						s.DB.Exec("UPDATE users SET referred_by = ? WHERE username = ?", ref, msg.Sender)
+					}
+				}
+				log.Printf("New user registered: %s (%s) from %s ref=%s", msg.Sender, msg.Email, client.IP, msg.RefBy)
 				verifyLink := "https://phazechat.world/verify-email?u=" + url.QueryEscape(msg.Sender) + "&code=" + url.QueryEscape(code)
 				go s.sendEmailLogged(msg.Email, "Activate your Phaze account",
 					emailVerification(msg.Sender, verifyLink, code))
@@ -826,6 +833,24 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			// Only revoke sessions belonging to this user
 			s.DB.Exec("UPDATE session_tokens SET revoked = 1 WHERE token = ? AND username = ?", msg.Body, username)
 			client.Send(NexusMessage{Type: "session_revoked", Status: "ok"})
+
+		case "get_referral_stats":
+			if username == "" {
+				continue
+			}
+			var count int
+			s.DB.QueryRow("SELECT COUNT(*) FROM users WHERE referred_by = ?", username).Scan(&count)
+			rows, _ := s.DB.Query("SELECT username FROM users WHERE referred_by = ? ORDER BY created_at DESC LIMIT 20", username)
+			var referred []string
+			if rows != nil {
+				for rows.Next() {
+					var u string
+					rows.Scan(&u)
+					referred = append(referred, u)
+				}
+				rows.Close()
+			}
+			client.Send(NexusMessage{Type: "referral_stats", Results: referred, Token: strconv.Itoa(count)})
 
 		case "invite_email":
 			if username == "" {

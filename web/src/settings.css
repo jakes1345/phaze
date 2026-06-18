@@ -342,3 +342,38 @@
 .invite-link-box .settings-btn {
   flex-shrink: 0;
 }
+.invite-share-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.invite-share-btn {
+  text-decoration: none;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.8rem;
+}
+.referral-stat-box {
+  background: var(--accent-muted, rgba(99,102,241,0.12));
+  border: 1px solid var(--accent, #6366f1);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.referral-stat-num {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent, #6366f1);
+  line-height: 1;
+}
+.referral-stat-label {
+  font-size: 0.85rem;
+  color: var(--muted, #888);
+}
+.referral-users {
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+  margin-top: 0.4rem;
+}

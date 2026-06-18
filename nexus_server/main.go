@@ -69,6 +69,8 @@ type NexusMessage struct {
 	QRData      string      `json:"qr_data,omitempty"`
 	DeviceInfo  string      `json:"device_info,omitempty"`
 
+	RefBy string `json:"ref_by,omitempty"` // referral: username who invited this new user
+
 	// MsgID is a stable client-generated ID for a chat message. It lets edits,
 	// deletes, and reactions target a specific previously-sent message without
 	// needing the server to assign IDs (DMs are E2EE so the server can't see
@@ -670,6 +672,8 @@ func (s *NexusServer) initDB() {
 			UNIQUE(username, skype_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_skype_contacts_user ON skype_import_contacts(username)`,
+		`ALTER TABLE users ADD COLUMN referred_by TEXT DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)`,
 	}
 	for _, q := range migrations {
 		if _, err := s.DB.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column") && !strings.Contains(err.Error(), "already exists") {
