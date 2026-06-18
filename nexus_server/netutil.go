@@ -129,9 +129,11 @@ func clientIP(r *http.Request) string {
 
 var globalLimiter = newIPLimiter(rate.Limit(10), 30) // 10 req/s, burst 30 per IP
 var adminLimiter = newIPLimiter(rate.Limit(0.05), 3) // 3 attempts per minute per IP
-// resendLimiter prevents email-bombing via resend_verification: 1 resend per 5 minutes per username.
+// resendLimiter prevents email-bombing via resend_verification: 1 resend per 5 minutes per IP.
 var resendLimiter = newIPLimiter(rate.Limit(1.0/300), 1)
 // forgotPasswordLimiter prevents password-reset email flooding: 1 reset per 5 minutes per email.
 var forgotPasswordLimiter = newIPLimiter(rate.Limit(1.0/300), 1)
 // remoteLookupLimiter prevents brute-forcing remote control codes: 10 lookups per minute per IP.
 var remoteLookupLimiter = newIPLimiter(rate.Limit(10.0/60), 10)
+// uploadLimiter prevents storage exhaustion: max 20 uploads per hour per username.
+var uploadLimiter = newIPLimiter(rate.Limit(20.0/3600), 20)
