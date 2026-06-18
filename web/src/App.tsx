@@ -877,12 +877,17 @@ export default function App() {
   }, [tearDownCall])
 
   const makePC = useCallback((recipient: string): RTCPeerConnection => {
+    const stunServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ]
     const iceServers: RTCIceServer[] = turnRef.current
       ? [
-          { urls: 'stun:stun.l.google.com:19302' },
+          ...stunServers,
           { urls: turnRef.current.url, username: turnRef.current.username, credential: turnRef.current.password },
         ]
-      : [{ urls: 'stun:stun.l.google.com:19302' }]
+      : stunServers
     const pc = new RTCPeerConnection({ iceServers })
     pc.ontrack = (e) => {
       const stream = e.streams[0]
@@ -1257,7 +1262,7 @@ export default function App() {
           break
 
         case 'call_answer':
-          if (msg.sdp && pcRef.current) {
+          if (msg.sdp && pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
             stopRinger()
             if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null }
             pcRef.current.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch((e: unknown) => setErr('Call setup failed: ' + String(e)))
