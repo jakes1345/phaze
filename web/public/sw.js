@@ -1,11 +1,7 @@
-// Bump CACHE on each deploy so stale JS/CSS never sticks around. The hashed
-// asset filenames Vite emits make precaching safe; we cache the shell on demand
-// (runtime) rather than listing every hashed file here.
-const CACHE = 'phaze-shell-v1'
-const SHELL = ['/web/', '/web/index.html', '/web/manifest.json', '/web/favicon.svg', '/web/icon-192.png', '/web/icon-512.png']
+const CACHE = 'phaze-shell-v2'
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()))
+  event.waitUntil(self.skipWaiting())
 })
 
 self.addEventListener('activate', (event) => {
@@ -16,32 +12,58 @@ self.addEventListener('activate', (event) => {
   )
 })
 
-// Only the static app shell is cached. API and websocket traffic always hits the
-// network and is never stored (DM bodies are E2EE blobs; responses are dynamic).
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
+
+  // Never cache: API, websocket, uploads, or anything dynamic.
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/ws') ||
       url.pathname.startsWith('/uploads') || url.pathname.startsWith('/public')) return
 
-  // Cache-first for the static shell; fall back to network and refresh the cache.
-  event.respondWith(
-    caches.match(req).then((hit) => {
-      if (hit) return hit
-      return fetch(req).then((resp) => {
-        if (resp.ok && resp.type === 'basic') {
+  // HTML navigation: always network-first so deploys take effect immediately.
+  // Fall back to cache only when offline.
+  if (req.mode === 'navigate' || url.pathname.endsWith('.html') ||
+      url.pathname === '/web/' || url.pathname === '/web') {
+    event.respondWith(
+      fetch(req).then((resp) => {
+        if (resp.ok) {
           const copy = resp.clone()
           caches.open(CACHE).then((c) => c.put(req, copy))
         }
         return resp
-      }).catch(() => {
-        // Offline navigation falls back to the cached app shell.
-        if (req.mode === 'navigate') return caches.match('/web/index.html')
-        return Response.error()
+      }).catch(() => caches.match(req).then((hit) => hit || caches.match('/web/index.html')))
+    )
+    return
+  }
+
+  // Hashed assets (JS/CSS with content hash in filename): cache-first, they never change.
+  if (url.pathname.startsWith('/web/assets/')) {
+    event.respondWith(
+      caches.match(req).then((hit) => {
+        if (hit) return hit
+        return fetch(req).then((resp) => {
+          if (resp.ok) {
+            const copy = resp.clone()
+            caches.open(CACHE).then((c) => c.put(req, copy))
+          }
+          return resp
+        })
       })
-    })
+    )
+    return
+  }
+
+  // Everything else: network with cache fallback.
+  event.respondWith(
+    fetch(req).then((resp) => {
+      if (resp.ok && resp.type === 'basic') {
+        const copy = resp.clone()
+        caches.open(CACHE).then((c) => c.put(req, copy))
+      }
+      return resp
+    }).catch(() => caches.match(req).then((hit) => hit || Response.error()))
   )
 })
 
