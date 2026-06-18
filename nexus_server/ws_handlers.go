@@ -173,7 +173,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			if err != nil {
 				client.Send(NexusMessage{Type: "pstn_status", Error: "Telephony error: " + err.Error()})
 			} else {
-				client.Send(NexusMessage{Type: "pstn_status", Status: "Connecting via Sovereign Bridge..."})
+				client.Send(NexusMessage{Type: "pstn_status", Status: "Connecting..."})
 			}
 
 		case "register":
@@ -301,7 +301,6 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 					s.blockIP(client.IP)
 				}
 				client.Send(NexusMessage{Type: "auth_result", Error: "Too many failed attempts. Try again later."})
-				// Intentional delay to waste attacker time
 				time.Sleep(2 * time.Second)
 				continue
 			}
@@ -379,25 +378,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				TurnConfig: s.generateMediaToken(username),
 			})
 
-			// Broadcast online presence to friends
 			s.broadcastPresence(username, "Online")
-
-			// Deliver any offline messages
 			s.deliverOfflineMessages(username)
 
-			// Send pending friend requests
 			pending := s.getPendingRequests(username)
 			if len(pending) > 0 {
 				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
 			}
 
-			// Send conversations this user belongs to
 			for _, cm := range s.userConversations(username) {
 				cm.Type = "convo_info"
 				client.Send(cm)
 			}
 
-			// Send friends list with online status
 			friends := s.getFriends(username)
 			for _, f := range friends {
 				status := "Offline"
@@ -472,7 +465,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			s.broadcastPresence(username, "Online")
 			s.deliverOfflineMessages(username)
 
-			// Send friends list with online status (same as auth path).
+			// same as the auth path below
 			for _, f := range s.getFriends(username) {
 				status := "Offline"
 				s.Mu.RLock()
@@ -482,11 +475,9 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				s.Mu.RUnlock()
 				client.Send(NexusMessage{Type: "friend_status", Sender: f, Status: status})
 			}
-			// Send pending friend requests.
 			if pending := s.getPendingRequests(username); len(pending) > 0 {
 				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
 			}
-			// Send conversations.
 			for _, cm := range s.userConversations(username) {
 				cm.Type = "convo_info"
 				client.Send(cm)
@@ -517,10 +508,8 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			log.Printf("[delete_account] erased account %s", username)
-			// Notify friends so their rosters update.
 			s.broadcastPresence(username, "Offline")
 			client.Send(NexusMessage{Type: "delete_account_result", Status: "ok"})
-			// Drop the connection and the in-memory client entry.
 			s.Mu.Lock()
 			if cur, ok := s.Clients[username]; ok && cur == client {
 				delete(s.Clients, username)
@@ -1425,7 +1414,6 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			s.Mu.Unlock()
 
-		// ---------- Group Call Invite ----------
 		case "call_invite":
 			if username == "" || msg.Recipient == "" || msg.ChannelID == "" {
 				continue
@@ -1437,7 +1425,6 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			}
 			s.Mu.RUnlock()
 
-		// ---------- Remote Control (TeamViewer-style) ----------
 		case "remote_register":
 			if username == "" {
 				continue
@@ -1511,8 +1498,6 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				client.Send(NexusMessage{Type: "remote_error", Error: msg.Recipient + " is not online"})
 			}
 			s.Mu.RUnlock()
-
-		// ---------- Servers + Channels ----------
 
 		case "server_create":
 			if username == "" {
