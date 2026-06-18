@@ -389,6 +389,15 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   max-width: 420px;
   margin: 0 auto;
 }
+.invite-banner {
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.4);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.9rem;
+  text-align: center;
+  color: var(--fg, #222);
+}
 
 .form input,
 .row.send input,
@@ -2718,4 +2727,36 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
 @keyframes snow-fall {
   0%   { transform: translateY(-10px) translateX(0) rotate(0deg); }
   100% { transform: translateY(105vh) translateX(40px) rotate(360deg); }
+}
+
+/* ── Skype history section ─────────────────────────────────────────── */
+.skype-history-section {
+  padding: 0.5rem 0 0;
+}
+.skype-history-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 1rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #00AFF0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.skype-history-icon { font-size: 1rem; }
+.bubble-row.skype-hist .bubble {
+  opacity: 0.72;
+  background: color-mix(in srgb, var(--bubble-in) 80%, #00AFF0 20%);
+  border: 1px solid rgba(0, 175, 240, 0.2);
+}
+.bubble-row.skype-hist.me .bubble {
+  background: color-mix(in srgb, var(--bubble-out) 80%, #00AFF0 20%);
+}
+.skype-history-divider {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.75rem 0 0.25rem;
+  letter-spacing: 0.05em;
 }

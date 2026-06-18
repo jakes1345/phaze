@@ -600,6 +600,8 @@ export default function App() {
   const [mentionIdx, setMentionIdx] = useState(0)
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [skypeHistory, setSkypeHistory] = useState<{ sender: string; body: string; sent_at: string }[]>([])
+  const skypeHistoryCache = useRef<Record<string, { sender: string; body: string; sent_at: string }[]>>({})
 
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme)
@@ -684,6 +686,16 @@ export default function App() {
     }
   }, [me])
   useEffect(() => { selectedRef.current = selected }, [selected])
+  useEffect(() => {
+    if (!selected || !me) { setSkypeHistory([]); return }
+    if (skypeHistoryCache.current[selected]) { setSkypeHistory(skypeHistoryCache.current[selected]); return }
+    fetch(`/api/v1/import/skype/messages?contact=${encodeURIComponent(selected)}`, {
+      credentials: 'include',
+    }).then(r => r.ok ? r.json() : []).then((msgs: { sender: string; body: string; sent_at: string }[]) => {
+      skypeHistoryCache.current[selected] = msgs ?? []
+      setSkypeHistory(msgs ?? [])
+    }).catch(() => setSkypeHistory([]))
+  }, [selected, me])
   useEffect(() => { callStateRef.current = callState }, [callState])
   useEffect(() => { turnRef.current = turn }, [turn])
 
@@ -1342,10 +1354,16 @@ export default function App() {
     w.onopen = () => {
       setConn('open')
       wsRetryDelay.current = 1000
+      // Cookie pre-auth: the browser sends phaze_session automatically with
+      // the WS upgrade request. The server authenticates from the cookie and
+      // immediately sends auth_result — no token needed in JS memory.
+      // Legacy localStorage token kept as fallback for existing open tabs.
       const tok = localStorage.getItem(SESSION_KEY)
-      const host = window.location.hostname
       if (tok) {
-        sendRef.current({ type: 'session_auth', qr_token: tok, device_info: `web/${host}` })
+        // Migrate: use the stored token once, then remove it so future
+        // sessions rely solely on the HttpOnly cookie.
+        sendRef.current({ type: 'session_auth', qr_token: tok, device_info: `web/${window.location.hostname}` })
+        localStorage.removeItem(SESSION_KEY)
       }
     }
 
@@ -1373,12 +1391,34 @@ export default function App() {
 
   const send = useCallback((m: NexusMessage) => { sendRef.current(m) }, [])
 
-  const doAuth = (username: string, password: string, totp: string) => {
-    if (!username && !password) { setErr('Username and password are required.'); return }
+  const doAuth = async (username: string, password: string, totp: string) => {
     if (!username) { setErr('Username is required.'); return }
     if (!password) { setErr('Password is required.'); return }
     setErr('')
-    send({ type: 'auth', sender: username, body: password, totp_code: totp || undefined, device_info: `web/${window.location.hostname}` })
+    try {
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username, password, totp_code: totp || undefined, device_info: `web/${window.location.hostname}` }),
+      })
+      if (res.status === 401) {
+        const data = await res.json().catch(() => ({})) as { status?: string; error?: string }
+        if (data.status === 'totp_required') { setErr('2FA code required or invalid'); return }
+        setErr('Invalid username or password')
+        return
+      }
+      if (!res.ok) {
+        const text = await res.text()
+        setErr(text || 'Login failed')
+        return
+      }
+      // Cookie is set by the server (HttpOnly — never accessible to JS).
+      // Reconnect the WS so the server can pre-auth from the cookie.
+      setWsRetry((n) => n + 1)
+    } catch {
+      setErr('Network error — please try again')
+    }
   }
 
   const sendFriendRequest = (to: string) => {
@@ -1565,7 +1605,7 @@ export default function App() {
       fd.append('file', file)
       const resp = await fetch('/api/v1/upload', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
         body: fd,
       })
       if (!resp.ok) {
@@ -1871,6 +1911,7 @@ export default function App() {
           onClose={() => { setSettingsOpen(false); setSettingsInitialTab('profile') }}
           onSignOut={() => {
             localStorage.removeItem(SESSION_KEY)
+            fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
             setSessionToken(null)
             setMe(null)
             setSettingsOpen(false)
@@ -2182,12 +2223,12 @@ export default function App() {
           turn={turn}
           onUserClick={setProfileUser}
           uploadAttachment={async (file) => {
-            if (!sessionToken) return null
+            if (!me) return null
             const fd = new FormData()
             fd.append('file', file)
             const resp = await fetch('/api/v1/upload', {
               method: 'POST',
-              headers: { Authorization: `Bearer ${sessionToken}` },
+              credentials: 'include',
               body: fd,
             })
             if (!resp.ok) return null
@@ -2500,6 +2541,28 @@ export default function App() {
                           <span><kbd>/</kbd> commands</span>
                           <span><kbd>@</kbd> mention</span>
                         </p>
+                      </div>
+                    )}
+                    {skypeHistory.length > 0 && (
+                      <div className="skype-history-section">
+                        <div className="skype-history-header">
+                          <span className="skype-history-icon">💬</span>
+                          <span>Skype history · {skypeHistory.length} messages</span>
+                        </div>
+                        {skypeHistory.map((m, i) => {
+                          const isMe = m.sender === me
+                          return (
+                            <div key={i} className={`bubble-row skype-hist ${isMe ? 'me' : ''}`}>
+                              {!isMe && <span className="bubble-avatar" style={{ background: '#00AFF0', opacity: 0.7 }}>{m.sender[0]?.toUpperCase()}</span>}
+                              <div className={`bubble skype-hist-bubble ${isMe ? 'me' : ''}`} title={m.sent_at}>
+                                {!isMe && <span className="who">{m.sender}</span>}
+                                <span className="bubble-text">{m.body}</span>
+                                <span className="bubble-ts">{m.sent_at ? new Date(m.sent_at).toLocaleDateString() : ''}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        <div className="skype-history-divider">— Phaze messages below —</div>
                       </div>
                     )}
                     {(() => {

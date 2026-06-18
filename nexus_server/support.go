@@ -118,13 +118,10 @@ func (s *NexusServer) supportChatHandler(w http.ResponseWriter, r *http.Request)
 			req.Messages[i].Role = "user"
 		}
 	}
-	// Optional caller identity (Bearer token); include in system prompt if known.
+	// Optional caller identity; include in system prompt if known.
 	system := supportSystemPrompt
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-		if u := s.sessionUsername(tok); u != "" {
-			system += "\n\nThe user you are talking to is signed in as: " + u
-		}
+	if u := s.sessionUsername(tokenFromRequest(r)); u != "" {
+		system += "\n\nThe user you are talking to is signed in as: " + u
 	}
 
 	// Try Gemini first (free tier), fall back to Anthropic only if Gemini
@@ -283,11 +280,8 @@ func (s *NexusServer) supportEscalateHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// Caller identity: prefer authenticated session, fall back to provided name.
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-		if u := s.sessionUsername(tok); u != "" {
-			body.Username = u
-		}
+	if u := s.sessionUsername(tokenFromRequest(r)); u != "" {
+		body.Username = u
 	}
 	if body.Username == "" {
 		body.Username = "Anonymous visitor"

@@ -38,14 +38,9 @@ type Story struct {
 // requireAuthHTTP returns the authenticated username for an Authorization:
 // Bearer request, or "" on failure (response already written).
 func (s *NexusServer) requireAuthHTTP(w http.ResponseWriter, r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
-		http.Error(w, "auth required", http.StatusUnauthorized)
-		return ""
-	}
-	u := s.sessionUsername(strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")))
+	u := s.sessionUsername(tokenFromRequest(r))
 	if u == "" {
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+		http.Error(w, "auth required", http.StatusUnauthorized)
 		return ""
 	}
 	return u
