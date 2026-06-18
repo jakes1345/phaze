@@ -1034,6 +1034,8 @@ export default function App() {
           } else if (msg.status === 'pending_verification' || msg.status === 'verification_sent') {
             setErr('Account created. Check your email for a 6-digit code, enter it below.')
             setRegStep('verify')
+          } else if (msg.status === 'code_resent') {
+            setErr('Verification code resent. Check your email.')
           } else {
             setErr(msg.error || 'Registration failed')
           }

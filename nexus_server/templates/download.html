@@ -164,9 +164,9 @@
                 <div class="platform-card" id="card-android">
                     <span class="platform-icon">📱</span>
                     <div class="platform-name">Android</div>
-                    <div class="platform-detail">Android 8.0+ · video calls, screen share, push</div>
-                    <a href="/downloads/Phaze.apk" download="Phaze.apk" class="platform-btn" data-dl="android">Download .apk</a>
-                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">Enable "Install unknown apps" for your browser, then open the .apk. (Google Play listing coming soon.)</p>
+                    <div class="platform-detail">Android 8.0+ · video calls, screen share, push notifications</div>
+                    <a href="https://play.google.com/store/apps/details?id=world.phazechat.app" target="_blank" rel="noopener" class="platform-btn" data-dl="android" style="background:var(--brand);color:#fff;">Get it on Google Play</a>
+                    <p style="font-size:0.75rem;color:var(--text-light);margin-top:8px;">Also available as a direct <a href="/downloads/Phaze.apk" download="Phaze.apk" style="color:var(--brand);">.apk download</a> if you can't use the Play Store.</p>
                 </div>
             </div>
         </div>
@@ -214,8 +214,14 @@
             </div>
             <div class="verify-grid">
                 <div class="verify-item">
-                    <strong>Why "unknown app" on Android?</strong>
-                    <code>The APK is signed by the Phaze project key, not distributed through Play (yet). Enable "Install unknown apps" for your browser, then open the .apk. The Google Play listing is coming.</code>
+                    <strong>Linux: APT repository</strong>
+                    <code>curl -fsSL https://apt.phazechat.world/phaze.gpg | sudo tee /usr/share/keyrings/phaze.gpg &gt;/dev/null
+echo "deb [signed-by=/usr/share/keyrings/phaze.gpg] https://apt.phazechat.world stable main" | sudo tee /etc/apt/sources.list.d/phaze.list
+sudo apt update &amp;&amp; sudo apt install phaze</code>
+                </div>
+                <div class="verify-item">
+                    <strong>Android sideload (non-Play)</strong>
+                    <code>The APK is signed by the Phaze project key. Enable "Install unknown apps" for your browser, open the .apk, then install. SHA-256 checksum on the GitHub releases page.</code>
                 </div>
             </div>
         </div>
