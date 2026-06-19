@@ -1,0 +1,7 @@
+dist/
+build/
+phaze-desktop
+Phaze
+Phaze.exe
+Phaze.linux
+Phaze.darwin

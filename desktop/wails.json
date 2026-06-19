@@ -1,0 +1,12 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Phaze",
+  "outputfilename": "Phaze",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "http://localhost:5173",
+  "author": {
+    "name": "Phaze"
+  }
+}
