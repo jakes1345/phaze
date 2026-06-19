@@ -74,7 +74,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
@@ -100,19 +100,19 @@ jobs:
         working-directory: desktop
         run: wails build -platform windows/amd64 -nsis
 
-      - name: Rename installer to stable filename
+      - name: Find and upload installer
         shell: pwsh
-        run: |
-          $src = Get-ChildItem desktop/build/bin -Filter "*installer*" | Select-Object -First 1
-          Copy-Item $src.FullName Phaze-windows-setup.exe
-
-      - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          gh release upload "$TAG" Phaze-windows-setup.exe --clobber
+          $TAG = $env:GITHUB_REF -replace 'refs/tags/', ''
+          $installer = Get-ChildItem desktop/build/bin -Recurse -Include "*.exe","*.nsis" | Select-Object -First 1
+          if ($installer) {
+            Copy-Item $installer.FullName Phaze-windows-setup.exe
+          } else {
+            Copy-Item desktop/build/bin/Phaze.exe Phaze-windows-setup.exe
+          }
+          gh release upload $TAG Phaze-windows-setup.exe --clobber
 
   # Linux desktop — Wails app using WebKit2GTK 4.1.
   desktop-linux:
@@ -127,7 +127,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install system dependencies
         run: |
