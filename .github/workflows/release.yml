@@ -29,6 +29,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Write google-services.json from secret
+        run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+
+      - name: Write keystore from secret
+        run: echo '${{ secrets.ANDROID_KEYSTORE_B64 }}' | base64 -d > android/app/phaze-release.keystore
+
       - name: Write local.properties (SDK path + signing secrets)
         run: |
           cat > android/local.properties <<EOF
@@ -142,3 +148,5 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           cp desktop/build/bin/Phaze Phaze-linux-amd64
           gh release upload "$TAG" Phaze-linux-amd64 --clobber
+          # Also update the stable download URL used by the website
+          cp Phaze-linux-amd64 nexus_server/public/downloads/Phaze.linux || true
