@@ -123,8 +123,19 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				s.Mu.Lock()
 				current, ok := s.Clients[username]
 				weWereReplaced := ok && current != client
+				var callPartner string
 				if ok && current == client {
+					callPartner = client.CallPartner
 					delete(s.Clients, username)
+				}
+				// Notify call partner before releasing the lock so we can
+				// look up their client while still holding it.
+				if callPartner != "" {
+					if partner, ok := s.Clients[callPartner]; ok {
+						partner.InCall = false
+						partner.CallPartner = ""
+						partner.Send(NexusMessage{Type: "call_end", Sender: username})
+					}
 				}
 				s.Mu.Unlock()
 				if !weWereReplaced {
@@ -1150,12 +1161,22 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			err := s.sendFriendRequest(username, msg.Recipient)
-			if err != nil {
-				log.Printf("Friend request error: %v", err)
+			if err == errFriendBlocked {
+				// Don't reveal to the sender that they're blocked.
+				client.Send(NexusMessage{Type: "friend_request_sent", Recipient: msg.Recipient})
 				continue
 			}
+			if err == errFriendDuplicate {
+				client.Send(NexusMessage{Type: "friend_error", Error: "Already friends or request already sent"})
+				continue
+			}
+			if err != nil {
+				log.Printf("Friend request error: %v", err)
+				client.Send(NexusMessage{Type: "friend_error", Error: "Could not send friend request"})
+				continue
+			}
+			client.Send(NexusMessage{Type: "friend_request_sent", Recipient: msg.Recipient})
 			log.Printf("Friend request: %s -> %s", username, msg.Recipient)
-			// Notify recipient if online
 			s.Mu.RLock()
 			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
 				recipientClient.Send(NexusMessage{
@@ -1176,9 +1197,11 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			err := s.acceptFriendRequest(requester, username)
 			if err != nil {
 				log.Printf("Friend accept error: %v", err)
+				client.Send(NexusMessage{Type: "friend_error", Error: "Could not accept friend request"})
 				continue
 			}
 			log.Printf("Friend accepted: %s accepted %s", username, requester)
+			client.Send(NexusMessage{Type: "friend_accepted", Sender: requester})
 			s.Mu.RLock()
 			if requesterClient, ok := s.Clients[requester]; ok {
 				requesterClient.Send(NexusMessage{
@@ -1400,12 +1423,15 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 					continue
 				}
 			} else if msg.Type == "call_answer" {
-				// Mark both parties as in-call.
+				// Mark both parties as in-call and record the partner so we
+				// can send call_end to the other side if one drops mid-call.
 				if c, ok := s.Clients[username]; ok {
 					c.InCall = true
+					c.CallPartner = msg.Recipient
 				}
 				if c, ok := s.Clients[msg.Recipient]; ok {
 					c.InCall = true
+					c.CallPartner = username
 				}
 			}
 			if recipientClient, ok := s.Clients[msg.Recipient]; ok {
@@ -1426,12 +1452,13 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			s.Mu.Lock()
-			// Clear in-call state for both parties.
 			if c, ok := s.Clients[username]; ok {
 				c.InCall = false
+				c.CallPartner = ""
 			}
 			if c, ok := s.Clients[msg.Recipient]; ok {
 				c.InCall = false
+				c.CallPartner = ""
 				c.Send(msg)
 			}
 			s.Mu.Unlock()
@@ -1441,6 +1468,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if !s.areFriends(username, msg.Recipient) {
+				client.Send(NexusMessage{Type: "call_error", Error: "You can only invite friends"})
 				continue
 			}
 			msg.Sender = username

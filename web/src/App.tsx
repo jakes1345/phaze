@@ -1056,6 +1056,14 @@ export default function App() {
           if (msg.sender) setPending((p) => (p.includes(msg.sender!) ? p : [...p, msg.sender!]))
           break
 
+        case 'friend_request_sent':
+          setErr(`Friend request sent to ${msg.recipient || 'user'}`)
+          break
+
+        case 'friend_error':
+          setErr(msg.error || 'Friend request failed')
+          break
+
         case 'friend_accepted':
           if (msg.sender) {
             setFriends((f) => ({ ...f, [msg.sender!]: msg.status || 'Online' }))
@@ -1978,7 +1986,7 @@ export default function App() {
                     onMouseEnter={() => setPaletteIdx(i)}
                     onClick={() => {
                       if (isFriend) { openChat(u); setPaletteOpen(false) }
-                      else { sendFriendRequest(u); setPaletteOpen(false); setErr(`Friend request sent to ${u}`) }
+                      else { sendFriendRequest(u); setPaletteOpen(false) }
                     }}
                   >
                     <span className="avatar" style={{ background: avatarColor(u) }}>
