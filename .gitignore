@@ -67,3 +67,8 @@ docs/*.md
 infra/coturn/README.md
 web/README.md
 kai_bot/
+desktop/dist/
+desktop/build/
+desktop/phaze-desktop
+desktop/Phaze
+desktop/Phaze.exe
