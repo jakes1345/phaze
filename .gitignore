@@ -11,10 +11,6 @@ fyne-cross/
 .fuse_hidden*
 
 # Client binaries
-/tazher-client
-/tazher-nexus
-/tazher-nexus-linux
-/tazher-native-linux
 /skype-nexus
 /skype_test
 /phaze
@@ -30,18 +26,15 @@ nexus_server/public/downloads/Phaze.apk
 nexus_server/public/downloads/Phaze.exe
 nexus_server/public/downloads/Phaze.linux
 native_client/phaze
-native_client/tazher-native
 native_client/private-skype
 native_client/shadow_test
 native_client/skype_test
-native_client/velocity_test
 native_client/skype-classic
 native_client/SkypeSetup_*.exe
 native_client/scratch/SkypeSetup_*.exe
 nexus_server/phaze-nexus
 nexus_server/nexus-server
 nexus_server/skype-nexus
-nexus_server/tazher-nexus
 
 # Local assets (unencrypted source stays off the repo)
 native_client/assets/
@@ -70,16 +63,3 @@ android/app/phaze-release.keystore
 # System
 .DS_Store
 __pycache__/
-
-# Private AI/tooling files — not for the public repo
-AGENTS.md
-CLAUDE.md
-docs/AI_OPS.md
-PHAZE_ENGINEERING_GUIDELINE.md
-docs/ROADMAP.md
-docs/GOOGLE_PLAY_SUBMISSION.md
-docs/PLAY_STORE_LISTING.md
-docs/PRE_BETA_CHECKLIST.md
-
-# AI tool state
-.cursor/
