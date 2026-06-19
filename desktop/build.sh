@@ -15,6 +15,7 @@ fi
 
 echo "→ Building web frontend..."
 cd "$WEB_DIR"
+npm ci --no-audit --no-fund
 VITE_BASE=/ npm run build
 
 echo "→ Copying dist to desktop/dist/..."
