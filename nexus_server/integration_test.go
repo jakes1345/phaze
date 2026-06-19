@@ -113,6 +113,9 @@ func TestSmoke_RegisterAuthMessageSignaling(t *testing.T) {
 
 	registerAndVerify(t, srv, "alice", "password123")
 	registerAndVerify(t, srv, "bob", "password123")
+	if _, err := srv.DB.Exec(`INSERT INTO friends (user_a, user_b, status) VALUES ('alice', 'bob', 'accepted')`); err != nil {
+		t.Fatalf("seed friendship: %v", err)
+	}
 
 	alice := dial(t, wsBase)
 	bob := dial(t, wsBase)
