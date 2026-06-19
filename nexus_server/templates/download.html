@@ -197,11 +197,10 @@
             <h3>System Requirements</h3>
             <div class="req-grid">
                 <div class="req-card">
-                    <h4>Windows &amp; macOS &amp; Linux</h4>
+                    <h4>Linux desktop</h4>
                     <ul>
-                        <li>Windows 10 (64-bit) or Windows 11</li>
-                        <li>macOS 12 Monterey or later</li>
                         <li>Any modern 64-bit Linux distro</li>
+                        <li>x86-64 or ARM64</li>
                         <li>Camera &amp; mic for calls</li>
                         <li>~100 MB disk space</li>
                     </ul>
@@ -240,12 +239,13 @@
             const API_LATEST = 'https://api.github.com/repos/' + REPO + '/releases/latest';
             const RELEASES_PAGE = 'https://github.com/' + REPO + '/releases/latest';
 
-            // Fallbacks if the API call fails — point to releases page rather than a dead file
+            // Fallbacks if the API call fails.
+            // Windows and macOS have no native binary yet — null triggers "Coming soon".
             const fallback = {
-                windows: RELEASES_PAGE,
+                windows: null,
                 linux: RELEASES_PAGE,
                 android: '/downloads/Phaze.apk',
-                macos: RELEASES_PAGE
+                macos: null
             };
 
             function pick(assets, pred) {
@@ -262,7 +262,7 @@
                     pick(assets, function (x) { return /windows/i.test(x.name) && /\.zip$/i.test(x.name); });
 
                 var linuxArm = pick(assets, function (x) { return /^Phaze_linux_arm64\.tar\.gz$/i.test(x.name); });
-                var linuxAmd = pick(assets, function (x) { return /^Phaze_linux_amd64\.tar\.gz$/i.test(x.name); });
+                var linuxAmd = pick(assets, function (x) { return /^Phaze_linux_amd64\.tar\.gz$/i.test(x.name) || /^Phaze\.linux$/i.test(x.name); });
                 var linux;
                 if ((/\baarch64\b|\barm64\b/).test(ua) && /linux/.test(ua) && !/android/.test(ua)) {
                     linux = linuxArm || linuxAmd;
