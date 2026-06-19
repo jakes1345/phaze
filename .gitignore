@@ -63,3 +63,7 @@ android/app/phaze-release.keystore
 # System
 .DS_Store
 __pycache__/
+docs/*.md
+infra/coturn/README.md
+web/README.md
+kai_bot/
