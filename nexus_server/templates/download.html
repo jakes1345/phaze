@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Download Phaze — Free Encrypted Chat & Video Calls</title>
-    <meta name="description" content="Phaze for Linux, Android, and Web. Free encrypted video calls, voice calls, group spaces, and instant messaging. No ads, no tracking.">
+    <meta name="description" content="Phaze for Windows, Linux, Android, and Web. Free encrypted video calls, voice calls, group spaces, and instant messaging. No ads, no tracking.">
     <meta name="theme-color" content="#863bff">
     <link rel="canonical" href="https://phazechat.world/download">
     <link rel="icon" type="image/svg+xml" href="/web/favicon.svg">
@@ -197,10 +197,10 @@
             <h3>System Requirements</h3>
             <div class="req-grid">
                 <div class="req-card">
-                    <h4>Linux desktop</h4>
+                    <h4>Windows &amp; Linux desktop</h4>
                     <ul>
+                        <li>Windows 10 (64-bit) or Windows 11</li>
                         <li>Any modern 64-bit Linux distro</li>
-                        <li>x86-64 or ARM64</li>
                         <li>Camera &amp; mic for calls</li>
                         <li>~100 MB disk space</li>
                     </ul>
@@ -240,9 +240,9 @@
             const RELEASES_PAGE = 'https://github.com/' + REPO + '/releases/latest';
 
             // Fallbacks if the API call fails.
-            // Windows and macOS have no native binary yet — null triggers "Coming soon".
+            // macOS has no native binary yet — null triggers "Coming soon".
             const fallback = {
-                windows: null,
+                windows: RELEASES_PAGE,
                 linux: RELEASES_PAGE,
                 android: '/downloads/Phaze.apk',
                 macos: null
