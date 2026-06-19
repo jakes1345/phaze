@@ -53,8 +53,8 @@
         <div class="container">
             <h1>What do you need help with?</h1>
             <div class="search-box">
-                <input type="text" placeholder="Search for help articles...">
-                <button>Search</button>
+                <input type="text" id="support-search" placeholder="Search for help articles..." onkeydown="if(event.key==='Enter')doSearch()">
+                <button onclick="doSearch()">Search</button>
             </div>
         </div>
     </section>
@@ -100,6 +100,13 @@
         </div>
     </section>
 
+    <script>
+        function doSearch() {
+            var q = document.getElementById('support-search').value.trim();
+            if (!q) return;
+            window.open('https://github.com/jakes1345/skype7-reborn/issues?q=' + encodeURIComponent(q), '_blank');
+        }
+    </script>
     <footer class="footer">
         <div class="container">
             <p>© 2024–2026 Phaze.</p>
