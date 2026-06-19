@@ -197,6 +197,10 @@ type Client struct {
 	// InCall is true while the client has an active WebRTC call session.
 	// Used to send call_busy back to new callers instead of letting them wait.
 	InCall bool
+	// CallPartner is the username of the other party in the current call.
+	// Set on call_answer, cleared on call_end/call_reject/disconnect.
+	// Used to send call_end to the partner if this client drops mid-call.
+	CallPartner string
 }
 
 // Send locks the per-connection write mutex and emits a JSON message.
@@ -1275,26 +1279,34 @@ func (s *NexusServer) getFriends(username string) []string {
 	return friends
 }
 
+var errFriendBlocked = fmt.Errorf("blocked")
+var errFriendDuplicate = fmt.Errorf("already friends or request pending")
+
 func (s *NexusServer) sendFriendRequest(from, to string) error {
-	// Blocked users cannot send friend requests (either direction).
 	if s.isBlocked(to, from) || s.isBlocked(from, to) {
-		return nil
+		return errFriendBlocked
 	}
-	// Check if already exists in either direction
 	var count int
 	s.DB.QueryRow("SELECT COUNT(*) FROM friends WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)",
 		from, to, to, from).Scan(&count)
 	if count > 0 {
-		return nil // Already exists
+		return errFriendDuplicate
 	}
 	_, err := s.DB.Exec("INSERT INTO friends (user_a, user_b, status) VALUES (?, ?, 'pending')", from, to)
 	return err
 }
 
 func (s *NexusServer) acceptFriendRequest(from, to string) error {
-	_, err := s.DB.Exec("UPDATE friends SET status = 'accepted' WHERE user_a = ? AND user_b = ? AND status = 'pending'",
+	res, err := s.DB.Exec("UPDATE friends SET status = 'accepted' WHERE user_a = ? AND user_b = ? AND status = 'pending'",
 		from, to)
-	return err
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("no pending request from %s", from)
+	}
+	return nil
 }
 
 func (s *NexusServer) rejectFriendRequest(from, to string) error {
