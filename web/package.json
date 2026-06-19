@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@sentry/react": "^10.53.1",
+    "@sentry/react": "^10.58.0",
     "jsqr": "^1.4.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
