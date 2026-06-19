@@ -132,7 +132,7 @@
 
 <header>
   <h1><strong>Stay in phase.</strong></h1>
-  <p class="tagline">Sovereign chat &amp; calls. End-to-end encrypted. No ads, no tracking, no sold data. Open source.</p>
+  <p class="tagline">End-to-end encrypted chat &amp; calls. No ads, no tracking, no sold data. Open source.</p>
 
   <div class="downloads">
     <a class="btn" href="https://phazechat.world/web/">Open Phaze Web</a>
@@ -145,28 +145,28 @@
 <main>
 <div class="features">
   <div class="feature">
-    <h3>🔒 E2EE direct messages</h3>
-    <p>NaCl (Curve25519 + XSalsa20-Poly1305) per-recipient encryption. The Nexus relay stores ciphertext but cannot read message bodies.</p>
+    <h3>E2EE direct messages</h3>
+    <p>Messages are encrypted on your device before they leave. The relay stores ciphertext and can't read them.</p>
   </div>
   <div class="feature">
-    <h3>📞 Voice &amp; video calls</h3>
-    <p>WebRTC P2P with automatic public TURN fallback so calls work behind symmetric NAT. Opus audio, VP8 video.</p>
+    <h3>Voice &amp; video calls</h3>
+    <p>P2P WebRTC with TURN fallback so calls work behind NAT. Screen sharing on the web client.</p>
   </div>
   <div class="feature">
-    <h3>🎙️ Voice messages</h3>
-    <p>Record-and-send voice notes on the web client. MediaRecorder → encrypted attachment → inline playback.</p>
+    <h3>Voice messages</h3>
+    <p>Record and send voice notes from the web client. Stored encrypted, plays back inline.</p>
   </div>
   <div class="feature">
-    <h3>💾 Cross-device history</h3>
-    <p>Encrypted message history stored server-side and replayed to every device that knows your Recovery PIN.</p>
+    <h3>Cross-device history</h3>
+    <p>Set a Recovery PIN and your message history follows you to any device you sign into.</p>
   </div>
   <div class="feature">
-    <h3>✨ Modern chat UX</h3>
-    <p>Reactions, edits, deletes, @mentions with autocomplete, pinned messages, in-chat search, ⌘K palette, slash commands, dark mode.</p>
+    <h3>Chat features</h3>
+    <p>Reactions, edits, deletes, @mentions, pinned messages, search, ⌘K palette, slash commands, dark mode.</p>
   </div>
   <div class="feature">
-    <h3>🛠️ Self-hostable relay</h3>
-    <p>Run your own Nexus in Docker. Point clients at your <code>wss://</code> host. Built-in <code>/metrics</code> + Litestream-to-S3 backups when configured.</p>
+    <h3>Self-hostable</h3>
+    <p>Run your own relay in Docker. Point clients at your WebSocket URL. Litestream-to-S3 backups when configured.</p>
   </div>
 </div>
 
@@ -180,7 +180,7 @@
 
 <h2>Contribute</h2>
 <p>Issues and PRs welcome at <a href="https://github.com/jakes1345/skype7-reborn">github.com/jakes1345/skype7-reborn</a>. The <strong>Bug report</strong> and <strong>Beta feedback</strong> templates are the right entry points when testing prereleases.</p>
-<p><strong>Not in v1 scope yet:</strong> iOS/macOS native apps (no Apple build hardware), Spaces (group channels) feature-parity with DMs, screen sharing, multi-relay federation. Track the README roadmap.</p>
+<p>iOS/macOS native apps aren't in scope yet (no Apple build hardware). Track what's coming in the README.</p>
 
 </main>
 
