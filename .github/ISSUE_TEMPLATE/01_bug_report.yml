@@ -11,7 +11,7 @@ body:
     attributes:
       label: Component
       options:
-        - Desktop client (Fyne)
+        - Desktop client (Windows/Linux/macOS)
         - Android client
         - Nexus relay / server
         - Website / download pages
