@@ -98,6 +98,20 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 			})
 			s.broadcastPresence(username, "Online")
 			s.deliverOfflineMessages(username)
+			friends := s.getFriends(username)
+			for _, f := range friends {
+				status := "Offline"
+				s.Mu.RLock()
+				if c, ok := s.Clients[f]; ok {
+					status = c.Status
+				}
+				s.Mu.RUnlock()
+				client.Send(NexusMessage{Type: "friend_status", Sender: f, Status: status})
+			}
+			pending := s.getPendingRequests(username)
+			if len(pending) > 0 {
+				client.Send(NexusMessage{Type: "pending_requests", Results: pending})
+			}
 		} else {
 			msg := "Account suspended"
 			if reason != "" {
