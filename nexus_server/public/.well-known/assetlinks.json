@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "world.phazechat.app",
+    "sha256_cert_fingerprints": [
+      "AA:48:26:07:CC:F8:D2:14:0D:8D:BC:C1:0E:39:40:E1:61:B8:DA:FB:E2:5E:63:1A:8E:3F:C7:9A:03:38:7A:DF"
+    ]
+  }
+}]
