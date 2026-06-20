@@ -21,7 +21,7 @@ use-auth-secret
 static-auth-secret=${TURN_SECRET}
 realm=${TURN_REALM}
 min-port=49160
-max-port=49200
+max-port=49161
 no-multicast-peers
 no-cli
 no-tlsv1
