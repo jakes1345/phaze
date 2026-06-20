@@ -358,9 +358,27 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     private var linkPollJob: Job? = null
 
+    private val _totpRequired = MutableStateFlow(false)
+    val totpRequired = _totpRequired.asStateFlow()
+    private var pendingTotpUsername: String = ""
+    private var pendingTotpPassword: String = ""
+
     fun login(username: String, password: String) {
         _authError.value = null
+        pendingTotpUsername = username
+        pendingTotpPassword = password
         nexus.send(NexusMessage(type = "auth", sender = username, body = password, deviceInfo = "android/${Build.MODEL}"))
+    }
+
+    fun loginWithTotp(totpCode: String) {
+        _authError.value = null
+        nexus.send(NexusMessage(type = "auth", sender = pendingTotpUsername, body = pendingTotpPassword, totpCode = totpCode, deviceInfo = "android/${Build.MODEL}"))
+    }
+
+    fun cancelTotp() {
+        _totpRequired.value = false
+        pendingTotpUsername = ""
+        pendingTotpPassword = ""
     }
 
     fun loginWithLinkCode(code: String) {
@@ -1102,7 +1120,11 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             "auth_result" -> {
-                if (msg.status == "ok") {
+                if (msg.status == "totp_required") {
+                    _totpRequired.value = true
+                    _authError.value = null
+                } else if (msg.status == "ok") {
+                    _totpRequired.value = false
                     _me.value = msg.sender
                     _authError.value = null
                     msg.qrToken?.let { tok ->

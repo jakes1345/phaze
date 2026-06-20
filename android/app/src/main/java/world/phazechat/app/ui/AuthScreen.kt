@@ -27,6 +27,9 @@ fun AuthScreen(
     onResendVerification: (String) -> Unit,
     onCancelVerification: () -> Unit,
     pendingVerification: Boolean = false,
+    totpRequired: Boolean = false,
+    onLoginWithTotp: ((String) -> Unit)? = null,
+    onCancelTotp: (() -> Unit)? = null,
     onLoginWithLinkCode: ((String) -> Unit)? = null,
     onCancelLinkLogin: (() -> Unit)? = null,
     scannedLinkCode: String = "",
@@ -39,6 +42,7 @@ fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var linkCode by remember { mutableStateOf("") }
     var verifyCode by remember { mutableStateOf("") }
+    var totpCode by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
 
     LaunchedEffect(scannedLinkCode) {
@@ -51,6 +55,9 @@ fun AuthScreen(
     val submit = {
         focus.clearFocus()
         when {
+            totpRequired -> {
+                if (totpCode.length == 6) onLoginWithTotp?.invoke(totpCode)
+            }
             pendingVerification -> {
                 if (verifyCode.length == 6) onVerifyEmail(verifyCode)
             }
@@ -91,7 +98,40 @@ fun AuthScreen(
         Text("Encrypted chat for everyone", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         Spacer(Modifier.height(32.dp))
 
-        if (pendingVerification) {
+        if (totpRequired) {
+            // ── 2FA / TOTP step ───────────────────────────────────────
+            Text(
+                "Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            OutlinedTextField(
+                value = totpCode,
+                onValueChange = { if (it.length <= 6) totpCode = it.filter { c -> c.isDigit() } },
+                label = { Text("Authenticator code") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+            )
+            Spacer(Modifier.height(16.dp))
+            if (error != null) {
+                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+            }
+            Button(
+                onClick = { submit() },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = totpCode.length == 6,
+            ) { Text("Verify", fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = { totpCode = ""; onCancelTotp?.invoke() }) {
+                Text("Back to sign in")
+            }
+
+        } else if (pendingVerification) {
             // ── Email verification step ───────────────────────────────
             Text(
                 "We sent a 6-digit code to your email. Enter it below to activate your account.",

@@ -87,6 +87,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     val me by vm.me.collectAsState()
     val authError by vm.authError.collectAsState()
     val pendingVerification by vm.pendingVerification.collectAsState()
+    val totpRequired by vm.totpRequired.collectAsState()
     val pendingVerifyUsername by vm.pendingVerifyUsername.collectAsState()
     val friends by vm.friends.collectAsState()
     val pending by vm.pending.collectAsState()
@@ -347,6 +348,9 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             onResendVerification = { email -> vm.resendVerification(email) },
             onCancelVerification = { vm.cancelVerification() },
             pendingVerification = pendingVerification,
+            totpRequired = totpRequired,
+            onLoginWithTotp = { code -> vm.loginWithTotp(code) },
+            onCancelTotp = { vm.cancelTotp() },
             onLoginWithLinkCode = { vm.loginWithLinkCode(it) },
             onCancelLinkLogin = { vm.cancelLinkLogin() },
             scannedLinkCode = scannedLinkCode,
