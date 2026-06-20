@@ -30,7 +30,13 @@ func originAllowed(r *http.Request) bool {
 	if allowedOrigins == nil {
 		return true
 	}
-	return allowedOrigins[r.Header.Get("Origin")]
+	origin := r.Header.Get("Origin")
+	// Native clients (Android, desktop) don't send an Origin header.
+	// Only browsers do, so a missing origin is safe to allow.
+	if origin == "" {
+		return true
+	}
+	return allowedOrigins[origin]
 }
 
 // pstnBridgeEnabled gates Twilio outbound PSTN. Default off so relays run
