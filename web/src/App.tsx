@@ -879,8 +879,6 @@ export default function App() {
   const makePC = useCallback((recipient: string): RTCPeerConnection => {
     const stunServers: RTCIceServer[] = [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
     ]
     const iceServers: RTCIceServer[] = turnRef.current
       ? [
