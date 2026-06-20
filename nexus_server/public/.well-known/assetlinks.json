@@ -1,10 +1,16 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "world.phazechat.app",
-    "sha256_cert_fingerprints": [
-      "AA:48:26:07:CC:F8:D2:14:0D:8D:BC:C1:0E:39:40:E1:61:B8:DA:FB:E2:5E:63:1A:8E:3F:C7:9A:03:38:7A:DF"
-    ]
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "world.phazechat.app",
+      "sha256_cert_fingerprints": [
+        "AA:48:26:07:CC:F8:D2:14:0D:8D:BC:C1:0E:39:40:E1:61:B8:DA:FB:E2:5E:63:1A:8E:3F:C7:9A:03:38:7A:DF",
+        "7D:29:D1:2E:D2:D7:8E:C4:53:DA:99:CB:99:C7:38:B3:59:09:21:41:D2:81:61:1B:20:E0:21:21:3F:BA:12:C3"
+      ]
+    }
   }
-}]
+]
