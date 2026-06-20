@@ -2147,13 +2147,13 @@ export default function App() {
       )}
 
       {changelogOpen && (
-        <div className="wn-overlay">
+        <div className="wn-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setChangelogOpen(false); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') } }}>
           <div className="wn-modal">
             <button type="button" className="wn-close" onClick={() => { setChangelogOpen(false); setChangelogSeen(true); localStorage.setItem('phaze_changelog_v', '2025-05-25') }}>✕</button>
             <div className="wn-header">
               <img src={faviconUrl} alt="" className="wn-logo" />
               <h2>What's New</h2>
-              <p>Here's everything we shipped this week.</p>
+              <p>Here's what's been added since your last visit.</p>
             </div>
             <div className="wn-card" style={{ borderColor: changelogFeatures[changelogSlide].color + '33' }}>
               <div className="wn-card-icon" style={{ background: changelogFeatures[changelogSlide].color + '18', color: changelogFeatures[changelogSlide].color }}>
