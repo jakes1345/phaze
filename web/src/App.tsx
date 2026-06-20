@@ -1034,7 +1034,7 @@ export default function App() {
             }
           } else {
             localStorage.removeItem(SESSION_KEY)
-            if (msg.status === 'totp_required') { setNeedsTotp(true); setErr('2FA required: enter TOTP code.') }
+            if (msg.status === 'totp_required') { setNeedsTotp(true); setErr('Enter your 2FA code or a backup code.') }
             else setErr(msg.error || msg.status || 'Auth failed')
           }
           break
@@ -1449,7 +1449,7 @@ export default function App() {
       })
       if (res.status === 401) {
         const data = await res.json().catch(() => ({})) as { status?: string; error?: string }
-        if (data.status === 'totp_required') { setErr('2FA code required or invalid'); return }
+        if (data.status === 'totp_required') { setNeedsTotp(true); setErr('Enter your 2FA code or a backup code.'); return }
         setErr('Invalid username or password')
         return
       }
@@ -2277,7 +2277,7 @@ export default function App() {
                   <form className="form" onSubmit={(e) => { e.preventDefault(); doAuth(loginUser.trim(), loginPass, loginTotp.trim()) }}>
                     <input placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} autoComplete="username" />
                     <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} autoComplete="current-password" />
-                    {needsTotp && <input placeholder="TOTP code" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} autoFocus />}
+                    {needsTotp && <input placeholder="TOTP code or backup code (e.g. abcde-f0123)" value={loginTotp} onChange={(e) => setLoginTotp(e.target.value)} autoFocus />}
                     <button type="submit">Sign in</button>
                     <button type="button" className="link-btn" onClick={() => { setMode('register'); setErr(''); setNeedsTotp(false); setRegStep('form') }}>Create an account</button>
                     <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setErr(''); setNeedsTotp(false) }}>Forgot password?</button>
