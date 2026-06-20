@@ -2929,6 +2929,15 @@ func (s *NexusServer) adminBanHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[role] %s set %s role to %s", admin, target, reqBody.Role)
+	case "reset_totp":
+		if _, err := s.DB.Exec(`UPDATE users SET totp_secret='', totp_enabled=0 WHERE username=?`, target); err != nil {
+			http.Error(w, "reset_totp failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.DB.Exec(`DELETE FROM totp_backup_codes WHERE username=?`, target)
+		log.Printf("[admin] %s reset 2FA for %s", admin, target)
+		w.WriteHeader(http.StatusNoContent)
+		return
 	case "delete":
 		if err := s.deleteAccount(target); err != nil {
 			http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
