@@ -101,7 +101,7 @@ fun AuthScreen(
         if (totpRequired) {
             // ── 2FA / TOTP step ───────────────────────────────────────
             Text(
-                "Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app.",
+                "Two-factor authentication is enabled. Enter the 6-digit code from your authenticator app, or a backup code (e.g. abcde-f0123).",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
@@ -109,11 +109,11 @@ fun AuthScreen(
             )
             OutlinedTextField(
                 value = totpCode,
-                onValueChange = { if (it.length <= 6) totpCode = it.filter { c -> c.isDigit() } },
-                label = { Text("Authenticator code") },
+                onValueChange = { totpCode = it.take(11) },
+                label = { Text("Authenticator or backup code") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { submit() }),
             )
             Spacer(Modifier.height(16.dp))
@@ -124,7 +124,7 @@ fun AuthScreen(
             Button(
                 onClick = { submit() },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-                enabled = totpCode.length == 6,
+                enabled = totpCode.length == 6 || totpCode.length == 11,
             ) { Text("Verify", fontWeight = FontWeight.Bold) }
             Spacer(Modifier.height(12.dp))
             TextButton(onClick = { totpCode = ""; onCancelTotp?.invoke() }) {
