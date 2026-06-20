@@ -246,6 +246,26 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var voicePath by remember { mutableStateOf<String?>(null) }
 
+    var pendingCallPeer by remember { mutableStateOf<String?>(null) }
+    var pendingCallVideo by remember { mutableStateOf(false) }
+    val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingCallPeer?.let { vm.startCall(it, pendingCallVideo) }
+        }
+        pendingCallPeer = null
+    }
+    fun requestCallWithPermission(peer: String, withVideo: Boolean = false) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            vm.startCall(peer, withVideo)
+        } else {
+            pendingCallPeer = peer
+            pendingCallVideo = withVideo
+            callPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && !recording) {
             // OGG/OPUS only exist on API 29+. On 26–28 fall back to MPEG-4/AAC
@@ -376,7 +396,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 peer = peer, peerStatus = info?.status ?: "Unknown", messages = chatLog,
                 onBack = { stopVoiceRecord(false); vm.selectChat("") },
                 onSend = { vm.sendMessage(it) },
-                onCall = { vm.startCall(peer) },
+                onCall = { requestCallWithPermission(peer) },
                 canSend = isConnected,
             )
             VoiceRecordingOverlay(
@@ -388,8 +408,8 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
                 peer = peer, peerStatus = info?.status ?: "Unknown", messages = chatLog,
                 onBack = { vm.selectChat("") },
                 onSend = { vm.sendMessage(it) },
-                onCall = { vm.startCall(peer) },
-                onVideoCall = { vm.startCall(peer, withVideo = true) },
+                onCall = { requestCallWithPermission(peer) },
+                onVideoCall = { requestCallWithPermission(peer, withVideo = true) },
                 onAttachFile = { filePicker.launch("*/*") },
                 onVoiceRecord = { startVoiceRecord() },
                 typing = typingFrom == peer,
