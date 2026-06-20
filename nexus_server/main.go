@@ -175,9 +175,10 @@ type DMMessage struct {
 }
 
 type TurnConfig struct {
-	URL      string `json:"url"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	URL      string   `json:"url"`
+	URLs     []string `json:"urls,omitempty"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
 }
 
 type Client struct {
@@ -336,10 +337,16 @@ var (
 )
 
 func (s *NexusServer) generateMediaToken(username string) *TurnConfig {
-	// Static credentials mode — for Cloudflare Calls, Metered.ca, Xirsys, etc.
-	// Set PHAZE_TURN_URL + PHAZE_TURN_USERNAME + PHAZE_TURN_PASSWORD.
+	// Static credentials mode — for Metered.ca, Xirsys, etc.
+	// Set PHAZE_TURN_URL (comma-separated for multiple) + PHAZE_TURN_USERNAME + PHAZE_TURN_PASSWORD.
 	if TurnURL != "" && TurnUsername != "" && TurnPassword != "" {
-		return &TurnConfig{URL: TurnURL, Username: TurnUsername, Password: TurnPassword}
+		urls := strings.Split(TurnURL, ",")
+		primary := strings.TrimSpace(urls[0])
+		var extra []string
+		for _, u := range urls[1:] {
+			extra = append(extra, strings.TrimSpace(u))
+		}
+		return &TurnConfig{URL: primary, URLs: extra, Username: TurnUsername, Password: TurnPassword}
 	}
 
 	// HMAC short-term credentials — for self-hosted coturn with use-auth-secret.
