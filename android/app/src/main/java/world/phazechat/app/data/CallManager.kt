@@ -99,7 +99,7 @@ class CallManager(context: Context) {
         audioManager = am
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         @Suppress("DEPRECATION")
-        am.isSpeakerphoneOn = false
+        am.isSpeakerphoneOn = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             am.requestAudioFocus(
                 AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
