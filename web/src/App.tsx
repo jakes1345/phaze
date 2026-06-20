@@ -885,7 +885,9 @@ export default function App() {
     const iceServers: RTCIceServer[] = turnRef.current
       ? [
           ...stunServers,
-          { urls: turnRef.current.url, username: turnRef.current.username, credential: turnRef.current.password },
+          ...[turnRef.current.url, ...(turnRef.current.urls ?? [])].map(u => ({
+            urls: u, username: turnRef.current!.username, credential: turnRef.current!.password,
+          })),
         ]
       : stunServers
     const pc = new RTCPeerConnection({ iceServers })

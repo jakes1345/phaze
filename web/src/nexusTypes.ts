@@ -2,6 +2,7 @@
 
 export interface TurnConfig {
   url: string
+  urls?: string[]
   username: string
   password: string
 }
