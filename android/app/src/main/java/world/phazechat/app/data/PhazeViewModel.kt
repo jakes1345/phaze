@@ -922,7 +922,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         }
         cm.onConnectionChange = { state ->
             when (state) {
-                org.webrtc.PeerConnection.IceConnectionState.CONNECTED ->
+                org.webrtc.PeerConnection.IceConnectionState.CONNECTED,
+                org.webrtc.PeerConnection.IceConnectionState.COMPLETED ->
                     _callState.value = _callState.value?.copy(status = "connected")
                 org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED,
                 org.webrtc.PeerConnection.IceConnectionState.FAILED ->
@@ -970,7 +971,8 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
         }
         cm.onConnectionChange = { state ->
             when (state) {
-                org.webrtc.PeerConnection.IceConnectionState.CONNECTED ->
+                org.webrtc.PeerConnection.IceConnectionState.CONNECTED,
+                org.webrtc.PeerConnection.IceConnectionState.COMPLETED ->
                     _callState.value = _callState.value?.copy(status = "connected")
                 org.webrtc.PeerConnection.IceConnectionState.DISCONNECTED,
                 org.webrtc.PeerConnection.IceConnectionState.FAILED ->
