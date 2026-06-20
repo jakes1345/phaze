@@ -1185,7 +1185,7 @@ export default function App() {
             setErr('✓ Recovery PIN saved')
           } else if (msg.status === 'deleted') {
             setErr('Recovery backup removed')
-          } else if (msg.error) {
+          } else if (msg.error && msg.error !== 'no backup found' && msg.error !== 'not found') {
             setErr(`Backup error: ${msg.error}`)
           }
           break
@@ -1870,7 +1870,9 @@ export default function App() {
             <kbd>⌘K</kbd>
           </button>
         )}
-        <span className={`pill ${conn === 'open' ? 'ok' : ''}`}>{conn}</span>
+        <span className={`pill ${conn === 'open' ? 'ok' : conn === 'connecting' ? 'warn' : ''}`}>
+          {me ? (conn === 'open' ? 'online' : conn) : conn}
+        </span>
         <button
           className="settings-gear"
           title={`Theme: ${theme} — click to cycle (dark · light · Skype 7)`}
