@@ -3867,6 +3867,7 @@ func main() {
 
 	fs := http.FileServer(http.Dir("public"))
 	http.Handle("/public/", http.StripPrefix("/public/", fs))
+	http.Handle("/.well-known/", http.StripPrefix("/.well-known/", http.FileServer(http.Dir("public/.well-known"))))
 	http.HandleFunc("/downloads/", server.fileDownloadHandler)
 
 	// Web client (React/Vite SPA). The Docker build stage compiles
