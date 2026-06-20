@@ -266,15 +266,15 @@ export default function Settings({ me, sessionToken, send, subscribe, onClose, o
   }
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'profile', label: '👤 Profile' },
-    { id: 'import', label: '📥 Skype Import' },
-    { id: 'invite', label: '🎁 Invite Friends' },
-    { id: 'notifications', label: '🔔 Notifications' },
-    { id: 'security', label: '🔒 Security' },
-    { id: 'privacy', label: '🛡 Privacy' },
-    { id: 'devices', label: '💾 Backup & Devices' },
-    { id: 'sessions', label: '📱 Sessions' },
-    { id: 'danger', label: '⚠ Danger' },
+    { id: 'profile', label: 'Profile' },
+    { id: 'import', label: 'Skype Import' },
+    { id: 'invite', label: 'Invite Friends' },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'security', label: 'Security' },
+    { id: 'privacy', label: 'Privacy' },
+    { id: 'devices', label: 'Backup & Devices' },
+    { id: 'sessions', label: 'Sessions' },
+    { id: 'danger', label: 'Danger' },
   ]
 
   // ── Backup & Devices state ───────────────────────────────────
