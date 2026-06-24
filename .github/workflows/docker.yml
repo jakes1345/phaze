@@ -2,7 +2,7 @@
 # Registry. Self-hosters pull this with:
 #
 #   docker run -p 8080:8080 -v nexus_data:/data \
-#     ghcr.io/jakes1345/skype7-reborn-nexus:latest
+#     ghcr.io/jakes1345/phaze-nexus:latest
 #
 # Image is tagged "latest" on every push to master and "v<version>" on each
 # git tag (matching release.yml). Image bundles the Go nexus server + the
