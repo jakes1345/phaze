@@ -101,7 +101,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // JSON
-    implementation("org.json:json:20231013")
+    implementation("org.json:json:20260522")
 
     // Crypto (NaCl via Lazysodium)
     implementation("com.goterl:lazysodium-android:5.2.0@aar")
