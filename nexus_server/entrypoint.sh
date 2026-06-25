@@ -16,12 +16,12 @@ DB_PATH="${DB_PATH:-/data/nexus.db}"
 # remains supported for self-hosters who bring their own S3.
 BUCKET="${BUCKET_NAME:-${LITESTREAM_BUCKET:-}}"
 
-start_kai() {
-  if [ -n "${KAI_PASSWORD:-}" ] && [ -n "${GEMINI_API_KEY:-}" ]; then
-    echo "[entrypoint] starting Kai bot (5s delay for Nexus boot)"
-    sleep 5 && /app/kai-bot &
+start_nova() {
+  if [ -n "${NOVA_PASSWORD:-}" ] && [ -n "${GEMINI_API_KEY:-}" ]; then
+    echo "[entrypoint] starting Nova bot (5s delay for Nexus boot)"
+    sleep 5 && /app/nova-bot &
   else
-    echo "[entrypoint] Kai bot disabled (KAI_PASSWORD or GEMINI_API_KEY not set)"
+    echo "[entrypoint] Nova bot disabled (NOVA_PASSWORD or GEMINI_API_KEY not set)"
   fi
 }
 
@@ -32,10 +32,10 @@ if [ -n "$BUCKET" ]; then
     echo "[entrypoint] restore failed or no replica yet; continuing with on-disk DB"
   }
   echo "[entrypoint] litestream: replicating ${DB_PATH} -> s3://${BUCKET}"
-  start_kai
+  start_nova
   exec litestream replicate -config /app/litestream.yml -exec "/app/nexus-server"
 fi
 
 echo "[entrypoint] litestream disabled (no BUCKET_NAME/LITESTREAM_BUCKET); running without replication"
-start_kai
+start_nova
 exec /app/nexus-server

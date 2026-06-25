@@ -10,14 +10,18 @@ WORKDIR /src
 # Bring in just the Go module first so the dependency download caches well.
 COPY nexus_server/go.mod nexus_server/go.sum ./nexus_server/
 RUN cd nexus_server && go mod download
+COPY nova_bot/go.mod nova_bot/go.sum ./nova_bot/
+RUN cd nova_bot && go mod download
 # VERSION is the repo-root single source of truth; stamp it into the binary.
 COPY VERSION ./VERSION
 COPY nexus_server/ ./nexus_server/
+COPY nova_bot/ ./nova_bot/
 RUN cd nexus_server \
  && VER="$(cat /src/VERSION)" \
  && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VER" -o /out/nexus-server . \
  && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/seed-admin ./cmd/seed-admin \
  && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/grant-supporter ./cmd/grant-supporter
+RUN cd nova_bot && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/nova-bot .
 
 
 # -----------------------------------------------------------------------
@@ -50,6 +54,7 @@ WORKDIR /app
 COPY --from=go-build      /out/nexus-server                    /app/nexus-server
 COPY --from=go-build      /out/seed-admin                      /app/seed-admin
 COPY --from=go-build      /out/grant-supporter                 /app/grant-supporter
+COPY --from=go-build      /out/nova-bot                        /app/nova-bot
 COPY --from=litestream-dl /usr/local/bin/litestream            /usr/local/bin/litestream
 COPY --from=web-build     /src/web/dist                        /app/web
 COPY nexus_server/templates                                    /app/templates
