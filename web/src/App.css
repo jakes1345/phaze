@@ -87,35 +87,41 @@
   --shadow-glow: 0 0 60px rgba(166, 119, 255, 0.12);
 }
 
-/* "Skype 7" theme pack — the classic white + Skype-blue retro look. */
+/* "Skype 7" theme pack — exact palette from Skype 4-7 default colorway. */
 .app.theme-skype7 {
   --phaze-cyan: #00AFF0;
-  --phaze-blue: #0078D4;
+  --phaze-blue: #0095CC;
   --brand: #00AFF0;
-  --brand-hover: #0091ea;
+  --brand-hover: #0095CC;
   --brand-soft: rgba(0, 175, 240, 0.10);
-  --brand-glow: rgba(0, 175, 240, 0.28);
-  --shell: #e8eef3;
+  --brand-glow: rgba(0, 175, 240, 0.22);
+  --shell: #D4E2F2;
   --chrome: #ffffff;
   --panel: #ffffff;
-  --panel-edge: #cfd8e0;
-  --separator: #e3e9ee;
-  --text: #1b2733;
-  --text-secondary: #3a4a5a;
-  --muted: #7a8a99;
-  --list-hover: rgba(0, 175, 240, 0.06);
-  --list-sel: rgba(0, 175, 240, 0.12);
-  --bubble-in: #eef3f7;
-  --bubble-out: #00AFF0;
+  --panel-edge: #D9D9D9;
+  --separator: #E4ECEF;
+  --text: #2B2B30;
+  --text-secondary: #6E6E73;
+  --muted: #A0B7C8;
+  --list-hover: rgba(0, 149, 204, 0.06);
+  --list-sel: rgba(0, 149, 204, 0.12);
+  --bubble-in: #E5F7FD;
+  --bubble-out: #0095CC;
   --bubble-edge: transparent;
-  --bubble-text: #1b2733;
+  --bubble-text: #2B2B30;
   --bubble-text-out: #ffffff;
   --input-bg: #ffffff;
-  --input-border: #c2ccd6;
-  --input-focus: rgba(0, 175, 240, 0.25);
-  --chat-bg-1: #f4f8fb;
+  --input-border: #D9D9D9;
+  --input-focus: rgba(0, 149, 204, 0.22);
+  --chat-bg-1: #F5FCFE;
   --chat-bg-2: #ffffff;
-  --shadow-glow: 0 0 40px rgba(0, 175, 240, 0.18);
+  --shadow-glow: 0 0 32px rgba(0, 175, 240, 0.15);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.10);
+  --glass: rgba(255, 255, 255, 0.88);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-blur: 12px;
 }
 
 /* ── Reset / base ─────────────────────────────────────────────── */
@@ -2604,7 +2610,7 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
 }
 
 /* ── Message bubbles: more depth + glow on outgoing ── */
-.bubble.me {
+.app:not(.theme-skype7) .bubble.me {
   background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%);
   box-shadow: 0 4px 20px rgba(124, 58, 237, 0.35), 0 1px 4px rgba(0, 0, 0, 0.3);
 }
@@ -2759,4 +2765,215 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo
   color: var(--muted);
   padding: 0.75rem 0 0.25rem;
   letter-spacing: 0.05em;
+}
+
+/* ── Skype 7 theme overrides — pixel-spec from Skymu's Main.xaml ─ */
+
+/* Sidebar: 277px wide, blue-gray tint */
+.app.theme-skype7 {
+  --sidebar-width: 277px;
+  --header-height: 100px;
+}
+
+@media (min-width: 960px) {
+  .app.theme-skype7 .hub-sidebar {
+    background: var(--shell);
+    border-right: 1px solid #B8CDD9;
+    width: 277px;
+    min-width: 240px;
+  }
+}
+
+/* Chat area: very light blue tint */
+.app.theme-skype7 .hub-chat-view {
+  background: var(--chat-bg-1);
+}
+.app.theme-skype7 .chat {
+  background: var(--chat-bg-2);
+}
+
+/* Top bar: white with light bottom border */
+.app.theme-skype7 .top {
+  background: #ffffff;
+  border-bottom: 1px solid #D9E1E8;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Chat header: 100px tall (Skype 7 spec), 60×60 avatar */
+.app.theme-skype7 .chat-header-bar {
+  height: 100px;
+  min-height: 100px;
+  background: #ffffff;
+  border-bottom: 1px solid #D9E1E8;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0 16px;
+  align-items: center;
+}
+.app.theme-skype7 .chat-header-bar .avatar {
+  width: 60px;
+  height: 60px;
+  font-size: 1.4rem;
+}
+.app.theme-skype7 .chat-peer-name {
+  font-size: 21px;
+  font-weight: 300;
+  letter-spacing: -0.01em;
+}
+.app.theme-skype7 .chat-peer-status {
+  font-size: 11px;
+}
+
+/* Contact list items: 50px tall, 40×40 avatar, 15px left padding */
+.app.theme-skype7 .list button.friend-row {
+  height: 50px;
+  min-height: 50px;
+  padding: 5px 4px 5px 15px;
+  border-radius: 0;
+  gap: 14px;
+}
+.app.theme-skype7 .list button.friend-row:hover {
+  background: rgba(0, 149, 204, 0.08);
+  border-radius: 0;
+}
+.app.theme-skype7 .list button.friend-row.sel {
+  background: rgba(0, 149, 204, 0.14);
+  border-radius: 0;
+}
+.app.theme-skype7 .avatar {
+  width: 40px;
+  height: 40px;
+  font-size: 0.88rem;
+}
+.app.theme-skype7 .friend-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.app.theme-skype7 .friend-preview {
+  font-size: 11px;
+}
+.app.theme-skype7 .friend-time {
+  font-size: 11px;
+}
+
+/* Message bubbles: flat 4.5px radius, max 415px, specific padding */
+.app.theme-skype7 .bubble {
+  max-width: 415px;
+  padding: 9px 17px 6px;
+  border-radius: 4.5px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: none;
+}
+.app.theme-skype7 .bubble.me {
+  background: var(--bubble-out);
+  border-radius: 4.5px;
+  border-bottom-right-radius: 4.5px;
+  box-shadow: none;
+}
+.app.theme-skype7 .bubble:not(.me) {
+  background: var(--bubble-in);
+  border-radius: 4.5px;
+  border-bottom-left-radius: 4.5px;
+  border: none;
+}
+.app.theme-skype7 .bubble-ts {
+  font-size: 11px;
+}
+.app.theme-skype7 .bubble .who {
+  font-size: 11px;
+}
+
+/* Message input: 130px tall area */
+.app.theme-skype7 .row.send {
+  min-height: 130px;
+  background: #ffffff;
+  border-top: 1px solid #D9E1E8;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  align-items: flex-start;
+  padding: 28px 17px 17px 15px;
+  position: relative;
+}
+
+/* Send button: 32×32 circle at bottom-right (matching Skype 7 spec) */
+.app.theme-skype7 .row.send > button:last-child {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: #0095CC;
+  border-color: #0095CC;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  align-self: flex-end;
+  margin-bottom: 0;
+}
+.app.theme-skype7 .row.send > button:last-child:hover {
+  background: #00AFF0;
+  border-color: #00AFF0;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Add-friend bar: white */
+.app.theme-skype7 .hub-add-friend {
+  background: #ffffff;
+  border-bottom: 1px solid #D9E1E8;
+}
+
+/* Scrollbars: Skype blue */
+.app.theme-skype7 ::-webkit-scrollbar { width: 4px; }
+.app.theme-skype7 ::-webkit-scrollbar-track { background: transparent; }
+.app.theme-skype7 ::-webkit-scrollbar-thumb { background: rgba(0, 149, 204, 0.35); border-radius: 2px; }
+.app.theme-skype7 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 149, 204, 0.6); }
+
+/* Auth page: plain white, no dark purple effects */
+.app.theme-skype7 .hub-auth {
+  background: var(--shell);
+}
+.app.theme-skype7 .hub-auth .panel {
+  background: #ffffff;
+  border: 1px solid #D9D9D9;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.app.theme-skype7 .auth-hero-title {
+  background: #00AFF0;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: none;
+}
+.app.theme-skype7 .auth-hero-logo {
+  filter: none;
+}
+
+/* Unread badge: flat Skype blue */
+.app.theme-skype7 .unread-badge {
+  background: #0095CC;
+  box-shadow: none;
+  animation: none;
+}
+
+/* Bubble entrance: no spring animation */
+.app.theme-skype7 .bubble-row {
+  animation: none;
+}
+
+/* Section labels: match Skype 7 style */
+.app.theme-skype7 .sidebar-section-label {
+  color: #6E6E73;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 15px 4px;
 }
