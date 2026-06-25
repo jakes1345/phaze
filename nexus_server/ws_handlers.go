@@ -1643,7 +1643,7 @@ func (s *NexusServer) handleConnections(w http.ResponseWriter, r *http.Request) 
 				})
 				log.Printf("[server] %s created server %q (%s)", username, name, id)
 				if visibility == "public" {
-					if bot := os.Getenv("KAI_USERNAME"); bot != "" {
+					if bot := os.Getenv("NOVA_USERNAME"); bot != "" {
 						s.DB.Exec(`INSERT OR IGNORE INTO server_members (server_id, username, role) VALUES (?, ?, 'member')`, id, bot)
 					}
 				}

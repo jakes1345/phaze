@@ -312,8 +312,13 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
     // TURN
     var turnUrl: String? = null; private set
+    var turnUrls: List<String>? = null; private set
     var turnUsername: String? = null; private set
     var turnPassword: String? = null; private set
+
+    // ICE candidates that arrived before the callee tapped "Answer".
+    // Flushed into the PeerConnection in answerCall() after setRemoteDescription.
+    private val pendingIceCandidates = mutableListOf<org.webrtc.IceCandidate>()
 
     init {
         keyPair = loadOrCreateKeys()
@@ -342,7 +347,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     // OkHttp transparently reconnects after a dropped socket (idle timeout,
     // network blip, app resume); without re-auth that new socket is
     // unauthenticated and the server silently drops every action (search,
-    // DMs, messages to the Kai bot), making the app appear frozen until a
+    // DMs, messages to Nova), making the app appear frozen until a
     // manual restart. Collecting the state flow re-sends session_auth each
     // time we reconnect, which the auth_result handler uses to reload state.
     private fun observeConnection() {
@@ -984,6 +989,9 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             cm.setRemoteDescription(org.webrtc.SessionDescription(org.webrtc.SessionDescription.Type.OFFER, sdp))
+            // Flush any ICE candidates that arrived before the user tapped "Answer".
+            pendingIceCandidates.forEach { cm.addIceCandidate(it) }
+            pendingIceCandidates.clear()
             val answer = cm.createAnswer() ?: return@launch
             cm.setLocalDescription(answer)
             nexus.send(NexusMessage(
@@ -995,12 +1003,14 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
     fun rejectCall() {
         val cs = _callState.value ?: return
         nexus.send(NexusMessage(type = "call_reject", sender = _me.value, recipient = cs.peer))
+        pendingIceCandidates.clear()
         _callState.value = null
     }
 
     fun endCall() {
         val cs = _callState.value ?: return
         nexus.send(NexusMessage(type = "call_end", sender = _me.value, recipient = cs.peer))
+        pendingIceCandidates.clear()
         callManager?.hangUp()
         callManager = null
         _callState.value = null
@@ -1042,8 +1052,12 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             org.webrtc.PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
         )
         if (turnUrl != null) {
+            // Collect all TURN URLs so the ICE agent can fall back to TCP/TLS
+            // endpoints if the primary UDP port is firewall-blocked.
+            val allUrls = mutableListOf(turnUrl!!)
+            turnUrls?.let { allUrls.addAll(it) }
             servers.add(
-                org.webrtc.PeerConnection.IceServer.builder(turnUrl!!)
+                org.webrtc.PeerConnection.IceServer.builder(allUrls)
                     .setUsername(turnUsername ?: "")
                     .setPassword(turnPassword ?: "")
                     .createIceServer()
@@ -1082,7 +1096,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     msg.sender?.let { prefs.edit().putString("username", it).apply() }
                     
                     if (msg.turnUrl != null) {
-                        turnUrl = msg.turnUrl; turnUsername = msg.turnUsername; turnPassword = msg.turnPassword
+                        turnUrl = msg.turnUrl; turnUrls = msg.turnUrls; turnUsername = msg.turnUsername; turnPassword = msg.turnPassword
                     }
                     nexus.send(NexusMessage(
                         type = "presence", sender = msg.sender, status = "Online",
@@ -1135,7 +1149,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     msg.sender?.let { prefs.edit().putString("username", it).apply() }
                     if (msg.turnUrl != null) {
-                        turnUrl = msg.turnUrl; turnUsername = msg.turnUsername; turnPassword = msg.turnPassword
+                        turnUrl = msg.turnUrl; turnUrls = msg.turnUrls; turnUsername = msg.turnUsername; turnPassword = msg.turnPassword
                     }
                     nexus.send(NexusMessage(
                         type = "presence", sender = msg.sender, status = "Online",
@@ -1407,18 +1421,23 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
                 val raw = msg.candidate ?: return
                 try {
                     val j = org.json.JSONObject(raw)
-                    callManager?.addIceCandidate(
-                        org.webrtc.IceCandidate(j.getString("sdpMid"), j.getInt("sdpMLineIndex"), j.getString("candidate"))
+                    val candidate = org.webrtc.IceCandidate(
+                        j.getString("sdpMid"), j.getInt("sdpMLineIndex"), j.getString("candidate")
                     )
+                    val cm = callManager
+                    if (cm != null) cm.addIceCandidate(candidate)
+                    else pendingIceCandidates.add(candidate)
                 } catch (_: Exception) {}
             }
             "call_reject", "call_end" -> {
+                pendingIceCandidates.clear()
                 callManager?.hangUp()
                 callManager = null
                 _callState.value = null
             }
 
             "call_busy" -> {
+                pendingIceCandidates.clear()
                 callManager?.hangUp()
                 callManager = null
                 _callState.value = null
@@ -1426,6 +1445,7 @@ class PhazeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             "call_error" -> {
+                pendingIceCandidates.clear()
                 callManager?.hangUp()
                 callManager = null
                 _callState.value = null

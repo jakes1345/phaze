@@ -3860,7 +3860,7 @@ func main() {
 	server.loadBlockedIPs() // M3: restore IP blocks from DB
 	server.ensureGlobalSpace()
 	go server.sweepRemoteCodes() // L2: expire stale remote codes
-	if bot := os.Getenv("KAI_USERNAME"); bot != "" {
+	if bot := os.Getenv("NOVA_USERNAME"); bot != "" {
 		server.autoJoinPublicSpaces(bot)
 	}
 

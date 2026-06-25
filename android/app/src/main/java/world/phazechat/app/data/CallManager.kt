@@ -71,7 +71,10 @@ class CallManager(context: Context) {
                 onRemoteStream?.invoke(stream)
             }
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                (receiver?.track() as? VideoTrack)?.let { surfaceRemoteVideo(it) }
+                when (val track = receiver?.track()) {
+                    is VideoTrack -> surfaceRemoteVideo(track)
+                    is AudioTrack -> track.setEnabled(true)
+                }
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 Log.d(TAG, "ICE: $state")

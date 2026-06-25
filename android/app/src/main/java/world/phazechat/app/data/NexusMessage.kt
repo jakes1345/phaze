@@ -21,6 +21,7 @@ data class NexusMessage(
     val convoName: String? = null,
     val members: List<String>? = null,
     val turnUrl: String? = null,
+    val turnUrls: List<String>? = null,
     val turnUsername: String? = null,
     val turnPassword: String? = null,
     val totpCode: String? = null,
@@ -113,6 +114,7 @@ data class NexusMessage(
             } catch (_: Exception) { null }
 
             var turnUrl: String? = null
+            var turnUrls: List<String>? = null
             var turnUser: String? = null
             var turnPass: String? = null
             if (j.has("turn_config")) {
@@ -120,6 +122,10 @@ data class NexusMessage(
                 turnUrl = tc.optString("url", null)
                 turnUser = tc.optString("username", null)
                 turnPass = tc.optString("password", null)
+                if (tc.has("urls") && !tc.isNull("urls")) {
+                    val arr = tc.getJSONArray("urls")
+                    turnUrls = (0 until arr.length()).map { arr.getString(it) }
+                }
             }
 
             return NexusMessage(
@@ -141,6 +147,7 @@ data class NexusMessage(
                 convoName = j.str("convo_name"),
                 members = members,
                 turnUrl = turnUrl,
+                turnUrls = turnUrls,
                 turnUsername = turnUser,
                 turnPassword = turnPass,
                 totpCode = j.str("totp_code"),

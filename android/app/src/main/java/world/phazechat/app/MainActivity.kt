@@ -248,11 +248,19 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
 
     var pendingCallPeer by remember { mutableStateOf<String?>(null) }
     var pendingCallVideo by remember { mutableStateOf(false) }
+    var pendingAnswer by remember { mutableStateOf(false) }
     val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            pendingCallPeer?.let { vm.startCall(it, pendingCallVideo) }
+            if (pendingAnswer) {
+                vm.answerCall()
+            } else {
+                pendingCallPeer?.let { vm.startCall(it, pendingCallVideo) }
+            }
+        } else if (pendingAnswer) {
+            vm.rejectCall()
         }
         pendingCallPeer = null
+        pendingAnswer = false
     }
     fun requestCallWithPermission(peer: String, withVideo: Boolean = false) {
         if (androidx.core.content.ContextCompat.checkSelfPermission(
@@ -262,6 +270,16 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
         } else {
             pendingCallPeer = peer
             pendingCallVideo = withVideo
+            callPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun answerWithPermission() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            vm.answerCall()
+        } else {
+            pendingAnswer = true
             callPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
@@ -342,7 +360,7 @@ fun PhazeRoot(vm: PhazeViewModel = viewModel()) {
             eglContext = cm?.eglContext,
             localVideoTrack = cm?.localVideoTrack,
             remoteVideoTrack = cm?.remoteVideoTrack,
-            onAnswer = { vm.answerCall() }, onReject = { vm.rejectCall() },
+            onAnswer = { answerWithPermission() }, onReject = { vm.rejectCall() },
             onHangUp = { ScreenShareService.stop(context); vm.endCall() },
             onToggleMute = { vm.toggleCallMute() },
             onToggleCamera = { vm.toggleCallCamera() },
